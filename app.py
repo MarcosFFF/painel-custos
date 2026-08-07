@@ -31,6 +31,13 @@ h3 { font-size: 1.1rem !important; }
 [data-testid="stMetricDelta"] { font-size: 0.78rem !important; }
 .stCaption, [data-testid="stCaptionContainer"] { font-size: 0.75rem !important; }
 div[data-testid="stDataFrame"] * { font-size: 0.8rem !important; }
+
+/* espaçamento mais compacto */
+.block-container { padding-top: 1.5rem !important; padding-bottom: 1.5rem !important; }
+div[data-testid="stVerticalBlock"] { gap: 0.35rem !important; }
+hr { margin: 0.4rem 0 !important; }
+div[data-testid="stMetric"] { padding: 0.15rem 0 !important; }
+div.element-container { margin-bottom: 0.1rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -53,9 +60,9 @@ ADMIN_EMAIL = st.secrets["ADMIN_EMAIL"]
 
 def titulo_com_logo():
     if LOGO_PATH:
-        col_logo, col_txt = st.columns([1, 6])
+        col_logo, col_txt = st.columns([1, 5], vertical_alignment="center")
         with col_logo:
-            st.image(LOGO_PATH, width=70)
+            st.image(LOGO_PATH, width=140)
         with col_txt:
             st.title("Painel de Projeção de Custos")
     else:
@@ -396,15 +403,34 @@ proj_mesmo_mes_ano_anterior = dado_mesmo_mes_ano_anterior["projetado"] if dado_m
 acum_mes_anterior = acumulado_ate_dia(ano_ant_mes, mes_ant_mes, DIA_HOJE)
 acum_mesmo_mes_ano_anterior = acumulado_ate_dia(view_year - 1, view_month, DIA_HOJE)
 
+def variacao_pct(atual, referencia):
+    if atual is None or referencia is None or referencia == 0:
+        return None
+    return (atual - referencia) / referencia * 100
+
 col_comp1, col_comp2 = st.columns(2)
 with col_comp1:
     st.markdown(f"**{label_mes(key_mes_anterior)}** (mês anterior)")
-    st.metric("Valor projetado", fmt_brl(proj_mes_anterior))
-    st.metric(f"Valor acumulado até dia {DIA_HOJE:02d}", fmt_brl(acum_mes_anterior))
+    delta_proj = variacao_pct(projecao, proj_mes_anterior)
+    delta_acum = variacao_pct(acumulado, acum_mes_anterior)
+    st.metric("Valor projetado", fmt_brl(proj_mes_anterior),
+               delta=(f"{delta_proj:+.1f}%" if delta_proj is not None else None),
+               delta_color="inverse")
+    st.metric(f"Valor acumulado até dia {DIA_HOJE:02d}", fmt_brl(acum_mes_anterior),
+               delta=(f"{delta_acum:+.1f}%" if delta_acum is not None else None),
+               delta_color="inverse")
 with col_comp2:
     st.markdown(f"**{label_mes(key_mesmo_mes_ano_anterior)}** (mesmo mês, ano anterior)")
-    st.metric("Valor projetado", fmt_brl(proj_mesmo_mes_ano_anterior))
-    st.metric(f"Valor acumulado até dia {DIA_HOJE:02d}", fmt_brl(acum_mesmo_mes_ano_anterior))
+    delta_proj_aa = variacao_pct(projecao, proj_mesmo_mes_ano_anterior)
+    delta_acum_aa = variacao_pct(acumulado, acum_mesmo_mes_ano_anterior)
+    st.metric("Valor projetado", fmt_brl(proj_mesmo_mes_ano_anterior),
+               delta=(f"{delta_proj_aa:+.1f}%" if delta_proj_aa is not None else None),
+               delta_color="inverse")
+    st.metric(f"Valor acumulado até dia {DIA_HOJE:02d}", fmt_brl(acum_mesmo_mes_ano_anterior),
+               delta=(f"{delta_acum_aa:+.1f}%" if delta_acum_aa is not None else None),
+               delta_color="inverse")
+
+st.caption("Variação % em relação ao mês/ano corrente sendo visualizado — vermelho = aumento de custo, verde = redução.")
 
 st.divider()
 
@@ -468,19 +494,26 @@ st.divider()
 st.subheader("Histórico mensal · Projetado × Real")
 
 linhas_mensal = []
+mes_corrente_label = None
 for k in sorted(st.session_state.historico_mensal.keys(), reverse=True):
     dado = st.session_state.historico_mensal[k]
     eh_atual = k >= mes_key(ANO_HOJE, MES_HOJE)
+    if eh_atual:
+        mes_corrente_label = label_mes(k)
     linhas_mensal.append({
         "Mês": label_mes(k),
         "_key": k,
         "Projetado (R$)": dado["projetado"],
-        "Real (R$)": "mês corrente" if eh_atual else dado["real"],
+        "Real (R$)": None if eh_atual else dado["real"],
         "_editavel": not eh_atual,
+        "_atual": eh_atual,
     })
 
 df_mensal = pd.DataFrame(linhas_mensal)
-df_mensal_exibir = df_mensal.drop(columns=["_key", "_editavel"])
+df_mensal_exibir = df_mensal.drop(columns=["_key", "_editavel", "_atual"])
+
+if mes_corrente_label:
+    st.caption(f"{mes_corrente_label} é o mês corrente — o Real dele é calculado automaticamente pelo acumulado diário (veja no topo da página), por isso aparece em branco aqui.")
 
 if is_admin:
     # separa o mês corrente (não editável) do restante, para permitir edição só nos meses fechados
@@ -493,6 +526,7 @@ if is_admin:
         use_container_width=True,
         disabled=["Mês", "Projetado (R$)"],
         column_config={
+            "Projetado (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
             "Real (R$)": st.column_config.NumberColumn(format="R$ %.2f", step=0.01),
         },
         key=f"editor_mensal_{view_year}_{view_month}",
@@ -511,4 +545,14 @@ if is_admin:
 
     st.caption("Toque no valor Real de um mês encerrado para corrigir. O mês corrente não é editável aqui.")
 else:
-    st.dataframe(df_mensal_exibir, hide_index=True, use_container_width=True)
+    df_mensal_exibir_fmt = df_mensal_exibir.copy()
+    df_mensal_exibir_fmt["Real (R$)"] = pd.to_numeric(df_mensal_exibir_fmt["Real (R$)"], errors="coerce")
+    st.dataframe(
+        df_mensal_exibir_fmt,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Projetado (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+            "Real (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+        },
+    )
