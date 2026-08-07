@@ -60,9 +60,9 @@ ADMIN_EMAIL = st.secrets["ADMIN_EMAIL"]
 
 def titulo_com_logo():
     if LOGO_PATH:
-        col_logo, col_txt = st.columns([1, 5], vertical_alignment="center")
+        col_logo, col_txt = st.columns([1, 6], vertical_alignment="center")
         with col_logo:
-            st.image(LOGO_PATH, width=140)
+            st.image(LOGO_PATH, width=100)
         with col_txt:
             st.title("Painel de Projeção de Custos")
     else:
@@ -298,47 +298,55 @@ if "lancamentos" not in st.session_state:
 # ============================================================
 # CABEÇALHO
 # ============================================================
-col_titulo, col_user = st.columns([3, 1])
-with col_titulo:
-    titulo_com_logo()
-with col_user:
-    nome_exibicao = st.session_state.get("nome_usuario") or st.session_state.user_email
-    badge = "🟢 Administrador" if is_admin else "🔵 Visualização"
-    st.write(f"**{nome_exibicao}**")
-    st.caption(badge)
+# ============================================================
+# CABEÇALHO
+# ============================================================
+titulo_com_logo()
+
+nome_exibicao = st.session_state.get("nome_usuario") or st.session_state.user_email
+badge = "🟢 Administrador" if is_admin else "🔵 Visualização"
+col_info, col_sair = st.columns([5, 1])
+with col_info:
+    st.caption(f"**{nome_exibicao}** · {badge}")
+with col_sair:
     if st.button("Sair", use_container_width=True):
         fazer_logout()
         st.rerun()
+
+st.divider()
 
 # ---------- navegação de mês ----------
 if "view_year" not in st.session_state:
     st.session_state.view_year = ANO_HOJE
     st.session_state.view_month = MES_HOJE
 
-c1, c2, c3, c4 = st.columns([1, 3, 1, 2])
+eh_mes_atual_nav = (st.session_state.view_year == ANO_HOJE and st.session_state.view_month == MES_HOJE)
+
+c1, c2, c3 = st.columns([1, 4, 1])
 with c1:
-    if st.button("◀", use_container_width=True):
+    if st.button("◀ Anterior", use_container_width=True):
         vy, vm = st.session_state.view_year, st.session_state.view_month - 1
         if vm < 1:
             vm, vy = 12, vy - 1
         st.session_state.view_year, st.session_state.view_month = vy, vm
         st.rerun()
 with c2:
-    st.markdown(f"### {MESES[st.session_state.view_month - 1]} / {st.session_state.view_year}")
+    st.markdown(f"<h3 style='text-align:center; margin:0;'>{MESES[st.session_state.view_month - 1]} / {st.session_state.view_year}</h3>", unsafe_allow_html=True)
 with c3:
-    eh_mes_atual_nav = (st.session_state.view_year == ANO_HOJE and st.session_state.view_month == MES_HOJE)
-    if st.button("▶", use_container_width=True, disabled=eh_mes_atual_nav):
+    if st.button("Seguinte ▶", use_container_width=True, disabled=eh_mes_atual_nav):
         vy, vm = st.session_state.view_year, st.session_state.view_month + 1
         if vm > 12:
             vm, vy = 1, vy + 1
         st.session_state.view_year, st.session_state.view_month = vy, vm
         st.rerun()
+
+c4, c5 = st.columns(2)
 with c4:
-    if not eh_mes_atual_nav:
-        if st.button("Ir para o mês atual"):
-            st.session_state.view_year, st.session_state.view_month = ANO_HOJE, MES_HOJE
-            st.rerun()
-    if st.button("🔄 Atualizar dados"):
+    if st.button("Ir para o mês atual", use_container_width=True, disabled=eh_mes_atual_nav):
+        st.session_state.view_year, st.session_state.view_month = ANO_HOJE, MES_HOJE
+        st.rerun()
+with c5:
+    if st.button("🔄 Atualizar dados", use_container_width=True):
         carregar_dados()
         st.rerun()
 
