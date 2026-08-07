@@ -22,14 +22,14 @@ st.set_page_config(page_title="Painel de Custos", page_icon=(LOGO_PATH or "📊"
 
 st.markdown("""
 <style>
-html, body, [class*="css"]  { font-size: 14px !important; }
+html, body { font-size: 14px !important; }
 h1 { font-size: 1.6rem !important; }
 h2 { font-size: 1.3rem !important; }
 h3 { font-size: 1.1rem !important; }
 [data-testid="stMetricValue"] { font-size: 1.3rem !important; }
 [data-testid="stMetricLabel"] { font-size: 0.78rem !important; }
 [data-testid="stMetricDelta"] { font-size: 0.78rem !important; }
-.stCaption, [data-testid="stCaptionContainer"] { font-size: 0.75rem !important; }
+[data-testid="stCaptionContainer"] { font-size: 0.75rem !important; }
 div[data-testid="stDataFrame"] * { font-size: 0.8rem !important; }
 
 /* espaçamento mais compacto */
@@ -62,7 +62,7 @@ def titulo_com_logo():
     if LOGO_PATH:
         col_logo, col_txt = st.columns([1, 6], vertical_alignment="center")
         with col_logo:
-            st.image(LOGO_PATH, width=100)
+            st.image(LOGO_PATH, use_container_width=True)
         with col_txt:
             st.title("Painel de Projeção de Custos")
     else:
