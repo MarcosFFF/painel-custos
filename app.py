@@ -33,7 +33,7 @@ h3 { font-size: 1.1rem !important; }
 div[data-testid="stDataFrame"] * { font-size: 0.8rem !important; }
 
 /* espaçamento mais compacto */
-.block-container { padding-top: 1.5rem !important; padding-bottom: 1.5rem !important; }
+.block-container { padding-top: 3rem !important; padding-bottom: 1.5rem !important; }
 div[data-testid="stVerticalBlock"] { gap: 0.35rem !important; }
 hr { margin: 0.4rem 0 !important; }
 div[data-testid="stMetric"] { padding: 0.15rem 0 !important; }
