@@ -507,64 +507,44 @@ st.subheader("Histórico mensal · Projetado × Real")
 
 linhas_mensal = []
 mes_corrente_label = None
+opcoes_edicao = []  # (label, key) só dos meses fechados, para o formulário de edição
 for k in sorted(st.session_state.historico_mensal.keys(), reverse=True):
     dado = st.session_state.historico_mensal[k]
     eh_atual = k >= mes_key(ANO_HOJE, MES_HOJE)
     if eh_atual:
         mes_corrente_label = label_mes(k)
+    else:
+        opcoes_edicao.append((label_mes(k), k))
     linhas_mensal.append({
         "Mês": label_mes(k),
-        "_key": k,
-        "Projetado (R$)": dado["projetado"],
-        "Real (R$)": None if eh_atual else dado["real"],
-        "_editavel": not eh_atual,
-        "_atual": eh_atual,
+        "Projetado": "mês corrente" if eh_atual else fmt_brl(dado["projetado"]),
+        "Real": "mês corrente" if eh_atual else fmt_brl(dado["real"]),
     })
 
-df_mensal = pd.DataFrame(linhas_mensal)
-df_mensal_exibir = df_mensal.drop(columns=["_key", "_editavel", "_atual"])
+df_mensal_exibir = pd.DataFrame(linhas_mensal)
 
 if mes_corrente_label:
-    st.caption(f"{mes_corrente_label} é o mês corrente — o Real dele é calculado automaticamente pelo acumulado diário (veja no topo da página), por isso aparece em branco aqui.")
+    st.caption(f"{mes_corrente_label} é o mês corrente — o Real dele é calculado automaticamente pelo acumulado diário (veja no topo da página).")
 
-if is_admin:
-    # separa o mês corrente (não editável) do restante, para permitir edição só nos meses fechados
-    df_editaveis = df_mensal[df_mensal["_editavel"]].copy()
-    df_editaveis["Real (R$)"] = pd.to_numeric(df_editaveis["Real (R$)"], errors="coerce")
+st.dataframe(df_mensal_exibir, hide_index=True, use_container_width=True)
 
-    editado_mensal = st.data_editor(
-        df_editaveis.drop(columns=["_key", "_editavel"]),
-        hide_index=True,
-        use_container_width=True,
-        disabled=["Mês", "Projetado (R$)"],
-        column_config={
-            "Projetado (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
-            "Real (R$)": st.column_config.NumberColumn(format="R$ %.2f", step=0.01),
-        },
-        key=f"editor_mensal_{view_year}_{view_month}",
-    )
-
-    for i, row in editado_mensal.iterrows():
-        k = df_editaveis.iloc[i]["_key"]
-        novo = row["Real (R$)"]
-        atual = st.session_state.historico_mensal[k]["real"]
-        if valor_valido(novo) and novo != atual:
-            ok, erro = gravar_real_mensal(k, novo)
+if is_admin and opcoes_edicao:
+    with st.expander("✏️ Corrigir o Real de um mês encerrado"):
+        labels_edicao = [lbl for lbl, _ in opcoes_edicao]
+        escolha = st.selectbox("Mês", labels_edicao, key="select_mes_editar")
+        key_escolhida = dict(opcoes_edicao)[escolha]
+        valor_atual = st.session_state.historico_mensal[key_escolhida]["real"]
+        novo_valor = st.number_input(
+            f"Novo valor Real para {escolha}",
+            value=float(valor_atual) if valor_atual is not None else 0.0,
+            step=0.01,
+            format="%.2f",
+            key=f"input_real_{key_escolhida}",
+        )
+        if st.button("Salvar", key=f"salvar_real_{key_escolhida}"):
+            ok, erro = gravar_real_mensal(key_escolhida, novo_valor)
             if ok:
+                st.success(f"Real de {escolha} atualizado para {fmt_brl(novo_valor)}.")
                 st.rerun()
             else:
-                st.error(f"Erro ao salvar {label_mes(k)}: {erro}")
-
-    st.caption("Toque no valor Real de um mês encerrado para corrigir. O mês corrente não é editável aqui.")
-else:
-    df_mensal_exibir_fmt = df_mensal_exibir.copy()
-    df_mensal_exibir_fmt["Real (R$)"] = pd.to_numeric(df_mensal_exibir_fmt["Real (R$)"], errors="coerce")
-    st.dataframe(
-        df_mensal_exibir_fmt,
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "Projetado (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
-            "Real (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
-        },
-    )
+                st.error(f"Erro ao salvar: {erro}")
