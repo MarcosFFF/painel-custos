@@ -269,25 +269,29 @@ if "user_email" not in st.session_state:
     st.session_state.role = None
 
 if st.session_state.user_email is None:
-    titulo_com_logo()
-    st.caption("Controladoria · faça login para continuar")
-    with st.form("login_form"):
-        email = st.text_input("E-mail")
-        senha = st.text_input("Senha", type="password")
-        entrar = st.form_submit_button("Entrar", use_container_width=True)
-    if entrar:
-        if not email.strip() or not senha.strip():
-            st.error("Preencha e-mail e senha.")
-        else:
-            ok, user_email, erro = fazer_login(email.strip(), senha)
-            if ok:
-                st.session_state.user_email = user_email
-                st.session_state.role = "admin" if user_email == ADMIN_EMAIL else "viewer"
-                st.session_state.nome_usuario = buscar_nome_usuario(user_email)
-                carregar_dados()
-                st.rerun()
+    col_esq, col_meio, col_dir = st.columns([1, 2, 1])
+    with col_meio:
+        if LOGO_PATH:
+            st.image(LOGO_PATH, width=120)
+        st.title("Painel de Projeção de Custos")
+        st.caption("Controladoria · faça login para continuar")
+        with st.form("login_form"):
+            email = st.text_input("E-mail")
+            senha = st.text_input("Senha", type="password")
+            entrar = st.form_submit_button("Entrar", use_container_width=True)
+        if entrar:
+            if not email.strip() or not senha.strip():
+                st.error("Preencha e-mail e senha.")
             else:
-                st.error(f"Login inválido: {erro}")
+                ok, user_email, erro = fazer_login(email.strip(), senha)
+                if ok:
+                    st.session_state.user_email = user_email
+                    st.session_state.role = "admin" if user_email == ADMIN_EMAIL else "viewer"
+                    st.session_state.nome_usuario = buscar_nome_usuario(user_email)
+                    carregar_dados()
+                    st.rerun()
+                else:
+                    st.error(f"Login inválido: {erro}")
     st.stop()
 
 is_admin = st.session_state.role == "admin"
