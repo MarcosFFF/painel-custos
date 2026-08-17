@@ -461,33 +461,32 @@ st.divider()
 # ============================================================
 # HISTÓRICO MENSAL — Projetado × Real
 # ============================================================
-st.subheader("Histórico mensal · Projetado × Real")
+with st.expander("📊 Histórico mensal · Projetado × Real"):
+    linhas_mensal = []
+    mes_corrente_label = None
+    opcoes_edicao = []  # (label, key) só dos meses fechados, para o formulário de edição
+    for k in sorted(st.session_state.historico_mensal.keys(), reverse=True):
+        dado = st.session_state.historico_mensal[k]
+        eh_atual = k >= mes_key(ANO_HOJE, MES_HOJE)
+        if eh_atual:
+            mes_corrente_label = label_mes(k)
+        else:
+            opcoes_edicao.append((label_mes(k), k))
+        linhas_mensal.append({
+            "Mês": label_mes(k),
+            "Projetado": "mês corrente" if eh_atual else fmt_brl(dado["projetado"]),
+            "Real": "mês corrente" if eh_atual else fmt_brl(dado["real"]),
+        })
 
-linhas_mensal = []
-mes_corrente_label = None
-opcoes_edicao = []  # (label, key) só dos meses fechados, para o formulário de edição
-for k in sorted(st.session_state.historico_mensal.keys(), reverse=True):
-    dado = st.session_state.historico_mensal[k]
-    eh_atual = k >= mes_key(ANO_HOJE, MES_HOJE)
-    if eh_atual:
-        mes_corrente_label = label_mes(k)
-    else:
-        opcoes_edicao.append((label_mes(k), k))
-    linhas_mensal.append({
-        "Mês": label_mes(k),
-        "Projetado": "mês corrente" if eh_atual else fmt_brl(dado["projetado"]),
-        "Real": "mês corrente" if eh_atual else fmt_brl(dado["real"]),
-    })
+    df_mensal_exibir = pd.DataFrame(linhas_mensal)
 
-df_mensal_exibir = pd.DataFrame(linhas_mensal)
+    if mes_corrente_label:
+        st.caption(f"{mes_corrente_label} é o mês corrente — o Real dele é calculado automaticamente pelo acumulado diário (veja no topo da página).")
 
-if mes_corrente_label:
-    st.caption(f"{mes_corrente_label} é o mês corrente — o Real dele é calculado automaticamente pelo acumulado diário (veja no topo da página).")
+    st.dataframe(df_mensal_exibir, hide_index=True, use_container_width=True)
 
-st.dataframe(df_mensal_exibir, hide_index=True, use_container_width=True)
-
-if is_admin and opcoes_edicao:
-    with st.expander("✏️ Corrigir o Real de um mês encerrado"):
+    if is_admin and opcoes_edicao:
+        st.markdown("**✏️ Corrigir o Real de um mês encerrado**")
         labels_edicao = [lbl for lbl, _ in opcoes_edicao]
         escolha = st.selectbox("Mês", labels_edicao, key="select_mes_editar")
         key_escolhida = dict(opcoes_edicao)[escolha]
@@ -506,4 +505,3 @@ if is_admin and opcoes_edicao:
                 st.rerun()
             else:
                 st.error(f"Erro ao salvar: {erro}")
-
