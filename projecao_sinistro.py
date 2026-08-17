@@ -200,6 +200,95 @@ def projetar_sinistro_mes_atual(lancamentos: dict, historico_mensal: dict,
     }
 
 
+# ---------- sazonalidade cruzada: semana do mês × dia da semana ----------
+def semana_do_mes(dia):
+    """Bucket de 7 em 7 dias: dias 1-7=semana1 (índice 0), 8-14=semana2, 15-21=semana3,
+    22-28=semana4, 29-31=semana5."""
+    return min((dia - 1) // 7, 4)
+
+
+def indice_semana_dow(lancamentos: dict, min_amostras=5):
+    """
+    Aprende um índice de sazonalidade CRUZADO (semana do mês × dia da semana) a partir do
+    histórico diário completo. Para cada dia do histórico, calcula o quanto ele desviou da
+    média do mês a que pertence, e agrupa esses desvios por (semana do mês, dia da semana) —
+    assim "3ª terça-feira do mês" tem seu próprio índice, diferente de "1ª terça-feira".
+
+    Retorna um dict {(semana_0a4, dia_semana_0a6): índice}. Combinações sem amostras
+    suficientes (min_amostras) caem no valor neutro 1.0, para não distorcer com pouco dado.
+    """
+    por_mes = {}
+    for key, valor in lancamentos.items():
+        mk = key[:7]
+        por_mes.setdefault(mk, []).append(valor)
+    media_mes = {mk: sum(v) / len(v) for mk, v in por_mes.items() if len(v) > 0}
+
+    soma, cont = {}, {}
+    for key, valor in lancamentos.items():
+        mk = key[:7]
+        if media_mes.get(mk, 0) == 0:
+            continue
+        y, m, d = (int(x) for x in key.split("-"))
+        wd = date(y, m, d).weekday()
+        sem = semana_do_mes(d)
+        chave = (sem, wd)
+        soma[chave] = soma.get(chave, 0) + valor / media_mes[mk]
+        cont[chave] = cont.get(chave, 0) + 1
+
+    indice = {}
+    for sem in range(5):
+        for wd in range(7):
+            chave = (sem, wd)
+            if cont.get(chave, 0) >= min_amostras:
+                indice[chave] = soma[chave] / cont[chave]
+            else:
+                indice[chave] = 1.0
+    return indice
+
+
+def projetar_dias_restantes(lancamentos: dict, ano, mes, dia_corte, min_amostras=5):
+    """
+    Projeta o valor de CADA dia restante do mês (de dia_corte+1 até o último dia do mês),
+    combinando:
+      1) o total do mês inteiro projetado por regra de três simples (run-rate de dias úteis);
+      2) distribuído pelos dias restantes conforme o índice semana-do-mês × dia-da-semana,
+         aprendido do histórico — então dias parecidos (ex.: todas as terças) NÃO recebem
+         mais o mesmo valor; cada um pesa conforme seu padrão real naquela posição do mês.
+
+    Retorna:
+      {
+        "projecao_mes": total projetado do mês inteiro,
+        "dias": {dia: valor_projetado, ...}   # só os dias APÓS dia_corte
+      }
+    """
+    total_dias_mes = (date(ano, mes % 12 + 1, 1) - timedelta(days=1)).day if mes < 12 else 31
+
+    soma_ate = solicitado_ate_dia_do_mes(lancamentos, ano, mes, dia_corte)
+    du_ate = dias_uteis_no_intervalo(ano, mes, 1, dia_corte)
+    du_total = dias_uteis_no_intervalo(ano, mes, 1, 31)
+
+    projecao_mes = projecao_solicitado(soma_ate, du_ate, du_total)
+    if projecao_mes is None:
+        return {"projecao_mes": None, "dias": {}}
+
+    valor_restante = projecao_mes - soma_ate
+    indice = indice_semana_dow(lancamentos, min_amostras=min_amostras)
+
+    pesos = {}
+    for d in range(dia_corte + 1, total_dias_mes + 1):
+        wd = date(ano, mes, d).weekday()
+        sem = semana_do_mes(d)
+        pesos[d] = indice.get((sem, wd), 1.0)
+    soma_pesos = sum(pesos.values())
+
+    dias_projetados = {}
+    if soma_pesos > 0:
+        for d, peso in pesos.items():
+            dias_projetados[d] = valor_restante * (peso / soma_pesos)
+
+    return {"projecao_mes": projecao_mes, "dias": dias_projetados}
+
+
 # ---------- exemplo de uso dentro do app.py ----------
 # resultado = projetar_sinistro_mes_atual(
 #     st.session_state.lancamentos,
@@ -213,3 +302,11 @@ def projetar_sinistro_mes_atual(lancamentos: dict, historico_mensal: dict,
 #   - n_meses=3 ou n_meses=4
 #   - metodo="media_razoes"
 # e compare qual combinação reproduz o número que você vê na planilha.
+
+# ---------- exemplo de uso: quebra dia a dia (dias restantes do mês) ----------
+# resultado_dias = projetar_dias_restantes(
+#     st.session_state.lancamentos,
+#     ANO_HOJE, MES_HOJE, DIA_HOJE,
+# )
+# for dia, valor in sorted(resultado_dias["dias"].items()):
+#     print(dia, valor)
