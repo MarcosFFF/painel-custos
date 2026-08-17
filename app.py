@@ -3,6 +3,7 @@ import pandas as pd
 import os
 from datetime import date, datetime
 from supabase import create_client, Client
+from projecao_sinistro import projetar_sinistro_mes_atual
 
 # ============================================================
 # Painel de Projeção de Custos — versão Streamlit
@@ -346,10 +347,15 @@ dado_mensal_do_mes_visto = st.session_state.historico_mensal.get(mes_key_atual)
 
 # ---------- projeção ----------
 if eh_mes_atual:
-    proj_info = projecao_sazonal_de(view_year, view_month, total, entradas, acumulado, mes_key_atual)
-    projecao = proj_info["final"]
-    label_projetado = "Valor projetado (estimativa)"
-    nota = f"Baseline: {fmt_brl(proj_info['baseline'])}" if proj_info["baseline"] is not None else (proj_info["fonte"] or "Sem histórico mensal suficiente — usando só o ritmo deste mês.")
+    resultado_sinistro = projetar_sinistro_mes_atual(
+        st.session_state.lancamentos,
+        st.session_state.historico_mensal,
+        view_year, view_month, DIA_HOJE,
+        n_meses=2, metodo="razao_soma",
+    )
+    projecao = resultado_sinistro["sinistro_projetado"]
+    label_projetado = "Valor projetado (Sinistro)"
+    nota = f"Solicitado projetado: {fmt_brl(resultado_sinistro['projecao_solicitado'])} · razão histórica: {resultado_sinistro['razao_media_historica']:.2%}"
 elif dado_mensal_do_mes_visto and dado_mensal_do_mes_visto["projetado"] is not None:
     projecao = dado_mensal_do_mes_visto["projetado"]
     label_projetado = "Valor projetado (oficial)"
