@@ -114,6 +114,22 @@ def solicitado_ate_dia_do_mes(lancamentos: dict, ano, mes, dia_corte):
     return soma
 
 
+def ultimo_dia_com_dado(lancamentos: dict, ano, mes, dia_corte):
+    """
+    Encontra o último dia (até dia_corte) que REALMENTE tem lançamento no mês.
+    Isso evita contar 'hoje' como dia útil decorrido quando hoje ainda não foi lançado —
+    o mesmo problema de contar um dia sem dado como se já tivesse fechado.
+    """
+    total_mes_dias = (date(ano, mes % 12 + 1, 1) - timedelta(days=1)).day if mes < 12 else 31
+    limite = min(dia_corte, total_mes_dias)
+    ultimo = 0
+    for d in range(1, limite + 1):
+        key = f"{ano:04d}-{mes:02d}-{d:02d}"
+        if key in lancamentos:
+            ultimo = d
+    return ultimo
+
+
 def razao_media_historica(lancamentos: dict, historico_mensal: dict, ano_atual, mes_atual,
                             dia_corte, n_meses=2, metodo="razao_soma"):
     """
@@ -180,8 +196,10 @@ def projetar_sinistro_mes_atual(lancamentos: dict, historico_mensal: dict,
 
     Retorna um dict com todos os valores intermediários, para você conferir/exibir no painel.
     """
-    sol_ate = solicitado_ate_dia_do_mes(lancamentos, ano_atual, mes_atual, dia_corte)
-    du_ate = dias_uteis_no_intervalo(ano_atual, mes_atual, 1, dia_corte)
+    dia_corte_efetivo = ultimo_dia_com_dado(lancamentos, ano_atual, mes_atual, dia_corte)
+
+    sol_ate = solicitado_ate_dia_do_mes(lancamentos, ano_atual, mes_atual, dia_corte_efetivo)
+    du_ate = dias_uteis_no_intervalo(ano_atual, mes_atual, 1, dia_corte_efetivo)
     du_total = dias_uteis_no_intervalo(ano_atual, mes_atual, 1, 31)
 
     proj_sol = projecao_solicitado(sol_ate, du_ate, du_total)
@@ -263,8 +281,10 @@ def projetar_dias_restantes(lancamentos: dict, ano, mes, dia_corte, min_amostras
     """
     total_dias_mes = (date(ano, mes % 12 + 1, 1) - timedelta(days=1)).day if mes < 12 else 31
 
-    soma_ate = solicitado_ate_dia_do_mes(lancamentos, ano, mes, dia_corte)
-    du_ate = dias_uteis_no_intervalo(ano, mes, 1, dia_corte)
+    dia_corte_efetivo = ultimo_dia_com_dado(lancamentos, ano, mes, dia_corte)
+
+    soma_ate = solicitado_ate_dia_do_mes(lancamentos, ano, mes, dia_corte_efetivo)
+    du_ate = dias_uteis_no_intervalo(ano, mes, 1, dia_corte_efetivo)
     du_total = dias_uteis_no_intervalo(ano, mes, 1, 31)
 
     projecao_mes = projecao_solicitado(soma_ate, du_ate, du_total)
@@ -275,7 +295,7 @@ def projetar_dias_restantes(lancamentos: dict, ano, mes, dia_corte, min_amostras
     indice = indice_semana_dow(lancamentos, min_amostras=min_amostras)
 
     pesos = {}
-    for d in range(dia_corte + 1, total_dias_mes + 1):
+    for d in range(dia_corte_efetivo + 1, total_dias_mes + 1):
         wd = date(ano, mes, d).weekday()
         sem = semana_do_mes(d)
         pesos[d] = indice.get((sem, wd), 1.0)
