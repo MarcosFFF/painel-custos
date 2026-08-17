@@ -22,22 +22,15 @@ st.set_page_config(page_title="Painel de Custos", page_icon=(LOGO_PATH or "📊"
 
 st.markdown("""
 <style>
-html, body { font-size: 14px !important; }
+html, body, [class*="css"]  { font-size: 14px !important; }
 h1 { font-size: 1.6rem !important; }
 h2 { font-size: 1.3rem !important; }
 h3 { font-size: 1.1rem !important; }
 [data-testid="stMetricValue"] { font-size: 1.3rem !important; }
 [data-testid="stMetricLabel"] { font-size: 0.78rem !important; }
 [data-testid="stMetricDelta"] { font-size: 0.78rem !important; }
-[data-testid="stCaptionContainer"] { font-size: 0.75rem !important; }
+.stCaption, [data-testid="stCaptionContainer"] { font-size: 0.75rem !important; }
 div[data-testid="stDataFrame"] * { font-size: 0.8rem !important; }
-
-/* espaçamento mais compacto */
-.block-container { padding-top: 3rem !important; padding-bottom: 1.5rem !important; }
-div[data-testid="stVerticalBlock"] { gap: 0.35rem !important; }
-hr { margin: 0.4rem 0 !important; }
-div[data-testid="stMetric"] { padding: 0.15rem 0 !important; }
-div.element-container { margin-bottom: 0.1rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -60,9 +53,9 @@ ADMIN_EMAIL = st.secrets["ADMIN_EMAIL"]
 
 def titulo_com_logo():
     if LOGO_PATH:
-        col_logo, col_txt = st.columns([1, 6], vertical_alignment="center")
+        col_logo, col_txt = st.columns([1, 6])
         with col_logo:
-            st.image(LOGO_PATH, use_container_width=True)
+            st.image(LOGO_PATH, width=70)
         with col_txt:
             st.title("Painel de Projeção de Custos")
     else:
@@ -269,29 +262,25 @@ if "user_email" not in st.session_state:
     st.session_state.role = None
 
 if st.session_state.user_email is None:
-    col_esq, col_meio, col_dir = st.columns([1, 2, 1])
-    with col_meio:
-        if LOGO_PATH:
-            st.image(LOGO_PATH, width=120)
-        st.title("Painel de Projeção de Custos")
-        st.caption("Controladoria · faça login para continuar")
-        with st.form("login_form"):
-            email = st.text_input("E-mail")
-            senha = st.text_input("Senha", type="password")
-            entrar = st.form_submit_button("Entrar", use_container_width=True)
-        if entrar:
-            if not email.strip() or not senha.strip():
-                st.error("Preencha e-mail e senha.")
+    titulo_com_logo()
+    st.caption("Controladoria · faça login para continuar")
+    with st.form("login_form"):
+        email = st.text_input("E-mail")
+        senha = st.text_input("Senha", type="password")
+        entrar = st.form_submit_button("Entrar", use_container_width=True)
+    if entrar:
+        if not email.strip() or not senha.strip():
+            st.error("Preencha e-mail e senha.")
+        else:
+            ok, user_email, erro = fazer_login(email.strip(), senha)
+            if ok:
+                st.session_state.user_email = user_email
+                st.session_state.role = "admin" if user_email == ADMIN_EMAIL else "viewer"
+                st.session_state.nome_usuario = buscar_nome_usuario(user_email)
+                carregar_dados()
+                st.rerun()
             else:
-                ok, user_email, erro = fazer_login(email.strip(), senha)
-                if ok:
-                    st.session_state.user_email = user_email
-                    st.session_state.role = "admin" if user_email == ADMIN_EMAIL else "viewer"
-                    st.session_state.nome_usuario = buscar_nome_usuario(user_email)
-                    carregar_dados()
-                    st.rerun()
-                else:
-                    st.error(f"Login inválido: {erro}")
+                st.error(f"Login inválido: {erro}")
     st.stop()
 
 is_admin = st.session_state.role == "admin"
@@ -302,55 +291,47 @@ if "lancamentos" not in st.session_state:
 # ============================================================
 # CABEÇALHO
 # ============================================================
-# ============================================================
-# CABEÇALHO
-# ============================================================
-titulo_com_logo()
-
-nome_exibicao = st.session_state.get("nome_usuario") or st.session_state.user_email
-badge = "🟢 Administrador" if is_admin else "🔵 Visualização"
-col_info, col_sair = st.columns([5, 1])
-with col_info:
-    st.caption(f"**{nome_exibicao}** · {badge}")
-with col_sair:
+col_titulo, col_user = st.columns([3, 1])
+with col_titulo:
+    titulo_com_logo()
+with col_user:
+    nome_exibicao = st.session_state.get("nome_usuario") or st.session_state.user_email
+    badge = "🟢 Administrador" if is_admin else "🔵 Visualização"
+    st.write(f"**{nome_exibicao}**")
+    st.caption(badge)
     if st.button("Sair", use_container_width=True):
         fazer_logout()
         st.rerun()
-
-st.divider()
 
 # ---------- navegação de mês ----------
 if "view_year" not in st.session_state:
     st.session_state.view_year = ANO_HOJE
     st.session_state.view_month = MES_HOJE
 
-eh_mes_atual_nav = (st.session_state.view_year == ANO_HOJE and st.session_state.view_month == MES_HOJE)
-
-c1, c2, c3 = st.columns([1, 4, 1])
+c1, c2, c3, c4 = st.columns([1, 3, 1, 2])
 with c1:
-    if st.button("◀ Anterior", use_container_width=True):
+    if st.button("◀", use_container_width=True):
         vy, vm = st.session_state.view_year, st.session_state.view_month - 1
         if vm < 1:
             vm, vy = 12, vy - 1
         st.session_state.view_year, st.session_state.view_month = vy, vm
         st.rerun()
 with c2:
-    st.markdown(f"<h3 style='text-align:center; margin:0;'>{MESES[st.session_state.view_month - 1]} / {st.session_state.view_year}</h3>", unsafe_allow_html=True)
+    st.markdown(f"### {MESES[st.session_state.view_month - 1]} / {st.session_state.view_year}")
 with c3:
-    if st.button("Seguinte ▶", use_container_width=True, disabled=eh_mes_atual_nav):
+    eh_mes_atual_nav = (st.session_state.view_year == ANO_HOJE and st.session_state.view_month == MES_HOJE)
+    if st.button("▶", use_container_width=True, disabled=eh_mes_atual_nav):
         vy, vm = st.session_state.view_year, st.session_state.view_month + 1
         if vm > 12:
             vm, vy = 1, vy + 1
         st.session_state.view_year, st.session_state.view_month = vy, vm
         st.rerun()
-
-c4, c5 = st.columns(2)
 with c4:
-    if st.button("Ir para o mês atual", use_container_width=True, disabled=eh_mes_atual_nav):
-        st.session_state.view_year, st.session_state.view_month = ANO_HOJE, MES_HOJE
-        st.rerun()
-with c5:
-    if st.button("🔄 Atualizar dados", use_container_width=True):
+    if not eh_mes_atual_nav:
+        if st.button("Ir para o mês atual"):
+            st.session_state.view_year, st.session_state.view_month = ANO_HOJE, MES_HOJE
+            st.rerun()
+    if st.button("🔄 Atualizar dados"):
         carregar_dados()
         st.rerun()
 
@@ -415,34 +396,15 @@ proj_mesmo_mes_ano_anterior = dado_mesmo_mes_ano_anterior["projetado"] if dado_m
 acum_mes_anterior = acumulado_ate_dia(ano_ant_mes, mes_ant_mes, DIA_HOJE)
 acum_mesmo_mes_ano_anterior = acumulado_ate_dia(view_year - 1, view_month, DIA_HOJE)
 
-def variacao_pct(atual, referencia):
-    if atual is None or referencia is None or referencia == 0:
-        return None
-    return (atual - referencia) / referencia * 100
-
 col_comp1, col_comp2 = st.columns(2)
 with col_comp1:
     st.markdown(f"**{label_mes(key_mes_anterior)}** (mês anterior)")
-    delta_proj = variacao_pct(projecao, proj_mes_anterior)
-    delta_acum = variacao_pct(acumulado, acum_mes_anterior)
-    st.metric("Valor projetado", fmt_brl(proj_mes_anterior),
-               delta=(f"{delta_proj:+.1f}%" if delta_proj is not None else None),
-               delta_color="inverse")
-    st.metric(f"Valor acumulado até dia {DIA_HOJE:02d}", fmt_brl(acum_mes_anterior),
-               delta=(f"{delta_acum:+.1f}%" if delta_acum is not None else None),
-               delta_color="inverse")
+    st.metric("Valor projetado", fmt_brl(proj_mes_anterior))
+    st.metric(f"Valor acumulado até dia {DIA_HOJE:02d}", fmt_brl(acum_mes_anterior))
 with col_comp2:
     st.markdown(f"**{label_mes(key_mesmo_mes_ano_anterior)}** (mesmo mês, ano anterior)")
-    delta_proj_aa = variacao_pct(projecao, proj_mesmo_mes_ano_anterior)
-    delta_acum_aa = variacao_pct(acumulado, acum_mesmo_mes_ano_anterior)
-    st.metric("Valor projetado", fmt_brl(proj_mesmo_mes_ano_anterior),
-               delta=(f"{delta_proj_aa:+.1f}%" if delta_proj_aa is not None else None),
-               delta_color="inverse")
-    st.metric(f"Valor acumulado até dia {DIA_HOJE:02d}", fmt_brl(acum_mesmo_mes_ano_anterior),
-               delta=(f"{delta_acum_aa:+.1f}%" if delta_acum_aa is not None else None),
-               delta_color="inverse")
-
-st.caption("Variação % em relação ao mês/ano corrente sendo visualizado — vermelho = aumento de custo, verde = redução.")
+    st.metric("Valor projetado", fmt_brl(proj_mesmo_mes_ano_anterior))
+    st.metric(f"Valor acumulado até dia {DIA_HOJE:02d}", fmt_brl(acum_mesmo_mes_ano_anterior))
 
 st.divider()
 
@@ -506,45 +468,47 @@ st.divider()
 st.subheader("Histórico mensal · Projetado × Real")
 
 linhas_mensal = []
-mes_corrente_label = None
-opcoes_edicao = []  # (label, key) só dos meses fechados, para o formulário de edição
 for k in sorted(st.session_state.historico_mensal.keys(), reverse=True):
     dado = st.session_state.historico_mensal[k]
     eh_atual = k >= mes_key(ANO_HOJE, MES_HOJE)
-    if eh_atual:
-        mes_corrente_label = label_mes(k)
-    else:
-        opcoes_edicao.append((label_mes(k), k))
     linhas_mensal.append({
         "Mês": label_mes(k),
-        "Projetado": "mês corrente" if eh_atual else fmt_brl(dado["projetado"]),
-        "Real": "mês corrente" if eh_atual else fmt_brl(dado["real"]),
+        "_key": k,
+        "Projetado (R$)": dado["projetado"],
+        "Real (R$)": "mês corrente" if eh_atual else dado["real"],
+        "_editavel": not eh_atual,
     })
 
-df_mensal_exibir = pd.DataFrame(linhas_mensal)
+df_mensal = pd.DataFrame(linhas_mensal)
+df_mensal_exibir = df_mensal.drop(columns=["_key", "_editavel"])
 
-if mes_corrente_label:
-    st.caption(f"{mes_corrente_label} é o mês corrente — o Real dele é calculado automaticamente pelo acumulado diário (veja no topo da página).")
+if is_admin:
+    # separa o mês corrente (não editável) do restante, para permitir edição só nos meses fechados
+    df_editaveis = df_mensal[df_mensal["_editavel"]].copy()
+    df_editaveis["Real (R$)"] = pd.to_numeric(df_editaveis["Real (R$)"], errors="coerce")
 
-st.dataframe(df_mensal_exibir, hide_index=True, use_container_width=True)
+    editado_mensal = st.data_editor(
+        df_editaveis.drop(columns=["_key", "_editavel"]),
+        hide_index=True,
+        use_container_width=True,
+        disabled=["Mês", "Projetado (R$)"],
+        column_config={
+            "Real (R$)": st.column_config.NumberColumn(format="R$ %.2f", step=0.01),
+        },
+        key=f"editor_mensal_{view_year}_{view_month}",
+    )
 
-if is_admin and opcoes_edicao:
-    with st.expander("✏️ Corrigir o Real de um mês encerrado"):
-        labels_edicao = [lbl for lbl, _ in opcoes_edicao]
-        escolha = st.selectbox("Mês", labels_edicao, key="select_mes_editar")
-        key_escolhida = dict(opcoes_edicao)[escolha]
-        valor_atual = st.session_state.historico_mensal[key_escolhida]["real"]
-        novo_valor = st.number_input(
-            f"Novo valor Real para {escolha}",
-            value=float(valor_atual) if valor_atual is not None else 0.0,
-            step=0.01,
-            format="%.2f",
-            key=f"input_real_{key_escolhida}",
-        )
-        if st.button("Salvar", key=f"salvar_real_{key_escolhida}"):
-            ok, erro = gravar_real_mensal(key_escolhida, novo_valor)
+    for i, row in editado_mensal.iterrows():
+        k = df_editaveis.iloc[i]["_key"]
+        novo = row["Real (R$)"]
+        atual = st.session_state.historico_mensal[k]["real"]
+        if valor_valido(novo) and novo != atual:
+            ok, erro = gravar_real_mensal(k, novo)
             if ok:
-                st.success(f"Real de {escolha} atualizado para {fmt_brl(novo_valor)}.")
                 st.rerun()
             else:
-                st.error(f"Erro ao salvar: {erro}")
+                st.error(f"Erro ao salvar {label_mes(k)}: {erro}")
+
+    st.caption("Toque no valor Real de um mês encerrado para corrigir. O mês corrente não é editável aqui.")
+else:
+    st.dataframe(df_mensal_exibir, hide_index=True, use_container_width=True)
