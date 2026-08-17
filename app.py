@@ -3,7 +3,7 @@ import pandas as pd
 import os
 from datetime import date, datetime
 from supabase import create_client, Client
-from projecao_sinistro import projetar_sinistro_mes_atual
+from projecao_sinistro import projetar_sinistro_mes_atual, projetar_dias_restantes
 
 # ============================================================
 # Painel de Projeção de Custos — versão Streamlit
