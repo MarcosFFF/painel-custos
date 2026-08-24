@@ -1,12 +1,12 @@
 """
-Módulo de Severidade — carrega os parquets (guias), cruza com 1004 (USO) e
+Módulo de Severidade — carrega os CSVs (guias, separador ';'), cruza com 1004 (USO) e
 Cluster BI (cidade -> cluster/UF/região), e fornece todos os cálculos usados
 na aba "Severidade" do painel.
 
 ARQUIVOS ESPERADOS (na mesma pasta do app.py, no repositório):
-  - *4016R.parquet ou *4016R_parte_N.parquet  (um (ou várias partes) por mês —
-    as 19 colunas reais, sem NOME_USUARIO, DS_PRESTADOR nem CPF_CNPJ_PRESTADOR;
-    prestador identificado só por CD_PRESTADOR)
+  - *4016R.csv ou *4016R_parte_N.csv  (um (ou várias partes) por mês — as 19
+    colunas reais, separador ';', decimal ',', sem NOME_USUARIO, DS_PRESTADOR
+    nem CPF_CNPJ_PRESTADOR; prestador identificado só por CD_PRESTADOR)
   - 1004.xlsx             (CODIGO, USO, e outras colunas de apoio)
   - cluster_BI.xlsx        (aba "Cluster": CIDADE, CLUSTER, UF_MUN, UF, CIDADE 5201, REGIÃO)
 """
@@ -32,54 +32,61 @@ def normalizar_texto(v):
 
 
 # ============================================================
-# CORREÇÃO AUTOMÁTICA de parquets malformados: alguns arquivos foram
-# exportados com bug — em vez de vir com as colunas separadas, vieram com
-# tudo junto numa única coluna de texto (o próprio NOME da coluna é o
-# cabeçalho inteiro colado com ';', e cada linha também vem colada assim).
+# LEITURA DE CSV (separador ';', decimal ',' — padrão brasileiro).
+# Tenta UTF-8 primeiro; se der erro de acentuação, cai para latin1 (cp1252),
+# que é o encoding mais comum em exportações feitas no Windows/Excel no Brasil.
 # ============================================================
-def _corrigir_parquet_malformado(df, colunas_esperadas):
-    nomes_colunas = [str(c) for c in df.columns]
-
-    # caso normal: as colunas já vêm certas
-    if all(c in nomes_colunas for c in colunas_esperadas):
-        return df
-
-    # caso malformado: procura a coluna cujo NOME é o cabeçalho inteiro colado com ';'
-    col_texto_unico = None
-    for c in df.columns:
-        if ";" in str(c) and "NU_GUIA" in str(c):
-            col_texto_unico = c
+def _ler_csv_parte(caminho, colunas_uteis):
+    tentativas_encoding = ["utf-8", "latin1"]
+    df = None
+    ultimo_erro = None
+    for enc in tentativas_encoding:
+        try:
+            df = pd.read_csv(
+                caminho, sep=";", encoding=enc,
+                dtype=str,  # lê tudo como texto primeiro; convertemos depois com controle
+                low_memory=False,
+            )
             break
+        except (UnicodeDecodeError, UnicodeError) as e:
+            ultimo_erro = e
+            continue
+    if df is None:
+        raise ValueError(f"Não consegui ler {caminho} nem em UTF-8 nem em latin1: {ultimo_erro}")
 
-    if col_texto_unico is None:
-        raise ValueError(f"Schema inesperado (nem colunas normais, nem o padrão malformado conhecido): {nomes_colunas}")
-
-    cabecalho_real = str(col_texto_unico).split(";")
-    valores_divididos = df[col_texto_unico].astype(str).str.split(";", expand=True)
-    n_col = min(len(cabecalho_real), valores_divididos.shape[1])
-    valores_divididos = valores_divididos.iloc[:, :n_col]
-    valores_divididos.columns = cabecalho_real[:n_col]
-    return valores_divididos
-
-
-def _ler_parquet_com_correcao(caminho, colunas_uteis):
-    """Lê o parquet SEM restringir colunas de cara (senão o pyarrow já falha se o
-    schema estiver malformado), corrige se precisar, depois seleciona só o necessário."""
-    df = pd.read_parquet(caminho, engine="pyarrow")
-    df = _corrigir_parquet_malformado(df, colunas_uteis)
+    # remove espaços acidentais nos nomes das colunas (comuns em export de planilha)
+    df.columns = [str(c).strip() for c in df.columns]
 
     colunas_presentes = [c for c in colunas_uteis if c in df.columns]
     faltando = [c for c in colunas_uteis if c not in df.columns]
-    df = df[colunas_presentes].copy()
-    for c in faltando:
-        df[c] = None
+    if faltando:
+        raise ValueError(f"Colunas faltando em {os.path.basename(caminho)}: {faltando}. Colunas encontradas: {list(df.columns)}")
 
-    # tipagem: colunas numéricas viram número de verdade (podem ter vindo como texto do split)
-    numericas = ["NU_GUIA", "CD_PLANO", "CD_PROCEDIMENTO", "CD_TUSS", "CD_PRESTADOR",
-                 "VL_PROCEDIMENTO", "VL_FRANQUIA", "VL_PAGO"]
+    df = df[colunas_presentes].copy()
+
+    # datas: formato brasileiro (dia primeiro)
+    for c in ["DATA_SOL", "DATA_AUT", "DATA_ATEND"]:
+        if c in df.columns:
+            df[c] = pd.to_datetime(df[c], dayfirst=True, errors="coerce")
+
+    # numéricos: já foram lidos como texto; converte com decimal ',' tratado
+    numericas = ["NU_GUIA", "CD_PLANO", "CD_PROCEDIMENTO", "CD_TUSS", "CD_PRESTADOR"]
     for c in numericas:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    valores = ["VL_PROCEDIMENTO", "VL_FRANQUIA", "VL_PAGO"]
+    for c in valores:
+        if c in df.columns:
+            # já veio convertido pelo decimal=',' do read_csv só se a coluna tiver sido lida
+            # como número — como forçamos dtype=str acima, tratamos aqui manualmente:
+            df[c] = (
+                df[c].astype(str).str.strip()
+                .str.replace(".", "", regex=False)   # remove separador de milhar, se houver
+                .str.replace(",", ".", regex=False)  # vírgula decimal -> ponto
+            )
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
     return df
 
 
@@ -88,9 +95,9 @@ def _ler_parquet_com_correcao(caminho, colunas_uteis):
 # partes, por causa do limite de 25MB do upload pelo navegador do GitHub)
 # ============================================================
 def _chave_mes(caminho):
-    """Agrupa partes do mesmo mês: '01 2026 4016R_parte_2.parquet' -> '01 2026 4016R'."""
+    """Agrupa partes do mesmo mês: '01 2026 4016R_parte_2.csv' -> '01 2026 4016R'."""
     nome = os.path.basename(caminho)
-    nome_sem_ext = nome[:-len(".parquet")]
+    nome_sem_ext = os.path.splitext(nome)[0]
     if "_parte_" in nome_sem_ext:
         nome_sem_ext = nome_sem_ext.split("_parte_")[0]
     return nome_sem_ext
@@ -111,13 +118,13 @@ def _numero_parte(caminho):
 # ============================================================
 @st.cache_data(show_spinner="Carregando dados de severidade...")
 def carregar_base_severidade(pasta="."):
-    # ---------- 1) parquets (aceita arquivos inteiros OU divididos em partes) ----------
+    # ---------- 1) csvs (aceita arquivos inteiros OU divididos em partes) ----------
     candidatos = sorted(
-        glob.glob(os.path.join(pasta, "*4016R.parquet"))
-        + glob.glob(os.path.join(pasta, "*4016R_parte_*.parquet"))
+        glob.glob(os.path.join(pasta, "*4016R.csv"))
+        + glob.glob(os.path.join(pasta, "*4016R_parte_*.csv"))
     )
     if not candidatos:
-        return None, "Nenhum arquivo .parquet encontrado (padrão *4016R.parquet ou *4016R_parte_N.parquet)."
+        return None, "Nenhum arquivo .csv encontrado (padrão *4016R.csv ou *4016R_parte_N.csv)."
 
     grupos_arquivo = {}
     for c in candidatos:
@@ -136,7 +143,7 @@ def carregar_base_severidade(pasta="."):
     for chave_grupo, arquivos_do_grupo in grupos_arquivo.items():
         for arq in arquivos_do_grupo:
             try:
-                df = _ler_parquet_com_correcao(arq, colunas_uteis)
+                df = _ler_csv_parte(arq, colunas_uteis)
             except Exception as e:
                 return None, f"Erro ao ler {os.path.basename(arq)}: {e}"
             df["ARQUIVO_ORIGEM"] = chave_grupo  # todas as partes do mesmo mês compartilham a mesma origem
@@ -144,9 +151,9 @@ def carregar_base_severidade(pasta="."):
     dados = pd.concat(partes, ignore_index=True)
 
     # ---------- 2) mês de referência (usa DATA_ATEND; se vazio, cai para DATA_SOL) ----------
-    dados["DATA_REF"] = pd.to_datetime(dados["DATA_ATEND"], errors="coerce")
+    dados["DATA_REF"] = dados["DATA_ATEND"]
     sem_atend = dados["DATA_REF"].isna()
-    dados.loc[sem_atend, "DATA_REF"] = pd.to_datetime(dados.loc[sem_atend, "DATA_SOL"], errors="coerce")
+    dados.loc[sem_atend, "DATA_REF"] = dados.loc[sem_atend, "DATA_SOL"]
     dados["MES"] = dados["DATA_REF"].dt.strftime("%Y-%m")
 
     # ---------- 3) cruzamento com 1004 (USO por procedimento) ----------
