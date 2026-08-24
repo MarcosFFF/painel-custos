@@ -36,6 +36,16 @@ def normalizar_texto(v):
 # 'Execução' em 'ExecuÃ§Ã£o', 'São Paulo' em 'SÃ£o Paulo', etc. Esta função
 # detecta esse padrão e desfaz o dano.
 # ============================================================
+def normalizar_nomes_colunas(df):
+    """Remove acentos e converte para maiúscula"""
+    import unicodedata
+    
+    def remover_acentos(texto):
+        nfd = unicodedata.normalize('NFD', texto)
+        return ''.join(char for char in nfd if unicodedata.category(char) != 'Mn')
+    
+    df.columns = [remover_acentos(col).upper() for col in df.columns]
+    return df
 def _corrigir_mojibake(texto):
     if texto is None:
         return texto
@@ -57,6 +67,7 @@ def _ler_csv_parte(caminho, colunas_uteis):
                 dtype=str,  # lê tudo como texto primeiro; convertemos depois com controle
                 low_memory=False,
             )
+            df = normalizar_nomes_colunas(df)
             break
         except (UnicodeDecodeError, UnicodeError) as e:
             ultimo_erro = e
