@@ -4,8 +4,9 @@ Cluster BI (cidade -> cluster/UF/região), e fornece todos os cálculos usados
 na aba "Severidade" do painel.
 
 ARQUIVOS ESPERADOS (na mesma pasta do app.py, no repositório):
-  - *_2026_4016R.parquet  (um por mês — as 19 colunas reais, sem NOME_USUARIO,
-    DS_PRESTADOR nem CPF_CNPJ_PRESTADOR; prestador identificado só por CD_PRESTADOR)
+  - *4016R.parquet ou *4016R_parte_N.parquet  (um (ou várias partes) por mês —
+    as 19 colunas reais, sem NOME_USUARIO, DS_PRESTADOR nem CPF_CNPJ_PRESTADOR;
+    prestador identificado só por CD_PRESTADOR)
   - 1004.xlsx             (CODIGO, USO, e outras colunas de apoio)
   - cluster_BI.xlsx        (aba "Cluster": CIDADE, CLUSTER, UF_MUN, UF, CIDADE 5201, REGIÃO)
 """
@@ -31,14 +32,98 @@ def normalizar_texto(v):
 
 
 # ============================================================
+# CORREÇÃO AUTOMÁTICA de parquets malformados: alguns arquivos foram
+# exportados com bug — em vez de vir com as colunas separadas, vieram com
+# tudo junto numa única coluna de texto (o próprio NOME da coluna é o
+# cabeçalho inteiro colado com ';', e cada linha também vem colada assim).
+# ============================================================
+def _corrigir_parquet_malformado(df, colunas_esperadas):
+    nomes_colunas = [str(c) for c in df.columns]
+
+    # caso normal: as colunas já vêm certas
+    if all(c in nomes_colunas for c in colunas_esperadas):
+        return df
+
+    # caso malformado: procura a coluna cujo NOME é o cabeçalho inteiro colado com ';'
+    col_texto_unico = None
+    for c in df.columns:
+        if ";" in str(c) and "NU_GUIA" in str(c):
+            col_texto_unico = c
+            break
+
+    if col_texto_unico is None:
+        raise ValueError(f"Schema inesperado (nem colunas normais, nem o padrão malformado conhecido): {nomes_colunas}")
+
+    cabecalho_real = str(col_texto_unico).split(";")
+    valores_divididos = df[col_texto_unico].astype(str).str.split(";", expand=True)
+    n_col = min(len(cabecalho_real), valores_divididos.shape[1])
+    valores_divididos = valores_divididos.iloc[:, :n_col]
+    valores_divididos.columns = cabecalho_real[:n_col]
+    return valores_divididos
+
+
+def _ler_parquet_com_correcao(caminho, colunas_uteis):
+    """Lê o parquet SEM restringir colunas de cara (senão o pyarrow já falha se o
+    schema estiver malformado), corrige se precisar, depois seleciona só o necessário."""
+    df = pd.read_parquet(caminho, engine="pyarrow")
+    df = _corrigir_parquet_malformado(df, colunas_uteis)
+
+    colunas_presentes = [c for c in colunas_uteis if c in df.columns]
+    faltando = [c for c in colunas_uteis if c not in df.columns]
+    df = df[colunas_presentes].copy()
+    for c in faltando:
+        df[c] = None
+
+    # tipagem: colunas numéricas viram número de verdade (podem ter vindo como texto do split)
+    numericas = ["NU_GUIA", "CD_PLANO", "CD_PROCEDIMENTO", "CD_TUSS", "CD_PRESTADOR",
+                 "VL_PROCEDIMENTO", "VL_FRANQUIA", "VL_PAGO"]
+    for c in numericas:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
+# ============================================================
+# AGRUPAMENTO DE ARQUIVOS EM PARTES (um mês pode vir dividido em várias
+# partes, por causa do limite de 25MB do upload pelo navegador do GitHub)
+# ============================================================
+def _chave_mes(caminho):
+    """Agrupa partes do mesmo mês: '01 2026 4016R_parte_2.parquet' -> '01 2026 4016R'."""
+    nome = os.path.basename(caminho)
+    nome_sem_ext = nome[:-len(".parquet")]
+    if "_parte_" in nome_sem_ext:
+        nome_sem_ext = nome_sem_ext.split("_parte_")[0]
+    return nome_sem_ext
+
+
+def _numero_parte(caminho):
+    nome = os.path.basename(caminho)
+    if "_parte_" in nome:
+        try:
+            return int(nome.split("_parte_")[1].split(".")[0])
+        except ValueError:
+            return 0
+    return 0
+
+
+# ============================================================
 # CARREGAMENTO E CRUZAMENTO DOS DADOS (cacheado — só recalcula quando pedido)
 # ============================================================
 @st.cache_data(show_spinner="Carregando dados de severidade...")
 def carregar_base_severidade(pasta="."):
-    # ---------- 1) parquets ----------
-    arquivos = sorted(glob.glob(os.path.join(pasta, "*_4016R.parquet")))
-    if not arquivos:
-        return None, "Nenhum arquivo .parquet encontrado (padrão *_4016R.parquet)."
+    # ---------- 1) parquets (aceita arquivos inteiros OU divididos em partes) ----------
+    candidatos = sorted(
+        glob.glob(os.path.join(pasta, "*4016R.parquet"))
+        + glob.glob(os.path.join(pasta, "*4016R_parte_*.parquet"))
+    )
+    if not candidatos:
+        return None, "Nenhum arquivo .parquet encontrado (padrão *4016R.parquet ou *4016R_parte_N.parquet)."
+
+    grupos_arquivo = {}
+    for c in candidatos:
+        grupos_arquivo.setdefault(_chave_mes(c), []).append(c)
+    for chave in grupos_arquivo:
+        grupos_arquivo[chave].sort(key=_numero_parte)
 
     colunas_uteis = [
         "NU_GUIA", "DATA_SOL", "DATA_AUT", "DATA_ATEND", "CD_USUARIO", "CD_PLANO", "NR_PLANO",
@@ -48,13 +133,14 @@ def carregar_base_severidade(pasta="."):
     ]
 
     partes = []
-    for arq in arquivos:
-        try:
-            df = pd.read_parquet(arq, engine="pyarrow", columns=colunas_uteis)
-        except Exception as e:
-            return None, f"Erro ao ler {os.path.basename(arq)}: {e}"
-        df["ARQUIVO_ORIGEM"] = os.path.basename(arq)
-        partes.append(df)
+    for chave_grupo, arquivos_do_grupo in grupos_arquivo.items():
+        for arq in arquivos_do_grupo:
+            try:
+                df = _ler_parquet_com_correcao(arq, colunas_uteis)
+            except Exception as e:
+                return None, f"Erro ao ler {os.path.basename(arq)}: {e}"
+            df["ARQUIVO_ORIGEM"] = chave_grupo  # todas as partes do mesmo mês compartilham a mesma origem
+            partes.append(df)
     dados = pd.concat(partes, ignore_index=True)
 
     # ---------- 2) mês de referência (usa DATA_ATEND; se vazio, cai para DATA_SOL) ----------
@@ -66,6 +152,7 @@ def carregar_base_severidade(pasta="."):
     # ---------- 3) cruzamento com 1004 (USO por procedimento) ----------
     tabela_1004 = pd.read_excel(os.path.join(pasta, "1004.xlsx"), sheet_name=0)
     tabela_1004 = tabela_1004[["CODIGO", "USO"]].rename(columns={"CODIGO": "CD_PROCEDIMENTO", "USO": "USO_PROCEDIMENTO"})
+    tabela_1004["CD_PROCEDIMENTO"] = pd.to_numeric(tabela_1004["CD_PROCEDIMENTO"], errors="coerce")
     dados = dados.merge(tabela_1004, on="CD_PROCEDIMENTO", how="left")
     dados["USO_PROCEDIMENTO"] = dados["USO_PROCEDIMENTO"].fillna(0)
     dados["QTD_USO"] = dados["USO_PROCEDIMENTO"]  # cada linha = 1 procedimento; a soma por grupo dá a "quantidade de uso"
