@@ -36,6 +36,24 @@ def normalizar_texto(v):
 # Tenta UTF-8 primeiro; se der erro de acentuação, cai para latin1 (cp1252),
 # que é o encoding mais comum em exportações feitas no Windows/Excel no Brasil.
 # ============================================================
+# ============================================================
+# CORREÇÃO DE "MOJIBAKE" — alguns arquivos foram salvos com texto que passou
+# por um encoding errado (UTF-8 lido como Latin-1), o que transforma
+# 'Execução' em 'ExecuÃ§Ã£o', 'São Paulo' em 'SÃ£o Paulo', etc. Esta função
+# detecta esse padrão e desfaz o dano.
+# ============================================================
+def _corrigir_mojibake(texto):
+    if texto is None:
+        return texto
+    s = str(texto)
+    if "Ã" not in s and "Â" not in s:
+        return s  # sem sinal de mojibake, não mexe
+    try:
+        return s.encode("latin1").decode("utf-8")
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        return s  # não deu pra corrigir, mantém como estava
+
+
 def _ler_csv_parte(caminho, colunas_uteis):
     tentativas_encoding = ["utf-8", "latin1"]
     df = None
@@ -54,8 +72,8 @@ def _ler_csv_parte(caminho, colunas_uteis):
     if df is None:
         raise ValueError(f"Não consegui ler {caminho} nem em UTF-8 nem em latin1: {ultimo_erro}")
 
-    # remove espaços acidentais nos nomes das colunas (comuns em export de planilha)
-    df.columns = [str(c).strip() for c in df.columns]
+    # remove espaços acidentais, corrige mojibake e padroniza maiúsculas nos nomes das colunas
+    df.columns = [_corrigir_mojibake(str(c).strip()).upper() for c in df.columns]
 
     colunas_presentes = [c for c in colunas_uteis if c in df.columns]
     faltando = [c for c in colunas_uteis if c not in df.columns]
@@ -63,6 +81,14 @@ def _ler_csv_parte(caminho, colunas_uteis):
         raise ValueError(f"Colunas faltando em {os.path.basename(caminho)}: {faltando}. Colunas encontradas: {list(df.columns)}")
 
     df = df[colunas_presentes].copy()
+
+    # corrige mojibake também nos VALORES das colunas de texto (não só no cabeçalho) —
+    # ex.: "São Paulo" pode ter virado "SÃ£o Paulo" nos dados também
+    colunas_texto = ["ESPECIALIDADE", "NR_PLANO", "NOME_PROCEDIMENTO", "STATUS_PROCED",
+                       "CIDADE_PRESTADOR", "UF", "EXECUÇÃO", "CD_USUARIO"]
+    for c in colunas_texto:
+        if c in df.columns:
+            df[c] = df[c].apply(_corrigir_mojibake)
 
     # datas: formato brasileiro (dia primeiro)
     for c in ["DATA_SOL", "DATA_AUT", "DATA_ATEND"]:
