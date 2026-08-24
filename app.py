@@ -4,6 +4,11 @@ import os
 from datetime import date, datetime
 from supabase import create_client, Client
 from projecao_sinistro import projetar_sinistro_mes_atual, projetar_dias_restantes
+from severidade import (
+    carregar_base_severidade, aplicar_filtros, ranking_por, evolucao_mensal,
+    ranking_severidade, identificar_ofensores, calcular_desvios, montar_watchlist,
+    comparacao_mensal,
+)
 
 # ============================================================
 # Painel de Projeção de Custos — versão Streamlit
@@ -68,9 +73,9 @@ def titulo_com_logo():
         with col_logo:
             st.image(LOGO_PATH, use_container_width=True)
         with col_txt:
-            st.title("Painel de Custos")
+            st.title("Painel de Projeção de Custos")
     else:
-        st.title("📊 Painel de Custos")
+        st.title("📊 Painel de Projeção de Custos")
 
 
 # ---------- funções de calendário ----------
@@ -540,38 +545,101 @@ if st.session_state.pagina == "projecao":
 # ============================================================
 elif st.session_state.pagina == "severidade":
     st.subheader("🔬 Severidade")
-    st.info(
-        "Estrutura de filtros pronta. Os cálculos (rankings, watchlist, ofensores, "
-        "desvios) entram assim que os 3 arquivos de apoio forem confirmados: "
-        "schema dos parquets, arquivo Cluster (cidade × cluster) e arquivo 1004 (CODIGO × USO)."
-    )
 
+    agregado, aviso_carga = carregar_base_severidade(".")
+
+    if agregado is None:
+        st.error(f"Não consegui carregar os dados de severidade: {aviso_carga}")
+        st.stop()
+
+    if aviso_carga:
+        st.warning(aviso_carga)
+
+    # ---------- filtros ----------
     with st.container(border=True):
         st.markdown("**Filtros**")
         fc1, fc2, fc3 = st.columns(3)
         with fc1:
-            st.multiselect("Mês", options=[], help="Populado quando os parquets forem carregados", disabled=True)
-            st.multiselect("UF", options=[], disabled=True)
+            f_mes = st.multiselect("Mês", options=sorted(agregado["MES"].dropna().unique(), reverse=True))
+            f_uf = st.multiselect("UF", options=sorted(agregado["UF"].dropna().unique()))
         with fc2:
-            st.multiselect("Região", options=[], disabled=True)
-            st.multiselect("Especialidade", options=[], disabled=True)
+            f_regiao = st.multiselect("Região", options=sorted(agregado["REGIÃO"].dropna().unique()))
+            f_especialidade = st.multiselect("Especialidade", options=sorted(agregado["ESPECIALIDADE"].dropna().unique()))
         with fc3:
-            st.multiselect("Plano", options=[], disabled=True)
-            st.multiselect("Cluster", options=[], disabled=True)
+            f_plano = st.multiselect("Plano", options=sorted(agregado["NR_PLANO"].dropna().unique()))
+            f_cluster = st.multiselect("Cluster", options=sorted(agregado["CLUSTER"].dropna().unique()))
 
-        st.slider("Volume mínimo de solicitações para considerar variação relevante",
-                   min_value=1, max_value=200, value=30, disabled=True)
+        volume_minimo = st.slider(
+            "Volume mínimo de procedimentos para considerar uma variação relevante",
+            min_value=1, max_value=200, value=30,
+        )
+
+    df_filtrado = aplicar_filtros(
+        agregado,
+        meses=f_mes or None, ufs=f_uf or None, regioes=f_regiao or None,
+        especialidades=f_especialidade or None, planos=f_plano or None, clusters=f_cluster or None,
+    )
+
+    if df_filtrado.empty:
+        st.info("Nenhum dado para esses filtros.")
+        st.stop()
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Procedimentos", f"{int(df_filtrado['qtd_procedimentos'].sum()):,}".replace(",", "."))
+    m2.metric("Valor pago", fmt_brl(df_filtrado["soma_vl_pago"].sum()))
+    m3.metric("Quantidade de uso", f"{int(df_filtrado['soma_uso'].sum()):,}".replace(",", "."))
+
+    st.divider()
 
     tab_rank, tab_evolucao, tab_watch, tab_severidade, tab_ofensores = st.tabs(
         ["Rankings", "Evolução mensal", "Watchlist", "Severidade", "Ofensores"]
     )
+
     with tab_rank:
-        st.caption("Rankings de especialidade, procedimento, UF e região — aguardando dados.")
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            st.markdown("**Por especialidade**")
+            st.dataframe(ranking_por(df_filtrado, "ESPECIALIDADE"), hide_index=True, use_container_width=True)
+            st.markdown("**Por UF**")
+            st.dataframe(ranking_por(df_filtrado, "UF"), hide_index=True, use_container_width=True)
+        with rc2:
+            st.markdown("**Por procedimento**")
+            st.dataframe(ranking_por(df_filtrado, "NOME_PROCEDIMENTO"), hide_index=True, use_container_width=True)
+            st.markdown("**Por região**")
+            st.dataframe(ranking_por(df_filtrado, "REGIÃO"), hide_index=True, use_container_width=True)
+
     with tab_evolucao:
-        st.caption("Evolução mensal — aguardando dados.")
+        evolucao = evolucao_mensal(df_filtrado)
+        st.line_chart(evolucao.set_index("MES")[["valor_pago"]])
+        st.line_chart(evolucao.set_index("MES")[["quantidade_uso", "media_uso"]])
+        st.dataframe(evolucao, hide_index=True, use_container_width=True)
+
     with tab_watch:
-        st.caption("Watchlist \"quem merece atenção\" — aguardando dados.")
+        st.caption("Combinação de custo médio, uso médio e tendência de crescimento, ponderada pelo volume (0-100).")
+        st.dataframe(montar_watchlist(df_filtrado), hide_index=True, use_container_width=True)
+
     with tab_severidade:
-        st.caption("Ranking de severidade (região, cidade, prestador, procedimento, especialidade, cluster) — aguardando dados.")
+        dims = {
+            "Região": "REGIÃO", "Cidade": "CIDADE_PRESTADOR", "Prestador (código)": "CD_PRESTADOR",
+            "Procedimento": "NOME_PROCEDIMENTO", "Especialidade": "ESPECIALIDADE", "Cluster": "CLUSTER",
+        }
+        dim_escolhida = st.selectbox("Dimensão", list(dims.keys()))
+        st.dataframe(ranking_severidade(df_filtrado, dims[dim_escolhida]), hide_index=True, use_container_width=True)
+
     with tab_ofensores:
-        st.caption("Sinalização de ofensores e desvios — aguardando dados.")
+        st.markdown("**Prestadores ofensores** (destaque em pelo menos 2 de 3: custo médio, volume, uso médio — top 5%)")
+        st.dataframe(identificar_ofensores(df_filtrado), hide_index=True, use_container_width=True)
+
+        st.markdown("**Desvios** (prestador vs. média da própria especialidade)")
+        st.dataframe(calcular_desvios(df_filtrado), hide_index=True, use_container_width=True)
+
+        st.markdown("**Comparação com o mês anterior** (respeitando o volume mínimo)")
+        comp, msg_comp = comparacao_mensal(df_filtrado, "NOME_PROCEDIMENTO", volume_minimo=volume_minimo)
+        st.caption(msg_comp)
+        if not comp.empty:
+            comp_relevante = comp[comp["relevante"]]
+            comp_ignorado = comp[~comp["relevante"]]
+            st.markdown(f"*Variações relevantes (volume atual ≥ {volume_minimo}):*")
+            st.dataframe(comp_relevante, hide_index=True, use_container_width=True)
+            with st.expander(f"Ver também as {len(comp_ignorado)} variações abaixo do volume mínimo (informativas, não são alerta)"):
+                st.dataframe(comp_ignorado, hide_index=True, use_container_width=True)
