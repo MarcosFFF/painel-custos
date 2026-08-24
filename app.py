@@ -68,9 +68,9 @@ def titulo_com_logo():
         with col_logo:
             st.image(LOGO_PATH, use_container_width=True)
         with col_txt:
-            st.title("Painel de Projeção de Custos")
+            st.title("Painel de Custos")
     else:
-        st.title("📊 Painel de Projeção de Custos")
+        st.title("📊 Painel de Custos")
 
 
 # ---------- funções de calendário ----------
