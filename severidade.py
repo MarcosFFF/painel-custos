@@ -40,11 +40,11 @@ def carregar_base_severidade(pasta="."):
     # "01_2026_4016R_parte_1.parquet", "01_2026_4016R_parte_2.parquet", etc.
     # (útil para caber no limite de 25MB do upload pelo navegador do GitHub).
     candidatos = sorted(
-        glob.glob(os.path.join(pasta, "*_4016R.parquet"))
-        + glob.glob(os.path.join(pasta, "*_4016R_parte_*.parquet"))
+        glob.glob(os.path.join(pasta, "*4016R.parquet"))
+        + glob.glob(os.path.join(pasta, "*4016R_parte_*.parquet"))
     )
     if not candidatos:
-        return None, "Nenhum arquivo .parquet encontrado (padrão *_4016R.parquet ou *_4016R_parte_N.parquet)."
+        return None, "Nenhum arquivo .parquet encontrado (padrão *4016R.parquet ou *4016R_parte_N.parquet)."
 
     def chave_mes(caminho):
         """Agrupa partes do mesmo mês: '01_2026_4016R_parte_2.parquet' -> '01_2026_4016R'."""
