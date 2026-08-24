@@ -39,6 +39,9 @@ div[data-testid="stVerticalBlock"] { gap: 0.35rem !important; }
 hr { margin: 0.4rem 0 !important; }
 div[data-testid="stMetric"] { padding: 0.15rem 0 !important; }
 div.element-container { margin-bottom: 0.1rem !important; }
+
+/* botões de navegação principal (Projeção / Severidade) */
+div[data-testid="stButton"] button[kind="primary"] { border: 2px solid #1F6F5C; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -245,263 +248,330 @@ with col_sair:
 
 st.divider()
 
-# ---------- navegação de mês ----------
-if "view_year" not in st.session_state:
-    st.session_state.view_year = ANO_HOJE
-    st.session_state.view_month = MES_HOJE
+# ============================================================
+# NAVEGAÇÃO PRINCIPAL — Projeção × Severidade
+# ============================================================
+if "pagina" not in st.session_state:
+    st.session_state.pagina = "projecao"
 
-eh_mes_atual_nav = (st.session_state.view_year == ANO_HOJE and st.session_state.view_month == MES_HOJE)
-
-c1, c2, c3 = st.columns([1, 4, 1])
-with c1:
-    if st.button("◀ Anterior", use_container_width=True):
-        vy, vm = st.session_state.view_year, st.session_state.view_month - 1
-        if vm < 1:
-            vm, vy = 12, vy - 1
-        st.session_state.view_year, st.session_state.view_month = vy, vm
+nav1, nav2, nav_resto = st.columns([1, 1, 4])
+with nav1:
+    if st.button("📈 Projeção", use_container_width=True,
+                 type="primary" if st.session_state.pagina == "projecao" else "secondary"):
+        st.session_state.pagina = "projecao"
         st.rerun()
-with c2:
-    st.markdown(f"<h3 style='text-align:center; margin:0;'>{MESES[st.session_state.view_month - 1]} / {st.session_state.view_year}</h3>", unsafe_allow_html=True)
-with c3:
-    if st.button("Seguinte ▶", use_container_width=True, disabled=eh_mes_atual_nav):
-        vy, vm = st.session_state.view_year, st.session_state.view_month + 1
-        if vm > 12:
-            vm, vy = 1, vy + 1
-        st.session_state.view_year, st.session_state.view_month = vy, vm
+with nav2:
+    if st.button("🔬 Severidade", use_container_width=True,
+                 type="primary" if st.session_state.pagina == "severidade" else "secondary"):
+        st.session_state.pagina = "severidade"
         st.rerun()
 
-c4, c5 = st.columns(2)
-with c4:
-    if st.button("Ir para o mês atual", use_container_width=True, disabled=eh_mes_atual_nav):
-        st.session_state.view_year, st.session_state.view_month = ANO_HOJE, MES_HOJE
-        st.rerun()
-with c5:
-    if st.button("🔄 Atualizar dados", use_container_width=True):
-        carregar_dados()
-        st.rerun()
+st.divider()
 
-view_year, view_month = st.session_state.view_year, st.session_state.view_month
-total, du_total, dn_total = calendario(view_year, view_month)
-entradas = entradas_do_mes(view_year, view_month, total)
-acumulado = acumulado_de(entradas)
-decorridos = dias_uteis_decorridos_de(view_year, view_month, total, entradas)
-mes_key_atual = mes_key(view_year, view_month)
-eh_mes_atual = (view_year == ANO_HOJE and view_month == MES_HOJE)
-dado_mensal_do_mes_visto = st.session_state.historico_mensal.get(mes_key_atual)
+# ============================================================
+# PÁGINA: PROJEÇÃO (funcionalidade existente, sem mudanças)
+# ============================================================
+if st.session_state.pagina == "projecao":
 
-# ---------- projeção ----------
-if eh_mes_atual:
-    resultado_sinistro = projetar_sinistro_mes_atual(
-        st.session_state.lancamentos,
-        st.session_state.historico_mensal,
-        view_year, view_month, DIA_HOJE,
-        n_meses=2, metodo="razao_soma",
-    )
-    projecao = resultado_sinistro["sinistro_projetado"]
-    label_projetado = "Valor projetado (Sinistro)"
-    if resultado_sinistro["projecao_solicitado"] is not None and resultado_sinistro["razao_media_historica"] is not None:
-        nota = (f"Solicitado projetado: {fmt_brl(resultado_sinistro['projecao_solicitado'])} · "
-                f"razão histórica: {resultado_sinistro['razao_media_historica']:.2%}")
+    # ---------- navegação de mês ----------
+    if "view_year" not in st.session_state:
+        st.session_state.view_year = ANO_HOJE
+        st.session_state.view_month = MES_HOJE
+
+    eh_mes_atual_nav = (st.session_state.view_year == ANO_HOJE and st.session_state.view_month == MES_HOJE)
+
+    c1, c2, c3 = st.columns([1, 4, 1])
+    with c1:
+        if st.button("◀ Anterior", use_container_width=True):
+            vy, vm = st.session_state.view_year, st.session_state.view_month - 1
+            if vm < 1:
+                vm, vy = 12, vy - 1
+            st.session_state.view_year, st.session_state.view_month = vy, vm
+            st.rerun()
+    with c2:
+        st.markdown(f"<h3 style='text-align:center; margin:0;'>{MESES[st.session_state.view_month - 1]} / {st.session_state.view_year}</h3>", unsafe_allow_html=True)
+    with c3:
+        if st.button("Seguinte ▶", use_container_width=True, disabled=eh_mes_atual_nav):
+            vy, vm = st.session_state.view_year, st.session_state.view_month + 1
+            if vm > 12:
+                vm, vy = 1, vy + 1
+            st.session_state.view_year, st.session_state.view_month = vy, vm
+            st.rerun()
+
+    c4, c5 = st.columns(2)
+    with c4:
+        if st.button("Ir para o mês atual", use_container_width=True, disabled=eh_mes_atual_nav):
+            st.session_state.view_year, st.session_state.view_month = ANO_HOJE, MES_HOJE
+            st.rerun()
+    with c5:
+        if st.button("🔄 Atualizar dados", use_container_width=True):
+            carregar_dados()
+            st.rerun()
+
+    view_year, view_month = st.session_state.view_year, st.session_state.view_month
+    total, du_total, dn_total = calendario(view_year, view_month)
+    entradas = entradas_do_mes(view_year, view_month, total)
+    acumulado = acumulado_de(entradas)
+    decorridos = dias_uteis_decorridos_de(view_year, view_month, total, entradas)
+    mes_key_atual = mes_key(view_year, view_month)
+    eh_mes_atual = (view_year == ANO_HOJE and view_month == MES_HOJE)
+    dado_mensal_do_mes_visto = st.session_state.historico_mensal.get(mes_key_atual)
+
+    # ---------- projeção ----------
+    if eh_mes_atual:
+        resultado_sinistro = projetar_sinistro_mes_atual(
+            st.session_state.lancamentos,
+            st.session_state.historico_mensal,
+            view_year, view_month, DIA_HOJE,
+            n_meses=2, metodo="razao_soma",
+        )
+        projecao = resultado_sinistro["sinistro_projetado"]
+        label_projetado = "Valor projetado (Sinistro)"
+        if resultado_sinistro["projecao_solicitado"] is not None and resultado_sinistro["razao_media_historica"] is not None:
+            nota = (f"Solicitado projetado: {fmt_brl(resultado_sinistro['projecao_solicitado'])} · "
+                    f"razão histórica: {resultado_sinistro['razao_media_historica']:.2%}")
+        else:
+            nota = "Dados insuficientes (dias úteis decorridos ou meses fechados com Real) para calcular a projeção do Sinistro."
+    elif dado_mensal_do_mes_visto and dado_mensal_do_mes_visto["projetado"] is not None:
+        projecao = dado_mensal_do_mes_visto["projetado"]
+        label_projetado = "Valor projetado (oficial)"
+        nota = f"Projetado oficial informado para {label_mes(mes_key_atual)} (não é recalculado pela soma diária)."
     else:
-        nota = "Dados insuficientes (dias úteis decorridos ou meses fechados com Real) para calcular a projeção do Sinistro."
-elif dado_mensal_do_mes_visto and dado_mensal_do_mes_visto["projetado"] is not None:
-    projecao = dado_mensal_do_mes_visto["projetado"]
-    label_projetado = "Valor projetado (oficial)"
-    nota = f"Projetado oficial informado para {label_mes(mes_key_atual)} (não é recalculado pela soma diária)."
-else:
-    projecao = acumulado
-    label_projetado = "Valor projetado (sem oficial)"
-    nota = f"Sem Projetado oficial cadastrado para {label_mes(mes_key_atual)} — mostrando a soma dos lançamentos diários."
+        projecao = acumulado
+        label_projetado = "Valor projetado (sem oficial)"
+        nota = f"Sem Projetado oficial cadastrado para {label_mes(mes_key_atual)} — mostrando a soma dos lançamentos diários."
 
-# ============================================================
-# HERO — métricas principais
-# ============================================================
-m1, m2, m3 = st.columns(3)
-m1.metric(label_projetado, fmt_brl(projecao))
-m2.metric("Valor acumulado", fmt_brl(acumulado))
-m3.metric("Dias lançados", f"{len(entradas)} de {total}")
-st.caption(nota)
+    # ============================================================
+    # HERO — métricas principais
+    # ============================================================
+    m1, m2, m3 = st.columns(3)
+    m1.metric(label_projetado, fmt_brl(projecao))
+    m2.metric("Valor acumulado", fmt_brl(acumulado))
+    m3.metric("Dias lançados", f"{len(entradas)} de {total}")
+    st.caption(nota)
 
-st.divider()
+    st.divider()
 
-ind1, ind2, ind3 = st.columns(3)
-ind1.metric("Dias úteis decorridos / total", f"{decorridos} / {du_total}")
-ind2.metric("Total de dias de fins de semana no mês", dn_total)
-ind3.metric("Total de dias no mês", total)
+    ind1, ind2, ind3 = st.columns(3)
+    ind1.metric("Dias úteis decorridos / total", f"{decorridos} / {du_total}")
+    ind2.metric("Total de dias de fins de semana no mês", dn_total)
+    ind3.metric("Total de dias no mês", total)
 
-st.divider()
+    st.divider()
 
-# ============================================================
-# COMPARATIVOS — mês anterior e mesmo mês no ano anterior
-# (acumulado sempre cortado no dia de hoje, para comparar "até o mesmo ponto")
-# ============================================================
-st.subheader("Comparativos")
+    # ============================================================
+    # COMPARATIVOS — mês anterior e mesmo mês no ano anterior
+    # (acumulado sempre cortado no dia de hoje, para comparar "até o mesmo ponto")
+    # ============================================================
+    st.subheader("Comparativos")
 
-ano_ant_mes, mes_ant_mes = mes_anterior_de(view_year, view_month)
-key_mes_anterior = mes_key(ano_ant_mes, mes_ant_mes)
-key_mesmo_mes_ano_anterior = mes_key(view_year - 1, view_month)
+    ano_ant_mes, mes_ant_mes = mes_anterior_de(view_year, view_month)
+    key_mes_anterior = mes_key(ano_ant_mes, mes_ant_mes)
+    key_mesmo_mes_ano_anterior = mes_key(view_year - 1, view_month)
 
-dado_mes_anterior = st.session_state.historico_mensal.get(key_mes_anterior)
-dado_mesmo_mes_ano_anterior = st.session_state.historico_mensal.get(key_mesmo_mes_ano_anterior)
+    dado_mes_anterior = st.session_state.historico_mensal.get(key_mes_anterior)
+    dado_mesmo_mes_ano_anterior = st.session_state.historico_mensal.get(key_mesmo_mes_ano_anterior)
 
-proj_mes_anterior = dado_mes_anterior["projetado"] if dado_mes_anterior else None
-proj_mesmo_mes_ano_anterior = dado_mesmo_mes_ano_anterior["projetado"] if dado_mesmo_mes_ano_anterior else None
+    proj_mes_anterior = dado_mes_anterior["projetado"] if dado_mes_anterior else None
+    proj_mesmo_mes_ano_anterior = dado_mesmo_mes_ano_anterior["projetado"] if dado_mesmo_mes_ano_anterior else None
 
-acum_mes_anterior = acumulado_ate_dia(ano_ant_mes, mes_ant_mes, DIA_HOJE)
-acum_mesmo_mes_ano_anterior = acumulado_ate_dia(view_year - 1, view_month, DIA_HOJE)
+    acum_mes_anterior = acumulado_ate_dia(ano_ant_mes, mes_ant_mes, DIA_HOJE)
+    acum_mesmo_mes_ano_anterior = acumulado_ate_dia(view_year - 1, view_month, DIA_HOJE)
 
-_, du_mes_anterior, _ = calendario(ano_ant_mes, mes_ant_mes)
-_, du_mesmo_mes_ano_anterior, _ = calendario(view_year - 1, view_month)
+    _, du_mes_anterior, _ = calendario(ano_ant_mes, mes_ant_mes)
+    _, du_mesmo_mes_ano_anterior, _ = calendario(view_year - 1, view_month)
 
-def variacao_pct(atual, referencia):
-    if atual is None or referencia is None or referencia == 0:
-        return None
-    return (atual - referencia) / referencia * 100
+    def variacao_pct(atual, referencia):
+        if atual is None or referencia is None or referencia == 0:
+            return None
+        return (atual - referencia) / referencia * 100
 
-col_comp1, col_comp2 = st.columns(2)
-with col_comp1:
-    st.markdown(f"**{label_mes(key_mes_anterior)}** (mês anterior)")
-    st.caption(f"Dias úteis totais: {du_mes_anterior}")
-    delta_proj = variacao_pct(projecao, proj_mes_anterior)
-    delta_acum = variacao_pct(acumulado, acum_mes_anterior)
-    st.metric("Valor projetado", fmt_brl(proj_mes_anterior),
-               delta=(f"{delta_proj:+.1f}%" if delta_proj is not None else None),
-               delta_color="inverse")
-    st.metric(f"Valor acumulado até dia {DIA_HOJE:02d}", fmt_brl(acum_mes_anterior),
-               delta=(f"{delta_acum:+.1f}%" if delta_acum is not None else None),
-               delta_color="inverse")
-with col_comp2:
-    st.markdown(f"**{label_mes(key_mesmo_mes_ano_anterior)}** (mesmo mês, ano anterior)")
-    st.caption(f"Dias úteis totais: {du_mesmo_mes_ano_anterior}")
-    delta_proj_aa = variacao_pct(projecao, proj_mesmo_mes_ano_anterior)
-    delta_acum_aa = variacao_pct(acumulado, acum_mesmo_mes_ano_anterior)
-    st.metric("Valor projetado", fmt_brl(proj_mesmo_mes_ano_anterior),
-               delta=(f"{delta_proj_aa:+.1f}%" if delta_proj_aa is not None else None),
-               delta_color="inverse")
-    st.metric(f"Valor acumulado até dia {DIA_HOJE:02d}", fmt_brl(acum_mesmo_mes_ano_anterior),
-               delta=(f"{delta_acum_aa:+.1f}%" if delta_acum_aa is not None else None),
-               delta_color="inverse")
+    col_comp1, col_comp2 = st.columns(2)
+    with col_comp1:
+        st.markdown(f"**{label_mes(key_mes_anterior)}** (mês anterior)")
+        st.caption(f"Dias úteis totais: {du_mes_anterior}")
+        delta_proj = variacao_pct(projecao, proj_mes_anterior)
+        delta_acum = variacao_pct(acumulado, acum_mes_anterior)
+        st.metric("Valor projetado", fmt_brl(proj_mes_anterior),
+                   delta=(f"{delta_proj:+.1f}%" if delta_proj is not None else None),
+                   delta_color="inverse")
+        st.metric(f"Valor acumulado até dia {DIA_HOJE:02d}", fmt_brl(acum_mes_anterior),
+                   delta=(f"{delta_acum:+.1f}%" if delta_acum is not None else None),
+                   delta_color="inverse")
+    with col_comp2:
+        st.markdown(f"**{label_mes(key_mesmo_mes_ano_anterior)}** (mesmo mês, ano anterior)")
+        st.caption(f"Dias úteis totais: {du_mesmo_mes_ano_anterior}")
+        delta_proj_aa = variacao_pct(projecao, proj_mesmo_mes_ano_anterior)
+        delta_acum_aa = variacao_pct(acumulado, acum_mesmo_mes_ano_anterior)
+        st.metric("Valor projetado", fmt_brl(proj_mesmo_mes_ano_anterior),
+                   delta=(f"{delta_proj_aa:+.1f}%" if delta_proj_aa is not None else None),
+                   delta_color="inverse")
+        st.metric(f"Valor acumulado até dia {DIA_HOJE:02d}", fmt_brl(acum_mesmo_mes_ano_anterior),
+                   delta=(f"{delta_acum_aa:+.1f}%" if delta_acum_aa is not None else None),
+                   delta_color="inverse")
 
-if projecao is None:
-    st.warning("O % de variação do 'Valor projetado' não aparece porque a projeção do mês atual voltou vazia (meses fechados insuficientes com 'Real' preenchido para a metodologia do Sinistro). O % do 'Valor acumulado' continua funcionando normalmente, pois não depende da projeção.")
+    if projecao is None:
+        st.warning("O % de variação do 'Valor projetado' não aparece porque a projeção do mês atual voltou vazia (meses fechados insuficientes com 'Real' preenchido para a metodologia do Sinistro). O % do 'Valor acumulado' continua funcionando normalmente, pois não depende da projeção.")
 
-st.caption("Variação % em relação ao mês/ano corrente sendo visualizado — vermelho = aumento de custo, verde = redução.")
+    st.caption("Variação % em relação ao mês/ano corrente sendo visualizado — vermelho = aumento de custo, verde = redução.")
 
-st.divider()
+    st.divider()
 
-# ============================================================
-# LANÇAMENTOS DO MÊS (retrátil — mostra ontem + hoje por padrão)
-# ============================================================
-st.subheader("Lançamentos do mês")
+    # ============================================================
+    # LANÇAMENTOS DO MÊS (retrátil — mostra ontem + hoje por padrão)
+    # ============================================================
+    st.subheader("Lançamentos do mês")
 
-linhas = []
-for d in range(1, total + 1):
-    finde = eh_fim_de_semana(view_year, view_month, d)
-    wd = DOW_NOMES[date(view_year, view_month, d).weekday()]
-    is_hoje = eh_mes_atual and d == DIA_HOJE
-    rotulo = f"{wd}{' · fim de semana' if finde else ''}{' · hoje' if is_hoje else ''}"
-    linhas.append({"Dia": d, "Dia da semana": rotulo, "Valor (R$)": entradas.get(d)})
+    linhas = []
+    for d in range(1, total + 1):
+        finde = eh_fim_de_semana(view_year, view_month, d)
+        wd = DOW_NOMES[date(view_year, view_month, d).weekday()]
+        is_hoje = eh_mes_atual and d == DIA_HOJE
+        rotulo = f"{wd}{' · fim de semana' if finde else ''}{' · hoje' if is_hoje else ''}"
+        linhas.append({"Dia": d, "Dia da semana": rotulo, "Valor (R$)": entradas.get(d)})
 
-df_dias = pd.DataFrame(linhas)
+    df_dias = pd.DataFrame(linhas)
 
-dia_ancora = min(DIA_HOJE, total) if eh_mes_atual else total
-dias_visiveis_default = {d for d in [dia_ancora - 1, dia_ancora] if d >= 1}
+    dia_ancora = min(DIA_HOJE, total) if eh_mes_atual else total
+    dias_visiveis_default = {d for d in [dia_ancora - 1, dia_ancora] if d >= 1}
 
-if "lista_expandida" not in st.session_state:
-    st.session_state.lista_expandida = False
+    if "lista_expandida" not in st.session_state:
+        st.session_state.lista_expandida = False
 
-expandir = st.checkbox(f"Mostrar todos os {total} dias", value=st.session_state.lista_expandida)
-st.session_state.lista_expandida = expandir
+    expandir = st.checkbox(f"Mostrar todos os {total} dias", value=st.session_state.lista_expandida)
+    st.session_state.lista_expandida = expandir
 
-df_exibida = df_dias if expandir else df_dias[df_dias["Dia"].isin(dias_visiveis_default)]
+    df_exibida = df_dias if expandir else df_dias[df_dias["Dia"].isin(dias_visiveis_default)]
 
-editado = st.data_editor(
-    df_exibida,
-    hide_index=True,
-    use_container_width=True,
-    disabled=["Dia", "Dia da semana"] if is_admin else True,
-    column_config={
-        "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f", step=0.01),
-    },
-    key=f"editor_dias_{view_year}_{view_month}_{expandir}",
-)
+    editado = st.data_editor(
+        df_exibida,
+        hide_index=True,
+        use_container_width=True,
+        disabled=["Dia", "Dia da semana"] if is_admin else True,
+        column_config={
+            "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f", step=0.01),
+        },
+        key=f"editor_dias_{view_year}_{view_month}_{expandir}",
+    )
 
-if is_admin:
-    for _, row in editado.iterrows():
-        d = int(row["Dia"])
-        novo = row["Valor (R$)"]
-        atual = entradas.get(d)
-        if valor_valido(novo) and novo != atual:
-            key = date_key(view_year, view_month, d)
-            ok, erro = gravar_dia(key, novo)
-            if ok:
-                st.rerun()
+    if is_admin:
+        for _, row in editado.iterrows():
+            d = int(row["Dia"])
+            novo = row["Valor (R$)"]
+            atual = entradas.get(d)
+            if valor_valido(novo) and novo != atual:
+                key = date_key(view_year, view_month, d)
+                ok, erro = gravar_dia(key, novo)
+                if ok:
+                    st.rerun()
+                else:
+                    st.error(f"Erro ao salvar dia {d:02d}: {erro}")
+
+    st.caption("0,00 é um lançamento válido (dia sem valor) e não afeta os demais dias.")
+
+    if eh_mes_atual:
+        with st.expander("📅 Projeção dia a dia (dias restantes do mês)"):
+            resultado_dias = projetar_dias_restantes(
+                st.session_state.lancamentos, view_year, view_month, DIA_HOJE
+            )
+            if resultado_dias["dias"]:
+                linhas_proj = []
+                for dia, valor in sorted(resultado_dias["dias"].items()):
+                    wd = date(view_year, view_month, dia).weekday()
+                    linhas_proj.append({"Dia": dia, "Dia da semana": DOW_NOMES[wd], "Projetado": fmt_brl(valor)})
+                st.dataframe(pd.DataFrame(linhas_proj), hide_index=True, use_container_width=True)
+                st.caption("Distribuído conforme o padrão de cada dia da semana dentro de cada semana do mês (aprendido do histórico), calibrado pelo ritmo observado nos dias já lançados.")
             else:
-                st.error(f"Erro ao salvar dia {d:02d}: {erro}")
+                st.caption("Sem dias restantes para projetar, ou dados insuficientes para calcular.")
 
-st.caption("0,00 é um lançamento válido (dia sem valor) e não afeta os demais dias.")
+    st.divider()
 
-if eh_mes_atual:
-    with st.expander("📅 Projeção dia a dia (dias restantes do mês)"):
-        resultado_dias = projetar_dias_restantes(
-            st.session_state.lancamentos, view_year, view_month, DIA_HOJE
-        )
-        if resultado_dias["dias"]:
-            linhas_proj = []
-            for dia, valor in sorted(resultado_dias["dias"].items()):
-                wd = date(view_year, view_month, dia).weekday()
-                linhas_proj.append({"Dia": dia, "Dia da semana": DOW_NOMES[wd], "Projetado": fmt_brl(valor)})
-            st.dataframe(pd.DataFrame(linhas_proj), hide_index=True, use_container_width=True)
-            st.caption("Distribuído conforme o padrão de cada dia da semana dentro de cada semana do mês (aprendido do histórico), calibrado pelo ritmo observado nos dias já lançados.")
-        else:
-            st.caption("Sem dias restantes para projetar, ou dados insuficientes para calcular.")
-
-st.divider()
-
-# ============================================================
-# HISTÓRICO MENSAL — Projetado × Real
-# ============================================================
-with st.expander("📊 Histórico mensal · Projetado × Real"):
-    linhas_mensal = []
-    mes_corrente_label = None
-    opcoes_edicao = []  # (label, key) só dos meses fechados, para o formulário de edição
-    for k in sorted(st.session_state.historico_mensal.keys(), reverse=True):
-        dado = st.session_state.historico_mensal[k]
-        eh_atual = k >= mes_key(ANO_HOJE, MES_HOJE)
-        if eh_atual:
-            mes_corrente_label = label_mes(k)
-        else:
-            opcoes_edicao.append((label_mes(k), k))
-        linhas_mensal.append({
-            "Mês": label_mes(k),
-            "Projetado": "mês corrente" if eh_atual else fmt_brl(dado["projetado"]),
-            "Real": "mês corrente" if eh_atual else fmt_brl(dado["real"]),
-        })
-
-    df_mensal_exibir = pd.DataFrame(linhas_mensal)
-
-    if mes_corrente_label:
-        st.caption(f"{mes_corrente_label} é o mês corrente — o Real dele é calculado automaticamente pelo acumulado diário (veja no topo da página).")
-
-    st.dataframe(df_mensal_exibir, hide_index=True, use_container_width=True)
-
-    if is_admin and opcoes_edicao:
-        st.markdown("**✏️ Corrigir o Real de um mês encerrado**")
-        labels_edicao = [lbl for lbl, _ in opcoes_edicao]
-        escolha = st.selectbox("Mês", labels_edicao, key="select_mes_editar")
-        key_escolhida = dict(opcoes_edicao)[escolha]
-        valor_atual = st.session_state.historico_mensal[key_escolhida]["real"]
-        novo_valor = st.number_input(
-            f"Novo valor Real para {escolha}",
-            value=float(valor_atual) if valor_atual is not None else 0.0,
-            step=0.01,
-            format="%.2f",
-            key=f"input_real_{key_escolhida}",
-        )
-        if st.button("Salvar", key=f"salvar_real_{key_escolhida}"):
-            ok, erro = gravar_real_mensal(key_escolhida, novo_valor)
-            if ok:
-                st.success(f"Real de {escolha} atualizado para {fmt_brl(novo_valor)}.")
-                st.rerun()
+    # ============================================================
+    # HISTÓRICO MENSAL — Projetado × Real
+    # ============================================================
+    with st.expander("📊 Histórico mensal · Projetado × Real"):
+        linhas_mensal = []
+        mes_corrente_label = None
+        opcoes_edicao = []  # (label, key) só dos meses fechados, para o formulário de edição
+        for k in sorted(st.session_state.historico_mensal.keys(), reverse=True):
+            dado = st.session_state.historico_mensal[k]
+            eh_atual = k >= mes_key(ANO_HOJE, MES_HOJE)
+            if eh_atual:
+                mes_corrente_label = label_mes(k)
             else:
-                st.error(f"Erro ao salvar: {erro}")
+                opcoes_edicao.append((label_mes(k), k))
+            linhas_mensal.append({
+                "Mês": label_mes(k),
+                "Projetado": "mês corrente" if eh_atual else fmt_brl(dado["projetado"]),
+                "Real": "mês corrente" if eh_atual else fmt_brl(dado["real"]),
+            })
+
+        df_mensal_exibir = pd.DataFrame(linhas_mensal)
+
+        if mes_corrente_label:
+            st.caption(f"{mes_corrente_label} é o mês corrente — o Real dele é calculado automaticamente pelo acumulado diário (veja no topo da página).")
+
+        st.dataframe(df_mensal_exibir, hide_index=True, use_container_width=True)
+
+        if is_admin and opcoes_edicao:
+            st.markdown("**✏️ Corrigir o Real de um mês encerrado**")
+            labels_edicao = [lbl for lbl, _ in opcoes_edicao]
+            escolha = st.selectbox("Mês", labels_edicao, key="select_mes_editar")
+            key_escolhida = dict(opcoes_edicao)[escolha]
+            valor_atual = st.session_state.historico_mensal[key_escolhida]["real"]
+            novo_valor = st.number_input(
+                f"Novo valor Real para {escolha}",
+                value=float(valor_atual) if valor_atual is not None else 0.0,
+                step=0.01,
+                format="%.2f",
+                key=f"input_real_{key_escolhida}",
+            )
+            if st.button("Salvar", key=f"salvar_real_{key_escolhida}"):
+                ok, erro = gravar_real_mensal(key_escolhida, novo_valor)
+                if ok:
+                    st.success(f"Real de {escolha} atualizado para {fmt_brl(novo_valor)}.")
+                    st.rerun()
+                else:
+                    st.error(f"Erro ao salvar: {erro}")
+
+# ============================================================
+# PÁGINA: SEVERIDADE (estrutura pronta — motor de dados aguardando
+# confirmação do schema dos parquets + arquivo Cluster + arquivo 1004)
+# ============================================================
+elif st.session_state.pagina == "severidade":
+    st.subheader("🔬 Severidade")
+    st.info(
+        "Estrutura de filtros pronta. Os cálculos (rankings, watchlist, ofensores, "
+        "desvios) entram assim que os 3 arquivos de apoio forem confirmados: "
+        "schema dos parquets, arquivo Cluster (cidade × cluster) e arquivo 1004 (CODIGO × USO)."
+    )
+
+    with st.container(border=True):
+        st.markdown("**Filtros**")
+        fc1, fc2, fc3 = st.columns(3)
+        with fc1:
+            st.multiselect("Mês", options=[], help="Populado quando os parquets forem carregados", disabled=True)
+            st.multiselect("UF", options=[], disabled=True)
+        with fc2:
+            st.multiselect("Região", options=[], disabled=True)
+            st.multiselect("Especialidade", options=[], disabled=True)
+        with fc3:
+            st.multiselect("Plano", options=[], disabled=True)
+            st.multiselect("Cluster", options=[], disabled=True)
+
+        st.slider("Volume mínimo de solicitações para considerar variação relevante",
+                   min_value=1, max_value=200, value=30, disabled=True)
+
+    tab_rank, tab_evolucao, tab_watch, tab_severidade, tab_ofensores = st.tabs(
+        ["Rankings", "Evolução mensal", "Watchlist", "Severidade", "Ofensores"]
+    )
+    with tab_rank:
+        st.caption("Rankings de especialidade, procedimento, UF e região — aguardando dados.")
+    with tab_evolucao:
+        st.caption("Evolução mensal — aguardando dados.")
+    with tab_watch:
+        st.caption("Watchlist \"quem merece atenção\" — aguardando dados.")
+    with tab_severidade:
+        st.caption("Ranking de severidade (região, cidade, prestador, procedimento, especialidade, cluster) — aguardando dados.")
+    with tab_ofensores:
+        st.caption("Sinalização de ofensores e desvios — aguardando dados.")
