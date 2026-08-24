@@ -35,10 +35,39 @@ def normalizar_texto(v):
 # ============================================================
 @st.cache_data(show_spinner="Carregando dados de severidade...")
 def carregar_base_severidade(pasta="."):
-    # ---------- 1) parquets ----------
-    arquivos = sorted(glob.glob(os.path.join(pasta, "*_4016R.parquet")))
-    if not arquivos:
-        return None, "Nenhum arquivo .parquet encontrado (padrão *_4016R.parquet)."
+    # ---------- 1) parquets (aceita arquivos inteiros OU divididos em partes) ----------
+    # Um mês pode vir como "01_2026_4016R.parquet" (arquivo único) ou dividido em
+    # "01_2026_4016R_parte_1.parquet", "01_2026_4016R_parte_2.parquet", etc.
+    # (útil para caber no limite de 25MB do upload pelo navegador do GitHub).
+    candidatos = sorted(
+        glob.glob(os.path.join(pasta, "*_4016R.parquet"))
+        + glob.glob(os.path.join(pasta, "*_4016R_parte_*.parquet"))
+    )
+    if not candidatos:
+        return None, "Nenhum arquivo .parquet encontrado (padrão *_4016R.parquet ou *_4016R_parte_N.parquet)."
+
+    def chave_mes(caminho):
+        """Agrupa partes do mesmo mês: '01_2026_4016R_parte_2.parquet' -> '01_2026_4016R'."""
+        nome = os.path.basename(caminho)
+        nome_sem_ext = nome[:-len(".parquet")]
+        if "_parte_" in nome_sem_ext:
+            nome_sem_ext = nome_sem_ext.split("_parte_")[0]
+        return nome_sem_ext
+
+    def numero_parte(caminho):
+        nome = os.path.basename(caminho)
+        if "_parte_" in nome:
+            try:
+                return int(nome.split("_parte_")[1].split(".")[0])
+            except ValueError:
+                return 0
+        return 0
+
+    grupos_arquivo = {}
+    for c in candidatos:
+        grupos_arquivo.setdefault(chave_mes(c), []).append(c)
+    for chave in grupos_arquivo:
+        grupos_arquivo[chave].sort(key=numero_parte)
 
     colunas_uteis = [
         "NU_GUIA", "DATA_SOL", "DATA_AUT", "DATA_ATEND", "CD_USUARIO", "CD_PLANO", "NR_PLANO",
@@ -48,13 +77,14 @@ def carregar_base_severidade(pasta="."):
     ]
 
     partes = []
-    for arq in arquivos:
-        try:
-            df = pd.read_parquet(arq, engine="pyarrow", columns=colunas_uteis)
-        except Exception as e:
-            return None, f"Erro ao ler {os.path.basename(arq)}: {e}"
-        df["ARQUIVO_ORIGEM"] = os.path.basename(arq)
-        partes.append(df)
+    for chave_grupo, arquivos_do_grupo in grupos_arquivo.items():
+        for arq in arquivos_do_grupo:
+            try:
+                df = pd.read_parquet(arq, engine="pyarrow", columns=colunas_uteis)
+            except Exception as e:
+                return None, f"Erro ao ler {os.path.basename(arq)}: {e}"
+            df["ARQUIVO_ORIGEM"] = chave_grupo  # todas as partes do mesmo mês compartilham a mesma origem
+            partes.append(df)
     dados = pd.concat(partes, ignore_index=True)
 
     # ---------- 2) mês de referência (usa DATA_ATEND; se vazio, cai para DATA_SOL) ----------
