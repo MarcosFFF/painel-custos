@@ -73,7 +73,7 @@ def _ler_csv_parte(caminho, colunas_uteis):
     # corrige mojibake também nos VALORES das colunas de texto (não só no cabeçalho) —
     # ex.: "São Paulo" pode ter virado "SÃ£o Paulo" nos dados também
     colunas_texto = ["ESPECIALIDADE", "NR_PLANO", "NOME_PROCEDIMENTO", "STATUS_PROCED",
-                       "CIDADE_PRESTADOR", "UF", "EXECUÇÃO", "CD_USUARIO"]
+                       "CIDADE_PRESTADOR", "UF", "EXECUCAO", "CD_USUARIO"]
     for c in colunas_texto:
         if c in df.columns:
             df[c] = df[c].apply(_corrigir_mojibake)
@@ -138,7 +138,7 @@ def carregar_base_severidade(pasta="."):
         "NU_GUIA", "DATA_SOL", "DATA_AUT", "DATA_ATEND", "CD_USUARIO", "CD_PLANO", "NR_PLANO",
         "ESPECIALIDADE", "CD_PROCEDIMENTO", "CD_TUSS", "NOME_PROCEDIMENTO",
         "VL_PROCEDIMENTO", "VL_FRANQUIA", "VL_PAGO", "STATUS_PROCED",
-        "CD_PRESTADOR", "CIDADE_PRESTADOR", "UF", "EXECUÇÃO",
+        "CD_PRESTADOR", "CIDADE_PRESTADOR", "UF", "EXECUCAO",
     ]
     partes = []
     for chave_grupo, arquivos_do_grupo in grupos_arquivo.items():
