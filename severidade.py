@@ -1,7 +1,6 @@
 """
-Módulo de Severidade — carrega os CSVs (guias, separador ';'), cruza com 1004_claude.xlsx
-(USO por procedimento) e cluster_claude.xlsx (cidade -> cluster), deriva a Região a partir
-da UF, e fornece todos os cálculos usados na aba "Severidade" do painel.
+Módulo de Severidade — carrega os CSVs, cruza com 1004_claude.xlsx e cluster_claude.xlsx,
+deriva a Região a partir da UF, e fornece todos os cálculos da aba "Severidade".
 """
 import glob
 import os
@@ -70,18 +69,15 @@ def _casar_colunas(colunas_reais, colunas_esperadas):
     return resultado
 
 def _ler_csv_parte(caminho, colunas_esperadas):
-    tentativas_encoding = ["utf-8", "latin1"]
     df = None
-    ultimo_erro = None
-    for enc in tentativas_encoding:
+    for enc in ["utf-8", "latin1"]:
         try:
             df = pd.read_csv(caminho, sep=";", encoding=enc, dtype=str, low_memory=False)
             break
-        except (UnicodeDecodeError, UnicodeError) as e:
-            ultimo_erro = e
+        except (UnicodeDecodeError, UnicodeError):
             continue
     if df is None:
-        raise ValueError(f"Não consegui ler {caminho}: {ultimo_erro}")
+        raise ValueError(f"Não consegui ler {caminho}")
     mapa_colunas = _casar_colunas(df.columns, colunas_esperadas)
     faltando = [c for c in colunas_esperadas if c not in mapa_colunas]
     if faltando:
@@ -103,11 +99,10 @@ def _ler_csv_parte(caminho, colunas_esperadas):
     return df
 
 def _chave_mes(caminho):
-    nome = os.path.basename(caminho)
-    nome_sem_ext = os.path.splitext(nome)[0]
-    if "_parte_" in nome_sem_ext:
-        nome_sem_ext = nome_sem_ext.split("_parte_")[0]
-    return nome_sem_ext
+    nome = os.path.splitext(os.path.basename(caminho))[0]
+    if "_parte_" in nome:
+        nome = nome.split("_parte_")[0]
+    return nome
 
 def _numero_parte(caminho):
     nome = os.path.basename(caminho)
@@ -244,6 +239,10 @@ def ranking_severidade(df, coluna, top_n=15):
         columns=["z_custo_medio", "z_media_uso"]
     )
 
+def ranking_severidade_especialidade(df, top_n=15):
+    """Ranking de severidade por especialidade — ordenado do mais severo ao menos severo."""
+    return ranking_severidade(df, "ESPECIALIDADE", top_n)
+
 def calcular_media_nacional(agregado, coluna_dimensao):
     """Média de uso e custo nacional (sem filtros) por dimensão — para comparar com regiões/UFs."""
     r = agregado.groupby(coluna_dimensao, observed=True).agg(
@@ -278,15 +277,13 @@ def identificar_ofensores(df, percentil=0.95):
         + por_prestador["alerta_volume"].astype(int)
         + por_prestador["alerta_uso"].astype(int)
     )
-    # Justificativa textual para cada prestador
+    # Justificativa textual
     justificativas = []
     for _, row in por_prestador.iterrows():
         motivos = []
         if row["alerta_custo"]:
-            motivos.append(
-                f"custo médio de R$ {row['custo_medio']:.2f} está no top {int((1-percentil)*100)}% "
-                f"(limiar: R$ {limiar_custo:.2f})"
-            )
+            motivos.append(f"custo médio R$ {row['custo_medio']:.2f} no top {int((1-percentil)*100)}% (limiar R$ {limiar_custo:.2f})")
         if row["alerta_volume"]:
-            motivos.append(
-                f
+            motivos.append(f"volume {int(row['qtd_procedimentos'])} procedimentos no top {int((1-percentil)*100)}% (limiar {int(limiar_volume)})")
+        if row["alerta_uso"]:
+           
