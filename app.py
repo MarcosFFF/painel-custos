@@ -590,6 +590,7 @@ elif st.session_state.pagina == "severidade":
         st.plotly_chart(fig_uso, use_container_width=True)
 
     # ---------- WATCHLIST (passo 9: mais info + barra menor) ----------
+       # ---------- WATCHLIST (passo 9: mais info + barra menor) ----------
     with tab_watch:
         st.markdown("#### Watchlist — prestadores que merecem atenção")
         st.caption(
@@ -599,9 +600,16 @@ elif st.session_state.pagina == "severidade":
         )
         watchlist = montar_watchlist(df_filtrado)
         if not watchlist.empty:
-            # Gráfico menor (height=350)
+            # Preparar DataFrame para o gráfico — garantir tipos corretos
+            wl_plot = watchlist.copy()
+            wl_plot["CD_PRESTADOR"] = wl_plot["CD_PRESTADOR"].astype(str)
+            # Garantir que colunas do custom_data existem e não têm NaN
+            for col in ["UF", "CIDADE", "CLUSTER"]:
+                if col not in wl_plot.columns:
+                    wl_plot[col] = "—"
+                wl_plot[col] = wl_plot[col].fillna("—").astype(str)
             fig_watch = px.bar(
-                watchlist.sort_values("pontuacao", ascending=True), x="pontuacao",
+                wl_plot.sort_values("pontuacao", ascending=True), x="pontuacao",
                 y="CD_PRESTADOR", orientation="h",
                 text="pontuacao", title="Prestadores que merecem atenção",
                 custom_data=["UF", "CIDADE", "CLUSTER"],
@@ -622,6 +630,7 @@ elif st.session_state.pagina == "severidade":
             st.plotly_chart(fig_watch, use_container_width=True)
             # Tabela com info do prestador
             exib_watch = watchlist.copy()
+            exib_watch["CD_PRESTADOR"] = exib_watch["CD_PRESTADOR"].astype(str)
             exib_watch["qtd_procedimentos"] = exib_watch["qtd_procedimentos"].map(fmt_int)
             exib_watch["valor_pago"] = exib_watch["valor_pago"].map(fmt_brl)
             exib_watch["custo_medio"] = exib_watch["custo_medio"].map(fmt_brl)
@@ -632,6 +641,7 @@ elif st.session_state.pagina == "severidade":
             st.dataframe(exib_watch, hide_index=True, use_container_width=True)
         else:
             st.info("Sem dados para montar a watchlist.")
+                
 
     # ---------- SEVERIDADE (passo 10: legenda de cluster + média) ----------
     with tab_severidade:
