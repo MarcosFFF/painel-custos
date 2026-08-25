@@ -25,10 +25,22 @@ for ext in ("png", "jpg", "jpeg", "svg", "webp"):
         LOGO_PATH = candidato
         break
 
-st.set_page_config(page_title="Painel de Custos", page_icon=(LOGO_PATH or "📊"), layout="wide")
+st.set_page_config(page_title="Gestão de Sinistro - Odonto", page_icon=(LOGO_PATH or "📊"), layout="wide")
 
 st.markdown("""
 <style>
+button[kind="primary"] {
+    background-color: #87CEEB !important;
+    border-color: #87CEEB !important;
+    color: #0d2b3e !important;
+}
+button[kind="primary"]:hover,
+button[kind="primary"]:focus,
+button[kind="primary"]:active {
+    background-color: #6bb8dd !important;
+    border-color: #6bb8dd !important;
+    color: #0d2b3e !important;
+}
 html, body { font-size: 14px !important; }
 h1 { font-size: 1.6rem !important; }
 h2 { font-size: 1.3rem !important; }
@@ -38,6 +50,8 @@ h3 { font-size: 1.1rem !important; }
 [data-testid="stMetricDelta"] { font-size: 0.78rem !important; }
 [data-testid="stCaptionContainer"] { font-size: 0.75rem !important; }
 div[data-testid="stDataFrame"] * { font-size: 0.8rem !important; }
+<style>
+""")
 
 /* espaçamento mais compacto */
 .block-container { padding-top: 3rem !important; padding-bottom: 1.5rem !important; }
@@ -71,9 +85,9 @@ def titulo_com_logo():
         with col_logo:
             st.image(LOGO_PATH, use_container_width=True)
         with col_txt:
-            st.title("Painel de Projeção de Custos")
+            st.title("Painel de Gestão de Sinistro - Odonto")
     else:
-        st.title("📊 Painel de Projeção de Custos")
+        st.title("📊 Painel de Gestão de Sinistro - Odonto")
 
 
 # ---------- funções de calendário ----------
@@ -208,7 +222,7 @@ if st.session_state.user_email is None:
     with col_meio:
         if LOGO_PATH:
             st.image(LOGO_PATH, width=120)
-        st.title("Painel de Projeção de Custos")
+        st.title("Painel Gestão de Sinistro - Odonto")
         st.caption("Controladoria · faça login para continuar")
         with st.form("login_form"):
             email = st.text_input("E-mail")
