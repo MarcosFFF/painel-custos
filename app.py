@@ -26,7 +26,6 @@ for ext in ("png", "jpg", "jpeg", "svg", "webp"):
         break
 
 st.set_page_config(page_title="Gestão de Sinistro - Odonto", page_icon=(LOGO_PATH or "📊"), layout="wide")
-
 st.markdown("""
 <style>
 button[kind="primary"] {
@@ -51,17 +50,13 @@ h3 { font-size: 1.1rem !important; }
 [data-testid="stMetricDelta"] { font-size: 0.78rem !important; }
 [data-testid="stCaptionContainer"] { font-size: 0.75rem !important; }
 div[data-testid="stDataFrame"] * { font-size: 0.8rem !important; }
-</style>
-""")
 /* espaçamento mais compacto */
-.block-container { padding-top: 3rem !important; padding-bottom: 1.5rem !important; }
 div[data-testid="stVerticalBlock"] { gap: 0.35rem !important; }
 hr { margin: 0.4rem 0 !important; }
 div[data-testid="stMetric"] { padding: 0.15rem 0 !important; }
 div.element-container { margin-bottom: 0.1rem !important; }
 </style>
 """, unsafe_allow_html=True)
-
 
 MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho",
          "Agosto","Setembro","Outubro","Novembro","Dezembro"]
