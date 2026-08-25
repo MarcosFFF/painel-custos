@@ -644,18 +644,19 @@ elif st.session_state.pagina == "severidade":
                 margin=dict(l=10, r=60, t=40, b=10),
                 coloraxis_showscale=False,
             )
-            # Colorir rótulos do eixo Y com base no índice (verde/amarelo/vermelho)
             fig_sev_esp.update_yaxes(tickfont=dict(size=10))
             st.plotly_chart(fig_sev_esp, use_container_width=True)
-            # Tabela formatada
+            # Tabela formatada — usa valor_pago (nome real da coluna no DataFrame)
             exib_sev = rank_sev_esp.copy()
             exib_sev["qtd_procedimentos"] = exib_sev["qtd_procedimentos"].map(fmt_int)
-            exib_sev["valor_solicitado"] = exib_sev["valor_solicitado"].map(fmt_brl)
+            if "valor_pago" in exib_sev.columns:
+                exib_sev["valor_pago"] = exib_sev["valor_pago"].map(fmt_brl)
+            elif "valor_solicitado" in exib_sev.columns:
+                exib_sev["valor_solicitado"] = exib_sev["valor_solicitado"].map(fmt_brl)
             exib_sev["custo_medio"] = exib_sev["custo_medio"].map(fmt_brl)
             exib_sev["quantidade_uso"] = exib_sev["quantidade_uso"].map(fmt_int)
             exib_sev["media_uso"] = exib_sev["media_uso"].map(fmt_float2)
             exib_sev["indice_severidade"] = exib_sev["indice_severidade"].map(fmt_float2)
-            # Adicionar ranking numérico
             exib_sev.insert(0, "#", range(1, len(exib_sev) + 1))
             st.dataframe(exib_sev, hide_index=True, use_container_width=True)
             st.caption(
@@ -687,10 +688,13 @@ elif st.session_state.pagina == "severidade":
                 yaxis_type="category", coloraxis_showscale=False,
             )
             st.plotly_chart(fig_sev, use_container_width=True)
-            # Tabela formatada
+            # Tabela formatada — usa valor_pago (nome real da coluna no DataFrame)
             exib_gen = rank_sev.copy()
             exib_gen["qtd_procedimentos"] = exib_gen["qtd_procedimentos"].map(fmt_int)
-            exib_gen["valor_solicitado"] = exib_gen["valor_solicitado"].map(fmt_brl)
+            if "valor_pago" in exib_gen.columns:
+                exib_gen["valor_pago"] = exib_gen["valor_pago"].map(fmt_brl)
+            elif "valor_solicitado" in exib_gen.columns:
+                exib_gen["valor_solicitado"] = exib_gen["valor_solicitado"].map(fmt_brl)
             exib_gen["custo_medio"] = exib_gen["custo_medio"].map(fmt_brl)
             exib_gen["quantidade_uso"] = exib_gen["quantidade_uso"].map(fmt_int)
             exib_gen["media_uso"] = exib_gen["media_uso"].map(fmt_float2)
