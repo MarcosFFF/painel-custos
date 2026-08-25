@@ -542,7 +542,13 @@ if st.session_state.pagina == "projecao":
 # PÁGINA: SEVERIDADE
 # ============================================================
 elif st.session_state.pagina == "severidade":
-    st.subheader("🔬 Severidade")
+    col_titulo_sev, col_atualizar_sev = st.columns([5, 1])
+    with col_titulo_sev:
+        st.subheader("🔬 Severidade")
+    with col_atualizar_sev:
+        if st.button("🔄 Recarregar", use_container_width=True):
+            carregar_base_severidade.clear()
+            st.rerun()
 
     agregado, aviso_carga = carregar_base_severidade(".")
 
