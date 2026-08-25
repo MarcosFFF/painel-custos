@@ -45,7 +45,7 @@ h3 { font-size: 1.1rem !important; }
 [data-testid="stMetricDelta"] { font-size: 0.78rem !important; }
 [data-testid="stCaptionContainer"] { font-size: 0.75rem !important; }
 /* Tabelas: fonte menor */
-div[data-testid="stDataFrame"] * { font-size: 0.72rem !important; }
+div[data-testid="stDataFrame"] * { font-size: 0.60rem !important; }
 /* Tabelas: centralizar colunas numéricas */
 div[data-testid="stDataFrame"] [data-testid="stTableCellText"] {
     text-align: center !important;
