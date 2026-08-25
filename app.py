@@ -45,7 +45,7 @@ h3 { font-size: 1.1rem !important; }
 [data-testid="stMetricDelta"] { font-size: 0.78rem !important; }
 [data-testid="stCaptionContainer"] { font-size: 0.75rem !important; }
 /* Tabelas: fonte menor */
-div[data-testid="stDataFrame"] * { font-size: 0.60rem !important; }
+div[data-testid="stDataFrame"] * { font-size: 0.72rem !important; }
 /* Tabelas: centralizar colunas numéricas */
 div[data-testid="stDataFrame"] [data-testid="stTableCellText"] {
     text-align: center !important;
@@ -605,22 +605,100 @@ elif st.session_state.pagina == "severidade":
             fig_watch.update_layout(height=500, margin=dict(l=10, r=10, t=40, b=10), yaxis_type="category")
             st.plotly_chart(fig_watch, use_container_width=True)
         st.dataframe(watchlist, hide_index=True, use_container_width=True)
+    # ---------- SEVERIDADE ----------
     with tab_severidade:
+        # === Ranking de severidade por especialidade (sempre visível no topo) ===
+        st.markdown("#### Ranking de severidade por especialidade")
+        st.caption(
+            "O **índice de severidade** combina o **custo médio** e o **uso médio** de cada especialidade "
+            "em um score z-score padronizado. Quanto maior o índice, mais severa é a especialidade — "
+            "ou seja, maior custo por procedimento e/ou maior intensidade de uso. "
+            "Exemplo: se Prótese tem índice 1.5 e Endodontia 0.8, Prótese é mais severa."
+        )
+        rank_sev_esp = ranking_severidade(df_filtrado, "ESPECIALIDADE")
+        if not rank_sev_esp.empty:
+            # Gráfico de barras horizontais — ordenado do mais severo (topo) ao menos severo
+            df_plot = rank_sev_esp.sort_values("indice_severidade", ascending=True).reset_index(drop=True)
+            fig_sev_esp = px.bar(
+                df_plot, x="indice_severidade", y="ESPECIALIDADE", orientation="h",
+                custom_data=["ESPECIALIDADE", "indice_severidade", "custo_medio", "media_uso"],
+                title="Severidade por especialidade (do mais ao menos severo)",
+                color="indice_severidade",
+                color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
+            )
+            fig_sev_esp.update_traces(
+                texttemplate="%{x:.2f}",
+                textposition="outside",
+                textfont=dict(size=10),
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b><br>"
+                    "Índice: %{customdata[1]:.2f}<br>"
+                    "Custo médio: R$ %{customdata[2]:,.2f}<br>"
+                    "Uso médio: %{customdata[3]:.2f}"
+                    "<extra></extra>"
+                ),
+                cliponaxis=False,
+            )
+            fig_sev_esp.update_layout(
+                height=max(350, len(df_plot) * 35),
+                margin=dict(l=10, r=60, t=40, b=10),
+                coloraxis_showscale=False,
+            )
+            # Colorir rótulos do eixo Y com base no índice (verde/amarelo/vermelho)
+            fig_sev_esp.update_yaxes(tickfont=dict(size=10))
+            st.plotly_chart(fig_sev_esp, use_container_width=True)
+            # Tabela formatada
+            exib_sev = rank_sev_esp.copy()
+            exib_sev["qtd_procedimentos"] = exib_sev["qtd_procedimentos"].map(fmt_int)
+            exib_sev["valor_solicitado"] = exib_sev["valor_solicitado"].map(fmt_brl)
+            exib_sev["custo_medio"] = exib_sev["custo_medio"].map(fmt_brl)
+            exib_sev["quantidade_uso"] = exib_sev["quantidade_uso"].map(fmt_int)
+            exib_sev["media_uso"] = exib_sev["media_uso"].map(fmt_float2)
+            exib_sev["indice_severidade"] = exib_sev["indice_severidade"].map(fmt_float2)
+            # Adicionar ranking numérico
+            exib_sev.insert(0, "#", range(1, len(exib_sev) + 1))
+            st.dataframe(exib_sev, hide_index=True, use_container_width=True)
+            st.caption(
+                "🟢 Verde = abaixo da média (menos severo) · 🟡 Amarelo = próximo da média · "
+                "🔴 Vermelho = acima da média (mais severo). A cor do gráfico segue a escala do índice."
+            )
+        else:
+            st.info("Sem dados de especialidade para os filtros atuais.")
+        st.divider()
+        # === Severidade por outras dimensões (seletor) ===
+        st.markdown("#### Severidade por outras dimensões")
         dims = {
             "Região": "REGIAO", "Cidade": "CIDADE_PRESTADOR", "Prestador (código)": "CD_PRESTADOR",
-            "Procedimento": "NOME_PROCEDIMENTO", "Especialidade": "ESPECIALIDADE", "Cluster": "CLUSTER",
+            "Procedimento": "NOME_PROCEDIMENTO", "Cluster": "CLUSTER",
         }
         dim_escolhida = st.selectbox("Dimensão", list(dims.keys()))
         rank_sev = ranking_severidade(df_filtrado, dims[dim_escolhida])
         if not rank_sev.empty:
+            df_plot_gen = rank_sev.sort_values("indice_severidade", ascending=True).reset_index(drop=True)
             fig_sev = px.bar(
-                rank_sev.sort_values("indice_severidade"), x="indice_severidade", y=dims[dim_escolhida],
+                df_plot_gen, x="indice_severidade", y=dims[dim_escolhida],
                 orientation="h", text="indice_severidade", title=f"Severidade por {dim_escolhida}",
+                color="indice_severidade",
+                color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
             )
-            fig_sev.update_traces(texttemplate="%{text:.2f}", textposition="outside")
-            fig_sev.update_layout(height=450, margin=dict(l=10, r=10, t=40, b=10), yaxis_type="category")
+            fig_sev.update_traces(texttemplate="%{text:.2f}", textposition="outside", cliponaxis=False)
+            fig_sev.update_layout(
+                height=450, margin=dict(l=10, r=60, t=40, b=10),
+                yaxis_type="category", coloraxis_showscale=False,
+            )
             st.plotly_chart(fig_sev, use_container_width=True)
-        st.dataframe(rank_sev, hide_index=True, use_container_width=True)
+            # Tabela formatada
+            exib_gen = rank_sev.copy()
+            exib_gen["qtd_procedimentos"] = exib_gen["qtd_procedimentos"].map(fmt_int)
+            exib_gen["valor_solicitado"] = exib_gen["valor_solicitado"].map(fmt_brl)
+            exib_gen["custo_medio"] = exib_gen["custo_medio"].map(fmt_brl)
+            exib_gen["quantidade_uso"] = exib_gen["quantidade_uso"].map(fmt_int)
+            exib_gen["media_uso"] = exib_gen["media_uso"].map(fmt_float2)
+            exib_gen["indice_severidade"] = exib_gen["indice_severidade"].map(fmt_float2)
+            exib_gen.insert(0, "#", range(1, len(exib_gen) + 1))
+            st.dataframe(exib_gen, hide_index=True, use_container_width=True)
+        else:
+            st.info("Sem dados para a dimensão selecionada com os filtros atuais.")
     with tab_ofensores:
         st.markdown("**Prestadores ofensores** (destaque em pelo menos 2 de 3: custo médio, volume, uso médio — top 5%)")
         ofensores = identificar_ofensores(df_filtrado)
