@@ -144,7 +144,7 @@ def carregar_base_severidade(pasta="."):
             df["ARQUIVO_ORIGEM"] = chave_grupo
             partes.append(df)
     dados = pd.concat(partes, ignore_index=True)
-    dados["DATA_REF"] = dados["DATA_ATEND"]
+    dados["DATA_REF"] = dados["DATA_SOL"]
     sem_atend = dados["DATA_REF"].isna()
     dados.loc[sem_atend, "DATA_REF"] = dados.loc[sem_atend, "DATA_SOL"]
     dados["MES"] = dados["DATA_REF"].dt.strftime("%Y-%m")
