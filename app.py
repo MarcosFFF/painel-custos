@@ -44,7 +44,16 @@ h3 { font-size: 1.1rem !important; }
 [data-testid="stMetricLabel"] { font-size: 0.78rem !important; }
 [data-testid="stMetricDelta"] { font-size: 0.78rem !important; }
 [data-testid="stCaptionContainer"] { font-size: 0.75rem !important; }
-div[data-testid="stDataFrame"] * { font-size: 0.8rem !important; }
+/* Tabelas: fonte menor */
+div[data-testid="stDataFrame"] * { font-size: 0.72rem !important; }
+/* Tabelas: centralizar colunas numéricas */
+div[data-testid="stDataFrame"] [data-testid="stTableCellText"] {
+    text-align: center !important;
+}
+/* Primeira coluna (nome da dimensão) alinhada à esquerda */
+div[data-testid="stDataFrame"] [data-testid="stTableRowHeaderCell"] {
+    text-align: left !important;
+}
 /* espaçamento mais compacto */
 div[data-testid="stVerticalBlock"] { gap: 0.35rem !important; }
 hr { margin: 0.4rem 0 !important; }
@@ -106,6 +115,17 @@ def fmt_brl(v):
     s = f"{v:,.2f}"
     s = s.replace(",", "§").replace(".", ",").replace("§", ".")
     return f"R$ {s}"
+def fmt_int(v):
+    """Inteiro com separador de milhares (ponto)."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "—"
+    return f"{int(v):,}".replace(",", ".")
+def fmt_float2(v):
+    """Float com 2 casas decimais e separador de milhares (padrão BR)."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "—"
+    s = f"{v:,.2f}"
+    return s.replace(",", "§").replace(".", ",").replace("§", ".")
 def label_mes(key):
     y, m = key.split("-")
     return f"{MESES_ABREV[int(m) - 1]}/{y}"
@@ -504,9 +524,9 @@ elif st.session_state.pagina == "severidade":
         st.info("Nenhum dado para esses filtros.")
         st.stop()
     m1, m2, m3 = st.columns(3)
-    m1.metric("Procedimentos", f"{int(df_filtrado['qtd_procedimentos'].sum()):,}".replace(",", "."))
+    m1.metric("Procedimentos", fmt_int(df_filtrado["qtd_procedimentos"].sum()))
     m2.metric("Valor pago", fmt_brl(df_filtrado["soma_vl_pago"].sum()))
-    m3.metric("Quantidade de uso", f"{int(df_filtrado['soma_uso'].sum()):,}".replace(",", "."))
+    m3.metric("Quantidade de uso", fmt_int(df_filtrado["soma_uso"].sum()))
     st.divider()
     tab_rank, tab_evolucao, tab_watch, tab_severidade, tab_ofensores = st.tabs(
         ["Rankings", "Evolução mensal", "Watchlist", "Severidade", "Ofensores"]
@@ -519,7 +539,6 @@ elif st.session_state.pagina == "severidade":
             custom_data=[coluna, "valor_pago"],
             title=titulo,
         )
-        # Nome dentro da barra (início, branco) — "atrás", coberto pela barra
         fig.update_traces(
             texttemplate="%{y}",
             textposition="inside",
@@ -528,9 +547,7 @@ elif st.session_state.pagina == "severidade":
             hovertemplate=f"<b>%{{customdata[0]}}</b><br>Valor: R$ %{{customdata[1]:,.0f}}<extra></extra>",
             cliponaxis=False,
         )
-        # Esconde rótulos do eixo Y (nomes já estão dentro das barras)
         fig.update_yaxes(showticklabels=False)
-        # Adiciona o valor fora da barra, à direita
         for _, row in df_sorted.iterrows():
             fig.add_annotation(
                 x=row["valor_pago"], y=row[coluna],
@@ -540,22 +557,32 @@ elif st.session_state.pagina == "severidade":
             )
         fig.update_layout(height=400, margin=dict(l=10, r=60, t=40, b=10))
         st.plotly_chart(fig, use_container_width=True)
+
+    def _exibir_ranking(df_rank, coluna):
+        """Exibe a tabela de ranking com números formatados (padrão BR) e centralizados."""
+        exib = df_rank.copy()
+        exib["qtd_procedimentos"] = exib["qtd_procedimentos"].map(fmt_int)
+        exib["valor_pago"] = exib["valor_pago"].map(fmt_brl)
+        exib["quantidade_uso"] = exib["quantidade_uso"].map(fmt_int)
+        exib["media_uso"] = exib["media_uso"].map(fmt_float2)
+        st.dataframe(exib, hide_index=True, use_container_width=True)
+
     with tab_rank:
         rc1, rc2 = st.columns(2)
         with rc1:
             rank_esp = ranking_por(df_filtrado, "ESPECIALIDADE")
             _grafico_ranking(rank_esp, "ESPECIALIDADE", "Por especialidade")
-            st.dataframe(rank_esp, hide_index=True, use_container_width=True)
+            _exibir_ranking(rank_esp, "ESPECIALIDADE")
             rank_uf = ranking_por(df_filtrado, "UF")
             _grafico_ranking(rank_uf, "UF", "Por UF")
-            st.dataframe(rank_uf, hide_index=True, use_container_width=True)
+            _exibir_ranking(rank_uf, "UF")
         with rc2:
             rank_proc = ranking_por(df_filtrado, "NOME_PROCEDIMENTO")
             _grafico_ranking(rank_proc, "NOME_PROCEDIMENTO", "Por procedimento")
-            st.dataframe(rank_proc, hide_index=True, use_container_width=True)
+            _exibir_ranking(rank_proc, "NOME_PROCEDIMENTO")
             rank_reg = ranking_por(df_filtrado, "REGIAO")
             _grafico_ranking(rank_reg, "REGIAO", "Por região")
-            st.dataframe(rank_reg, hide_index=True, use_container_width=True)
+            _exibir_ranking(rank_reg, "REGIAO")
     with tab_evolucao:
         evolucao = evolucao_mensal(df_filtrado)
         fig_valor = px.line(evolucao, x="MES", y="valor_pago", markers=True, text="valor_pago", title="Valor pago por mês")
