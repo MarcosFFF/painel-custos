@@ -116,12 +116,10 @@ def fmt_brl(v):
     s = s.replace(",", "§").replace(".", ",").replace("§", ".")
     return f"R$ {s}"
 def fmt_int(v):
-    """Inteiro com separador de milhares (ponto)."""
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
     return f"{int(v):,}".replace(",", ".")
 def fmt_float2(v):
-    """Float com 2 casas decimais e separador de milhares (padrão BR)."""
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
     s = f"{v:,.2f}"
@@ -531,7 +529,7 @@ elif st.session_state.pagina == "severidade":
     tab_rank, tab_evolucao, tab_watch, tab_severidade, tab_ofensores = st.tabs(
         ["Rankings", "Evolução mensal", "Watchlist", "Severidade", "Ofensores"]
     )
-    # ---------- RANKINGS (nomes dentro das barras, valores fora) ----------
+    # ---------- RANKINGS ----------
     def _grafico_ranking(df_rank, coluna, titulo):
         df_sorted = df_rank.sort_values("valor_pago").reset_index(drop=True)
         fig = px.bar(
@@ -559,7 +557,6 @@ elif st.session_state.pagina == "severidade":
         st.plotly_chart(fig, use_container_width=True)
 
     def _exibir_ranking(df_rank, coluna):
-        """Exibe a tabela de ranking com números formatados (padrão BR) e centralizados."""
         exib = df_rank.copy()
         exib["qtd_procedimentos"] = exib["qtd_procedimentos"].map(fmt_int)
         exib["valor_pago"] = exib["valor_pago"].map(fmt_brl)
@@ -592,7 +589,6 @@ elif st.session_state.pagina == "severidade":
         fig_uso = px.line(evolucao, x="MES", y=["quantidade_uso", "media_uso"], markers=True, title="Uso por mês")
         fig_uso.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10))
         st.plotly_chart(fig_uso, use_container_width=True)
-        st.dataframe(evolucao, hide_index=True, use_container_width=True)
     with tab_watch:
         st.caption("Combinação de custo médio, uso médio e tendência de crescimento, ponderada pelo volume (0-100).")
         watchlist = montar_watchlist(df_filtrado)
@@ -607,7 +603,6 @@ elif st.session_state.pagina == "severidade":
         st.dataframe(watchlist, hide_index=True, use_container_width=True)
     # ---------- SEVERIDADE ----------
     with tab_severidade:
-        # === Ranking de severidade por especialidade (sempre visível no topo) ===
         st.markdown("#### Ranking de severidade por especialidade")
         st.caption(
             "O **índice de severidade** combina o **custo médio** e o **uso médio** de cada especialidade "
@@ -617,7 +612,6 @@ elif st.session_state.pagina == "severidade":
         )
         rank_sev_esp = ranking_severidade(df_filtrado, "ESPECIALIDADE")
         if not rank_sev_esp.empty:
-            # Gráfico de barras horizontais — ordenado do mais severo (topo) ao menos severo
             df_plot = rank_sev_esp.sort_values("indice_severidade", ascending=True).reset_index(drop=True)
             fig_sev_esp = px.bar(
                 df_plot, x="indice_severidade", y="ESPECIALIDADE", orientation="h",
@@ -646,7 +640,6 @@ elif st.session_state.pagina == "severidade":
             )
             fig_sev_esp.update_yaxes(tickfont=dict(size=10))
             st.plotly_chart(fig_sev_esp, use_container_width=True)
-            # Tabela formatada — usa valor_pago (nome real da coluna no DataFrame)
             exib_sev = rank_sev_esp.copy()
             exib_sev["qtd_procedimentos"] = exib_sev["qtd_procedimentos"].map(fmt_int)
             if "valor_pago" in exib_sev.columns:
@@ -666,7 +659,6 @@ elif st.session_state.pagina == "severidade":
         else:
             st.info("Sem dados de especialidade para os filtros atuais.")
         st.divider()
-        # === Severidade por outras dimensões (seletor) ===
         st.markdown("#### Severidade por outras dimensões")
         dims = {
             "Região": "REGIAO", "Cidade": "CIDADE_PRESTADOR", "Prestador (código)": "CD_PRESTADOR",
@@ -688,7 +680,6 @@ elif st.session_state.pagina == "severidade":
                 yaxis_type="category", coloraxis_showscale=False,
             )
             st.plotly_chart(fig_sev, use_container_width=True)
-            # Tabela formatada — usa valor_pago (nome real da coluna no DataFrame)
             exib_gen = rank_sev.copy()
             exib_gen["qtd_procedimentos"] = exib_gen["qtd_procedimentos"].map(fmt_int)
             if "valor_pago" in exib_gen.columns:
