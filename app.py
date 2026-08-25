@@ -55,6 +55,20 @@ div[data-testid="stVerticalBlock"] { gap: 0.35rem !important; }
 hr { margin: 0.4rem 0 !important; }
 div[data-testid="stMetric"] { padding: 0.15rem 0 !important; }
 div.element-container { margin-bottom: 0.1rem !important; }
+div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stWidgetLabel"] p {
+    font-size: 0.7rem !important;
+}
+div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="select"] span,
+div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="select"] li {
+    font-size: 0.72rem !important;
+}
+div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="tag"] span {
+    font-size: 0.68rem !important;
+}
+div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="slider"] span,
+div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="slider"] div {
+    font-size: 0.72rem !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
