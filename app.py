@@ -264,7 +264,7 @@ with nav1:
         st.session_state.pagina = "projecao"
         st.rerun()
 with nav2:
-    if st.button("🔬 Severidade", use_container_width=True,
+    if st.button("🕵️ Severidade", use_container_width=True,
                  type="primary" if st.session_state.pagina == "severidade" else "secondary"):
         st.session_state.pagina = "severidade"
         st.rerun()
@@ -332,8 +332,7 @@ if st.session_state.pagina == "projecao":
         projecao = resultado_sinistro["sinistro_projetado"]
         label_projetado = "Valor projetado (Sinistro)"
         if resultado_sinistro["projecao_solicitado"] is not None and resultado_sinistro["razao_media_historica"] is not None:
-            nota = (f"Solicitado projetado: {fmt_brl(resultado_sinistro['projecao_solicitado'])} · "
-                    f"razão histórica: {resultado_sinistro['razao_media_historica']:.2%}")
+            nota = ""
         else:
             nota = "Dados insuficientes (dias úteis decorridos ou meses fechados com Real) para calcular a projeção do Sinistro."
     elif dado_mensal_do_mes_visto and dado_mensal_do_mes_visto["projetado"] is not None:
@@ -544,7 +543,7 @@ if st.session_state.pagina == "projecao":
 elif st.session_state.pagina == "severidade":
     col_titulo_sev, col_atualizar_sev = st.columns([5, 1])
     with col_titulo_sev:
-        st.subheader("🔬 Severidade")
+        st.subheader("🕵️ Severidade")
     with col_atualizar_sev:
         if st.button("🔄 Recarregar", use_container_width=True):
             carregar_base_severidade.clear()
