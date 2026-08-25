@@ -195,6 +195,25 @@ def _numero_parte(caminho):
 
 
 # ============================================================
+# LOCALIZAÇÃO FLEXÍVEL DOS ARQUIVOS DE APOIO (tolera espaço/underscore no nome)
+# ============================================================
+def _localizar_arquivo(pasta, prefixo):
+    """
+    Procura um .xlsx cujo nome comece com `prefixo`, tolerando espaço, underscore
+    ou qualquer separador entre as palavras (ex.: aceita tanto '1004_claude.xlsx'
+    quanto '1004 claude.xlsx', ou até só '1004.xlsx').
+    """
+    candidatos = glob.glob(os.path.join(pasta, f"{prefixo}*.xlsx"))
+    if not candidatos:
+        candidatos = glob.glob(os.path.join(pasta, f"{prefixo.replace('_', ' ')}*.xlsx"))
+    if not candidatos:
+        raise FileNotFoundError(
+            f"Não encontrei nenhum arquivo começando com '{prefixo}' (.xlsx) na pasta {pasta!r}."
+        )
+    return candidatos[0]
+
+
+# ============================================================
 # CARREGAMENTO E CRUZAMENTO DOS DADOS (cacheado — só recalcula quando pedido)
 # ============================================================
 @st.cache_data(show_spinner="Carregando dados de severidade...")
@@ -231,7 +250,7 @@ def carregar_base_severidade(pasta="."):
     dados["MES"] = dados["DATA_REF"].dt.strftime("%Y-%m")
 
     # ---------- 3) cruzamento com 1004 (USO por procedimento) ----------
-    tabela_1004 = pd.read_excel(os.path.join(pasta, "1004_claude.xlsx"), sheet_name=0)
+    tabela_1004 = pd.read_excel(_localizar_arquivo(pasta, "1004"), sheet_name=0)
     mapa_1004 = _casar_colunas(tabela_1004.columns, ["CODIGO", "USO"])
     tabela_1004 = tabela_1004[[mapa_1004["CODIGO"], mapa_1004["USO"]]].copy()
     tabela_1004.columns = ["CD_PROCEDIMENTO", "USO_PROCEDIMENTO"]
@@ -241,7 +260,7 @@ def carregar_base_severidade(pasta="."):
     dados["QTD_USO"] = dados["USO_PROCEDIMENTO"]  # cada linha = 1 procedimento; soma por grupo dá a "quantidade de uso"
 
     # ---------- 4) cruzamento com Cluster (cidade -> cluster) ----------
-    cluster_bi = pd.read_excel(os.path.join(pasta, "cluster_claude.xlsx"), sheet_name=0)
+    cluster_bi = pd.read_excel(_localizar_arquivo(pasta, "cluster"), sheet_name=0)
     mapa_cluster = _casar_colunas(cluster_bi.columns, ["UF_MUN", "CLUSTER"])
     cluster_bi = cluster_bi[[mapa_cluster["UF_MUN"], mapa_cluster["CLUSTER"]]].copy()
     cluster_bi.columns = ["UF_MUN", "CLUSTER"]
@@ -274,8 +293,6 @@ def carregar_base_severidade(pasta="."):
     ).reset_index()
 
     avisos = []
-    if sem_cluster > 0:
-        avisos.append(f"{sem_cluster:,} linhas ({sem_cluster/len(dados)*100:.1f}%) não encontraram cidade correspondente no Cluster.")
     if sem_regiao > 0:
         avisos.append(f"{sem_regiao:,} linhas ({sem_regiao/len(dados)*100:.1f}%) têm UF não reconhecida (sem Região).")
     aviso = " | ".join(avisos) if avisos else None
