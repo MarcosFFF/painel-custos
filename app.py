@@ -41,6 +41,7 @@ button[kind="primary"]:active {
     border-color: #6bb8dd !important;
     color: #0d2b3e !important;
 }
+.block-container { padding-top: 3rem !important; padding-bottom: 1.5rem !important; }
 html, body { font-size: 14px !important; }
 h1 { font-size: 1.6rem !important; }
 h2 { font-size: 1.3rem !important; }
@@ -50,9 +51,8 @@ h3 { font-size: 1.1rem !important; }
 [data-testid="stMetricDelta"] { font-size: 0.78rem !important; }
 [data-testid="stCaptionContainer"] { font-size: 0.75rem !important; }
 div[data-testid="stDataFrame"] * { font-size: 0.8rem !important; }
-<style>
+</style>
 """)
-
 /* espaçamento mais compacto */
 .block-container { padding-top: 3rem !important; padding-bottom: 1.5rem !important; }
 div[data-testid="stVerticalBlock"] { gap: 0.35rem !important; }
