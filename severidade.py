@@ -1,10 +1,13 @@
 """
-Módulo de Severidade — carrega CSVs, cruza com 1004_claude.xlsx e cluster_claude.xlsx,
-deriva Região a partir da UF, e fornece todos os cálculos da aba "Severidade".
+Módulo de Severidade — carrega CSVs, cruza com 1004_claude.xlsx, cluster_claude.xlsx
+e a relação de prestadores (código, nome, CPF/CNPJ), deriva Região a partir da UF,
+e fornece todos os cálculos da aba "Severidade".
 
 Observação: esta versão ignora valores em R$ (VL_PROCEDIMENTO / VL_FRANQUIA / VL_PAGO)
-em todos os rankings, índices e alertas. Tudo passa a ser calculado a partir de USO
-(quantidade de uso vinda da tabela 1004) e volume de procedimentos.
+em todos os rankings, índices e alertas. Tudo é calculado a partir de duas métricas de uso:
+
+  - uso_por_procedimento = soma da qtde de uso ÷ qtde de procedimentos
+  - uso_por_vida         = soma da qtde de uso ÷ qtde de vidas (usuários distintos)
 """
 import glob
 import os
@@ -20,6 +23,10 @@ UF_PARA_REGIAO = {
     "ES": "Sudeste", "MG": "Sudeste", "RJ": "Sudeste", "SP": "Sudeste",
     "PR": "Sul", "RS": "Sul", "SC": "Sul",
 }
+# Colunas esperadas na relação de prestadores (ex.: BASE.csv), buscadas por nome
+# normalizado — o arquivo pode ter outras colunas (TIPO PRESTADOR, STATUS etc.),
+# só estas três são usadas.
+COLUNAS_PRESTADORES = ["CODIGO", "CREDENCIADO", "CNPJ_CPF"]
 def normalizar_texto(v):
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return None
@@ -114,6 +121,52 @@ def _localizar_arquivo(pasta, prefixo):
     if not candidatos:
         raise FileNotFoundError(f"Não encontrei '{prefixo}' (.xlsx) na pasta {pasta!r}.")
     return candidatos[0]
+def _ler_amostra_csv(caminho, nrows=3):
+    for enc in ["utf-8", "latin1"]:
+        try:
+            return pd.read_csv(caminho, sep=";", encoding=enc, nrows=nrows, dtype=str)
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+        except Exception:
+            return None
+    return None
+def _localizar_csv_prestadores(pasta):
+    """
+    Procura, entre todos os .csv da pasta, um arquivo com as colunas de uma
+    relação de prestadores (código, nome/credenciado, CPF/CNPJ) — identificado
+    pelo cabeçalho, não pelo nome do arquivo (ex.: BASE.csv).
+    """
+    exigidas = {normalizar_texto(c) for c in COLUNAS_PRESTADORES}
+    candidatos = sorted(glob.glob(os.path.join(pasta, "*.csv")))
+    for c in candidatos:
+        amostra = _ler_amostra_csv(c)
+        if amostra is None:
+            continue
+        colunas_norm = {normalizar_texto(_corrigir_mojibake(str(col).strip())) for col in amostra.columns}
+        if exigidas.issubset(colunas_norm):
+            return c
+    return None
+def _ler_csv_prestadores(caminho):
+    df = None
+    for enc in ["utf-8", "latin1"]:
+        try:
+            df = pd.read_csv(caminho, sep=";", encoding=enc, dtype=str, low_memory=False)
+            break
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    if df is None:
+        raise ValueError(f"Não consegui ler {caminho}")
+    mapa = _casar_colunas(df.columns, COLUNAS_PRESTADORES)
+    faltando = [c for c in COLUNAS_PRESTADORES if c not in mapa]
+    if faltando:
+        raise ValueError(f"Colunas faltando em {os.path.basename(caminho)}: {faltando}")
+    df = df[[mapa["CODIGO"], mapa["CREDENCIADO"], mapa["CNPJ_CPF"]]].copy()
+    df.columns = ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR"]
+    df["CD_PRESTADOR"] = pd.to_numeric(df["CD_PRESTADOR"], errors="coerce")
+    df["NOME_PRESTADOR"] = df["NOME_PRESTADOR"].apply(_corrigir_mojibake)
+    df["CNPJ_CPF_PRESTADOR"] = df["CNPJ_CPF_PRESTADOR"].astype(str).str.strip()
+    df = df.dropna(subset=["CD_PRESTADOR"]).drop_duplicates(subset="CD_PRESTADOR", keep="first")
+    return df
 @st.cache_data(show_spinner="Carregando dados de severidade...")
 def carregar_base_severidade(pasta="."):
     candidatos = sorted(
@@ -161,9 +214,25 @@ def carregar_base_severidade(pasta="."):
     dados = dados.merge(cluster_bi, on="CHAVE_CIDADE_UF", how="left")
     dados["REGIAO"] = dados["UF"].map(UF_PARA_REGIAO)
     sem_regiao = dados["REGIAO"].isna().sum()
+    # Relação de prestadores (código, nome/credenciado, CPF/CNPJ) — opcional: se o
+    # arquivo ainda não estiver na pasta, seguimos só com o código do prestador.
+    caminho_prestadores = _localizar_csv_prestadores(pasta)
+    sem_nome_prestador = None
+    if caminho_prestadores:
+        try:
+            prestadores = _ler_csv_prestadores(caminho_prestadores)
+            dados = dados.merge(prestadores, on="CD_PRESTADOR", how="left")
+            sem_nome_prestador = dados["NOME_PRESTADOR"].isna().sum()
+        except Exception:
+            dados["NOME_PRESTADOR"] = None
+            dados["CNPJ_CPF_PRESTADOR"] = None
+    else:
+        dados["NOME_PRESTADOR"] = None
+        dados["CNPJ_CPF_PRESTADOR"] = None
     grupos = [
         "MES", "UF", "REGIAO", "ESPECIALIDADE", "CD_PLANO", "NR_PLANO", "CLUSTER",
-        "CD_PROCEDIMENTO", "NOME_PROCEDIMENTO", "CD_PRESTADOR", "CIDADE_PRESTADOR",
+        "CD_PROCEDIMENTO", "NOME_PROCEDIMENTO", "CD_PRESTADOR", "NOME_PRESTADOR",
+        "CNPJ_CPF_PRESTADOR", "CIDADE_PRESTADOR",
     ]
     # Nota: valores em R$ (VL_PROCEDIMENTO/VL_FRANQUIA/VL_PAGO) não entram mais no
     # agregado — a análise de severidade passa a ser 100% baseada em uso e volume.
@@ -175,6 +244,16 @@ def carregar_base_severidade(pasta="."):
     avisos = []
     if sem_regiao > 0:
         avisos.append(f"{sem_regiao:,} linhas têm UF não reconhecida.")
+    if caminho_prestadores is None:
+        avisos.append(
+            "Relação de prestadores (nome/CPF-CNPJ) não encontrada na pasta — "
+            "mostrando apenas o código do prestador."
+        )
+    elif sem_nome_prestador:
+        avisos.append(
+            f"{sem_nome_prestador:,} linhas com código de prestador não encontrado "
+            "na relação de prestadores."
+        )
     aviso = " | ".join(avisos) if avisos else None
     return agregado, aviso
 def aplicar_filtros(agregado, meses=None, ufs=None, regioes=None, especialidades=None, planos=None, clusters=None):
@@ -187,66 +266,91 @@ def aplicar_filtros(agregado, meses=None, ufs=None, regioes=None, especialidades
     if clusters: df = df[df["CLUSTER"].isin(clusters)]
     return df
 def _info_prestador(df):
-    """Extrai UF, Cidade, Cluster e Especialidade mais frequente de cada prestador."""
-    return df.groupby("CD_PRESTADOR", observed=True).agg(
-        UF=("UF", lambda x: x.mode().iloc[0] if not x.mode().empty else "—"),
-        CIDADE=("CIDADE_PRESTADOR", lambda x: x.mode().iloc[0] if not x.mode().empty else "—"),
-        CLUSTER=("CLUSTER", lambda x: x.mode().iloc[0] if not x.mode().empty else "—"),
-        ESPECIALIDADE=("ESPECIALIDADE", lambda x: x.mode().iloc[0] if not x.mode().empty else "—"),
-    ).reset_index()
+    """Extrai Nome, CPF/CNPJ, UF, Cidade, Cluster e Especialidade mais frequente de cada prestador."""
+    agregacoes = {
+        "UF": ("UF", lambda x: x.mode().iloc[0] if not x.mode().empty else "—"),
+        "CIDADE": ("CIDADE_PRESTADOR", lambda x: x.mode().iloc[0] if not x.mode().empty else "—"),
+        "CLUSTER": ("CLUSTER", lambda x: x.mode().iloc[0] if not x.mode().empty else "—"),
+        "ESPECIALIDADE": ("ESPECIALIDADE", lambda x: x.mode().iloc[0] if not x.mode().empty else "—"),
+    }
+    if "NOME_PRESTADOR" in df.columns:
+        agregacoes["NOME_PRESTADOR"] = ("NOME_PRESTADOR", lambda x: x.mode().iloc[0] if not x.mode().empty else "—")
+    if "CNPJ_CPF_PRESTADOR" in df.columns:
+        agregacoes["CNPJ_CPF_PRESTADOR"] = ("CNPJ_CPF_PRESTADOR", lambda x: x.mode().iloc[0] if not x.mode().empty else "—")
+    return df.groupby("CD_PRESTADOR", observed=True).agg(**agregacoes).reset_index()
 def ranking_por(df, coluna, top_n=15):
     r = df.groupby(coluna, dropna=False, observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
+        qtd_usuarios=("qtd_usuarios", "sum"),
         quantidade_uso=("soma_uso", "sum"),
     ).reset_index()
-    r["media_uso"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
+    r["uso_por_procedimento"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
+    r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     return r.sort_values("quantidade_uso", ascending=False).head(top_n)
 def evolucao_mensal(df):
     r = df.groupby("MES", observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
+        qtd_usuarios=("qtd_usuarios", "sum"),
         quantidade_uso=("soma_uso", "sum"),
     ).reset_index().sort_values("MES")
-    r["media_uso"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
+    r["uso_por_procedimento"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
+    r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     return r
 def ranking_severidade(df, coluna, top_n=15):
-    r = df.groupby(coluna, dropna=False, observed=True).agg(
+    grupo_cols = [coluna]
+    if coluna == "CD_PRESTADOR":
+        for extra in ["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR"]:
+            if extra in df.columns:
+                grupo_cols.append(extra)
+    r = df.groupby(grupo_cols, dropna=False, observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
+        qtd_usuarios=("qtd_usuarios", "sum"),
         quantidade_uso=("soma_uso", "sum"),
     ).reset_index()
-    r["media_uso"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
-    media, desvio = r["media_uso"].mean(), r["media_uso"].std()
-    r["indice_severidade"] = 0.0 if desvio == 0 or pd.isna(desvio) else (r["media_uso"] - media) / desvio
-    return r.sort_values("indice_severidade", ascending=False).head(top_n)
+    r["uso_por_procedimento"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
+    r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
+    for c in ["uso_por_procedimento", "uso_por_vida"]:
+        media, desvio = r[c].mean(), r[c].std()
+        r[f"z_{c}"] = 0.0 if desvio == 0 or pd.isna(desvio) else (r[c] - media) / desvio
+    r["indice_severidade"] = (r["z_uso_por_procedimento"] + r["z_uso_por_vida"]) / 2
+    return r.sort_values("indice_severidade", ascending=False).head(top_n).drop(
+        columns=["z_uso_por_procedimento", "z_uso_por_vida"]
+    )
 def calcular_media_nacional(agregado, coluna_dimensao):
     """Média de uso nacional (sem filtros) por dimensão."""
     r = agregado.groupby(coluna_dimensao, observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
+        qtd_usuarios=("qtd_usuarios", "sum"),
         quantidade_uso=("soma_uso", "sum"),
     ).reset_index()
-    r["media_uso_nacional"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
+    r["uso_por_procedimento_nacional"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
+    r["uso_por_vida_nacional"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     return r
 def montar_watchlist(df, top_n=20):
     """
-    Watchlist com UF, Cidade e Cluster de cada prestador.
-    Pontuação 0-100 combinando uso médio (intensidade) e volume de procedimentos.
+    Watchlist com Nome, CPF/CNPJ, UF, Cidade e Cluster de cada prestador.
+    Pontuação 0-100 combinando uso por procedimento, uso por vida e volume.
     """
     info = _info_prestador(df)
     por_prestador = df.groupby("CD_PRESTADOR", observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
+        qtd_usuarios=("qtd_usuarios", "sum"),
         quantidade_uso=("soma_uso", "sum"),
     ).reset_index()
     if por_prestador.empty:
         return pd.DataFrame()
     por_prestador = por_prestador.merge(info, on="CD_PRESTADOR", how="left")
-    por_prestador["media_uso"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_procedimentos"]).round(2)
-    # Pontuação composta (0-100) — percentis, apenas uso e volume
-    for c in ["media_uso", "qtd_procedimentos"]:
+    por_prestador["uso_por_procedimento"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_procedimentos"]).round(2)
+    por_prestador["uso_por_vida"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_usuarios"]).round(2)
+    # Pontuação composta (0-100) — percentis de uso por procedimento, uso por vida e volume
+    for c in ["uso_por_procedimento", "uso_por_vida", "qtd_procedimentos"]:
         por_prestador[f"pct_{c}"] = por_prestador[c].rank(pct=True).fillna(0)
     por_prestador["pontuacao"] = (
-        (por_prestador["pct_media_uso"] * 0.6
-         + por_prestador["pct_qtd_procedimentos"] * 0.4) * 100
+        (por_prestador["pct_uso_por_procedimento"] * 0.35
+         + por_prestador["pct_uso_por_vida"] * 0.35
+         + por_prestador["pct_qtd_procedimentos"] * 0.30) * 100
     ).round(0)
-    # Tendência percentual (variação do mês mais recente vs anterior, se houver)
+    # Tendência percentual (variação do volume do mês mais recente vs anterior, se houver)
     if "MES" in df.columns and df["MES"].nunique() > 1:
         meses_ord = sorted(df["MES"].unique())
         ultimo = meses_ord[-1]
@@ -260,35 +364,38 @@ def montar_watchlist(df, top_n=20):
     else:
         por_prestador["tendencia_pct"] = 0.0
     resultado = por_prestador.sort_values("pontuacao", ascending=False).head(top_n)
-    cols = ["CD_PRESTADOR", "UF", "CIDADE", "CLUSTER", "ESPECIALIDADE",
-            "qtd_procedimentos", "quantidade_uso", "media_uso", "tendencia_pct", "pontuacao"]
+    cols = ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER", "ESPECIALIDADE",
+            "qtd_procedimentos", "qtd_usuarios", "quantidade_uso", "uso_por_procedimento", "uso_por_vida",
+            "tendencia_pct", "pontuacao"]
     cols = [c for c in cols if c in resultado.columns]
     return resultado[cols].reset_index(drop=True)
 def identificar_ofensores(df, percentil=0.95):
     """
     Identifica ofensores com justificativa textual, baseado só em uso e volume.
     Um prestador é ofensor quando atende ≥ 2 de 3 critérios no top 5%:
-    volume de procedimentos, uso médio por procedimento, uso total.
+    volume de procedimentos, uso por procedimento, uso por vida.
     """
     info = _info_prestador(df)
     por_prestador = df.groupby("CD_PRESTADOR", observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
+        qtd_usuarios=("qtd_usuarios", "sum"),
         quantidade_uso=("soma_uso", "sum"),
     ).reset_index()
     por_prestador = por_prestador.merge(info, on="CD_PRESTADOR", how="left")
-    por_prestador["media_uso"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_procedimentos"]).round(2)
+    por_prestador["uso_por_procedimento"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_procedimentos"]).round(2)
+    por_prestador["uso_por_vida"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_usuarios"]).round(2)
     if len(por_prestador) == 0:
         return por_prestador
     limiar_volume = por_prestador["qtd_procedimentos"].quantile(percentil)
-    limiar_uso_medio = por_prestador["media_uso"].quantile(percentil)
-    limiar_uso_total = por_prestador["quantidade_uso"].quantile(percentil)
+    limiar_uso_procedimento = por_prestador["uso_por_procedimento"].quantile(percentil)
+    limiar_uso_vida = por_prestador["uso_por_vida"].quantile(percentil)
     por_prestador["alerta_volume"] = por_prestador["qtd_procedimentos"] >= limiar_volume
-    por_prestador["alerta_uso_medio"] = por_prestador["media_uso"] >= limiar_uso_medio
-    por_prestador["alerta_uso_total"] = por_prestador["quantidade_uso"] >= limiar_uso_total
+    por_prestador["alerta_uso_procedimento"] = por_prestador["uso_por_procedimento"] >= limiar_uso_procedimento
+    por_prestador["alerta_uso_vida"] = por_prestador["uso_por_vida"] >= limiar_uso_vida
     por_prestador["criterios_atingidos"] = (
         por_prestador["alerta_volume"].astype(int)
-        + por_prestador["alerta_uso_medio"].astype(int)
-        + por_prestador["alerta_uso_total"].astype(int)
+        + por_prestador["alerta_uso_procedimento"].astype(int)
+        + por_prestador["alerta_uso_vida"].astype(int)
     )
     pct_str = f"top {int((1 - percentil) * 100)}%"
     justificativas = []
@@ -296,45 +403,48 @@ def identificar_ofensores(df, percentil=0.95):
         motivos = []
         if row["alerta_volume"]:
             motivos.append(f"volume {int(row['qtd_procedimentos'])} procedimentos no {pct_str} (limiar {int(limiar_volume)})")
-        if row["alerta_uso_medio"]:
-            motivos.append(f"uso médio {row['media_uso']:.2f} por procedimento no {pct_str} (limiar {limiar_uso_medio:.2f})")
-        if row["alerta_uso_total"]:
-            motivos.append(f"uso total {row['quantidade_uso']:.0f} no {pct_str} (limiar {limiar_uso_total:.0f})")
+        if row["alerta_uso_procedimento"]:
+            motivos.append(f"uso por procedimento {row['uso_por_procedimento']:.2f} no {pct_str} (limiar {limiar_uso_procedimento:.2f})")
+        if row["alerta_uso_vida"]:
+            motivos.append(f"uso por vida {row['uso_por_vida']:.2f} no {pct_str} (limiar {limiar_uso_vida:.2f})")
         just = "; ".join(motivos) if motivos else "sem alertas"
         justificativas.append(just)
     por_prestador["justificativa"] = justificativas
     por_prestador["relevante"] = por_prestador["criterios_atingidos"] >= 2
     resultado = por_prestador.sort_values("criterios_atingidos", ascending=False)
-    cols = ["CD_PRESTADOR", "UF", "CIDADE", "CLUSTER", "ESPECIALIDADE",
-            "qtd_procedimentos", "quantidade_uso", "media_uso",
-            "alerta_volume", "alerta_uso_medio", "alerta_uso_total",
+    cols = ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER", "ESPECIALIDADE",
+            "qtd_procedimentos", "qtd_usuarios", "quantidade_uso", "uso_por_procedimento", "uso_por_vida",
+            "alerta_volume", "alerta_uso_procedimento", "alerta_uso_vida",
             "criterios_atingidos", "relevante", "justificativa"]
     cols = [c for c in cols if c in resultado.columns]
     return resultado[cols].reset_index(drop=True)
 def calcular_desvios(df):
-    """Desvios de cada prestador vs média da própria especialidade (volume e uso)."""
+    """Desvios de cada prestador vs média da própria especialidade (uso por procedimento e por vida)."""
     info = _info_prestador(df)
     por_prestador = df.groupby(["CD_PRESTADOR", "ESPECIALIDADE"], observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
+        qtd_usuarios=("qtd_usuarios", "sum"),
         quantidade_uso=("soma_uso", "sum"),
     ).reset_index()
     if por_prestador.empty:
         return por_prestador
-    por_prestador["media_uso"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_procedimentos"]).round(2)
-    media_esp = por_prestador.groupby("ESPECIALIDADE")[["qtd_procedimentos", "media_uso"]].mean()
-    media_esp.columns = ["qtd_procedimentos_esp", "media_uso_esp"]
+    por_prestador["uso_por_procedimento"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_procedimentos"]).round(2)
+    por_prestador["uso_por_vida"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_usuarios"]).round(2)
+    media_esp = por_prestador.groupby("ESPECIALIDADE")[["uso_por_procedimento", "uso_por_vida"]].mean()
+    media_esp.columns = ["uso_por_procedimento_esp", "uso_por_vida_esp"]
     por_prestador = por_prestador.merge(media_esp, on="ESPECIALIDADE", how="left")
-    por_prestador["desvio_volume_pct"] = (
-        (por_prestador["qtd_procedimentos"] - por_prestador["qtd_procedimentos_esp"]) / por_prestador["qtd_procedimentos_esp"] * 100
+    por_prestador["desvio_uso_procedimento_pct"] = (
+        (por_prestador["uso_por_procedimento"] - por_prestador["uso_por_procedimento_esp"]) / por_prestador["uso_por_procedimento_esp"] * 100
     ).round(1)
-    por_prestador["desvio_uso_pct"] = (
-        (por_prestador["media_uso"] - por_prestador["media_uso_esp"]) / por_prestador["media_uso_esp"] * 100
+    por_prestador["desvio_uso_vida_pct"] = (
+        (por_prestador["uso_por_vida"] - por_prestador["uso_por_vida_esp"]) / por_prestador["uso_por_vida_esp"] * 100
     ).round(1)
-    por_prestador = por_prestador.merge(info[["CD_PRESTADOR", "UF", "CIDADE", "CLUSTER"]], on="CD_PRESTADOR", how="left")
-    resultado = por_prestador.sort_values("desvio_uso_pct", ascending=False)
-    cols = ["CD_PRESTADOR", "UF", "CIDADE", "CLUSTER", "ESPECIALIDADE",
-            "qtd_procedimentos", "qtd_procedimentos_esp", "desvio_volume_pct",
-            "media_uso", "media_uso_esp", "desvio_uso_pct"]
+    colunas_info = [c for c in ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"] if c in info.columns]
+    por_prestador = por_prestador.merge(info[colunas_info], on="CD_PRESTADOR", how="left")
+    resultado = por_prestador.sort_values("desvio_uso_procedimento_pct", ascending=False)
+    cols = ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER", "ESPECIALIDADE",
+            "qtd_procedimentos", "uso_por_procedimento", "uso_por_procedimento_esp", "desvio_uso_procedimento_pct",
+            "uso_por_vida", "uso_por_vida_esp", "desvio_uso_vida_pct"]
     cols = [c for c in cols if c in resultado.columns]
     return resultado[cols].reset_index(drop=True)
 def comparacao_mensal(df, coluna, volume_minimo=30):
@@ -348,10 +458,12 @@ def comparacao_mensal(df, coluna, volume_minimo=30):
     df_pen = df[df["MES"] == penult]
     agg_ult = df_ult.groupby(coluna, observed=True).agg(
         qtd_atual=("qtd_procedimentos", "sum"),
+        usuarios_atual=("qtd_usuarios", "sum"),
         uso_atual=("soma_uso", "sum"),
     )
     agg_pen = df_pen.groupby(coluna, observed=True).agg(
         qtd_anterior=("qtd_procedimentos", "sum"),
+        usuarios_anterior=("qtd_usuarios", "sum"),
         uso_anterior=("soma_uso", "sum"),
     )
     comp = agg_ult.join(agg_pen, how="outer").fillna(0)
