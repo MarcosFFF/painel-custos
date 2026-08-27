@@ -261,17 +261,11 @@ def carregar_base_severidade(pasta="."):
         ~esp_normalizada.isin(ESPECIALIDADES_EXCLUIDAS)
         & ~proc_normalizado.isin(ESPECIALIDADES_EXCLUIDAS)
     ].reset_index(drop=True)
-    linhas_especialidade_excluida = linhas_antes_excl - len(agregado)
     avisos = []
     if linhas_desconsideradas > 0:
         avisos.append(
             f"{linhas_desconsideradas:,} linhas desconsideradas por terem mês, UF, região, "
             "especialidade, prestador, procedimento ou cidade não identificados (nan)."
-        )
-    if linhas_especialidade_excluida > 0:
-        avisos.append(
-            f"{linhas_especialidade_excluida:,} linhas de 'Responsabilidade Técnica' "
-            "(especialidade ou procedimento) desconsideradas."
         )
     if caminho_prestadores is None:
         avisos.append(
