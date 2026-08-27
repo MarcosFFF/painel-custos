@@ -530,7 +530,7 @@ elif st.session_state.pagina == "severidade":
     m4.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
     st.divider()
     tab_rank, tab_evolucao, tab_watch, tab_ofensores = st.tabs(
-        ["Ranking de Severidade", "Evolução mensal", "Watchlist", "Ofensores"]
+        ["Ranking de Severidade", "Evolução mensal", "Atenção", "Ofensores"]
     )
     # ---------- RANKING DE SEVERIDADE (ISR — só gráficos, sem tabelas) ----------
     JANELA_5_BARRAS = 300  # altura fixa (px) que mostra ~5 barras; o resto rola dentro do quadro
@@ -542,24 +542,24 @@ elif st.session_state.pagina == "severidade":
             altura_total = max(janela, 90 + len(df_plot) * 40)
         else:
             altura_total = altura or max(350, len(df_plot) * 35)
+        media_grupo = df_plot["indice_severidade"].mean()
         fig = px.bar(
             df_plot, x="indice_severidade", y=coluna, orientation="h",
-            custom_data=[coluna, "indice_severidade", "uso_por_procedimento", "uso_por_vida", "credibilidade"],
+            custom_data=[coluna, "indice_severidade", "uso_por_procedimento", "uso_por_vida"],
             title=titulo,
             color="indice_severidade",
             color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
-            color_continuous_midpoint=1.0,
+            color_continuous_midpoint=media_grupo,
         )
         fig.update_traces(
-            texttemplate="%{x:.2f}",
+            texttemplate="%{x:,.0f}",
             textposition="outside",
             textfont=dict(size=10),
             hovertemplate=(
                 "<b>%{customdata[0]}</b><br>"
-                "ISR: %{customdata[1]:.2f}<br>"
+                "ISR: %{customdata[1]:,.0f}<br>"
                 "Uso por procedimento: %{customdata[2]:.2f}<br>"
-                "Uso por vida: %{customdata[3]:.2f}<br>"
-                "Credibilidade: %{customdata[4]:.2f}"
+                "Uso por vida: %{customdata[3]:.2f}"
                 "<extra></extra>"
             ),
             cliponaxis=False,
@@ -570,7 +570,7 @@ elif st.session_state.pagina == "severidade":
             yaxis_type="category",
             coloraxis_showscale=False,
         )
-        fig.add_vline(x=1.0, line_dash="dash", line_color="gray")
+        fig.add_vline(x=media_grupo, line_dash="dash", line_color="gray")
         fig.update_yaxes(tickfont=dict(size=10))
         if janela:
             with st.container(height=janela):
@@ -579,11 +579,11 @@ elif st.session_state.pagina == "severidade":
             st.plotly_chart(fig, use_container_width=True)
     with tab_rank:
         st.caption(
-            "O **Índice de Severidade Relativa (ISR)** compara o **uso por vida** do grupo com a "
-            "média geral da base filtrada: **1,00 = na média**, **1,50 = 50% acima da média**, "
-            "**0,70 = 30% abaixo**. Grupos com poucas vidas observadas têm o índice \"encolhido\" "
-            "para perto de 1,00 (credibilidade, de 0 a 1) — assim um prestador com "
-            "pouquíssimos casos não aparece como extremamente severo só por acaso estatístico. "
+            "O **Índice de Severidade Relativa (ISR)** cruza os três parâmetros de uso: "
+            "**ISR = quantidade de uso ÷ (vidas × procedimentos) × 100.000** — uma taxa de uso "
+            "concentrado por 100 mil vidas/procedimentos. Quanto maior, mais uso concentrado em "
+            "poucas vidas e poucos procedimentos (mais severo); quanto menor, mais distribuído. "
+            "A linha tracejada marca a média do próprio grupo exibido em cada gráfico. "
             "Não considera valores em R$."
         )
         rc1, rc2 = st.columns(2)
@@ -607,22 +607,27 @@ elif st.session_state.pagina == "severidade":
             st.info("Sem dados para a dimensão selecionada.")
     with tab_evolucao:
         evolucao = evolucao_mensal(df_filtrado)
+        fig_uso = px.line(
+            evolucao, x="MES", y=["uso_por_procedimento", "uso_por_vida"],
+            markers=True, title="Uso - Qtde e Média de uso",
+        )
+        _nomes_series = {"uso_por_procedimento": "Qtde", "uso_por_vida": "Média de uso"}
+        fig_uso.for_each_trace(lambda t: t.update(name=_nomes_series.get(t.name, t.name), legendgroup=_nomes_series.get(t.name, t.name)))
+        fig_uso.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10), legend_title_text="")
+        st.plotly_chart(fig_uso, use_container_width=True)
+        fig_isr = px.line(
+            evolucao, x="MES", y="indice_severidade", markers=True, text="indice_severidade", title="ISR por mês",
+        )
+        fig_isr.update_traces(texttemplate="%{text:,.0f}", textposition="top center")
+        fig_isr.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10), yaxis_title="ISR")
+        st.plotly_chart(fig_isr, use_container_width=True)
         fig_uso_total = px.line(evolucao, x="MES", y="quantidade_uso", markers=True, text="quantidade_uso", title="Uso total por mês")
         fig_uso_total.update_traces(texttemplate="%{text:,.0f}", textposition="top center")
         fig_uso_total.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10))
         st.plotly_chart(fig_uso_total, use_container_width=True)
-        fig_uso = px.line(
-            evolucao, x="MES", y=["uso_por_procedimento", "uso_por_vida", "indice_severidade"],
-            markers=True, title="Uso - Qtde, Vida e ISR",
-        )
-        _nomes_series = {"uso_por_procedimento": "Qtde", "uso_por_vida": "Vida", "indice_severidade": "ISR"}
-        fig_uso.for_each_trace(lambda t: t.update(name=_nomes_series.get(t.name, t.name), legendgroup=_nomes_series.get(t.name, t.name)))
-        fig_uso.add_hline(y=1.0, line_dash="dash", line_color="gray")
-        fig_uso.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10), legend_title_text="")
-        st.plotly_chart(fig_uso, use_container_width=True)
-    # ---------- WATCHLIST (baseada apenas em uso e volume) ----------
+    # ---------- ATENÇÃO (baseada apenas em uso e volume) ----------
     with tab_watch:
-        st.markdown("#### Watchlist — prestadores que merecem atenção")
+        st.markdown("#### Prestadores que merecem atenção")
         watchlist = montar_watchlist(df_filtrado)
         if not watchlist.empty:
             # Preparar DataFrame para o gráfico — garantir tipos corretos
