@@ -239,9 +239,19 @@ def carregar_base_severidade(pasta="."):
         qtd_usuarios=("CD_USUARIO", "nunique"),
         soma_uso=("QTD_USO", "sum"),
     ).reset_index()
+    # Descarta linhas cuja dimensão principal veio vazia/não identificada (nan) —
+    # essas linhas não entram em nenhum ranking, gráfico ou resumo, em vez de
+    # aparecer como uma categoria "nan".
+    linhas_antes = len(agregado)
+    colunas_chave = ["MES", "UF", "REGIAO", "ESPECIALIDADE", "CD_PRESTADOR", "NOME_PROCEDIMENTO", "CIDADE_PRESTADOR"]
+    agregado = agregado.dropna(subset=colunas_chave).reset_index(drop=True)
+    linhas_desconsideradas = linhas_antes - len(agregado)
     avisos = []
-    if sem_regiao > 0:
-        avisos.append(f"{sem_regiao:,} linhas têm UF não reconhecida.")
+    if linhas_desconsideradas > 0:
+        avisos.append(
+            f"{linhas_desconsideradas:,} linhas desconsideradas por terem mês, UF, região, "
+            "especialidade, prestador, procedimento ou cidade não identificados (nan)."
+        )
     if caminho_prestadores is None:
         avisos.append(
             "Relação de prestadores (nome/CPF-CNPJ) não encontrada na pasta — "
@@ -318,6 +328,7 @@ def ranking_por(df, coluna, top_n=15):
         qtd_usuarios=("qtd_usuarios", "sum"),
         quantidade_uso=("soma_uso", "sum"),
     ).reset_index()
+    r = r[r[coluna].notna()]
     r["uso_por_procedimento"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     return r.sort_values("quantidade_uso", ascending=False).head(top_n)
