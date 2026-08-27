@@ -577,7 +577,7 @@ elif st.session_state.pagina == "severidade":
         )
         rc1, rc2 = st.columns(2)
         with rc1:
-            _grafico_severidade(ranking_severidade(df_filtrado, "ESPECIALIDADE"), "ESPECIALIDADE", "Por especialidade")
+            _grafico_severidade(ranking_severidade(df_filtrado, "ESPECIALIDADE", top_n=40), "ESPECIALIDADE", "Por especialidade")
             _grafico_severidade(ranking_severidade(df_filtrado, "UF", top_n=30), "UF", "Por UF")
         with rc2:
             _grafico_severidade(ranking_severidade(df_filtrado, "NOME_PROCEDIMENTO"), "NOME_PROCEDIMENTO", "Por procedimento")
