@@ -6,7 +6,7 @@ from supabase import create_client, Client
 import plotly.express as px
 from projecao_sinistro import projetar_sinistro_mes_atual, projetar_dias_restantes
 from severidade import (
-    carregar_base_severidade, aplicar_filtros, ranking_por, evolucao_mensal,
+    carregar_base_severidade, aplicar_filtros, evolucao_mensal,
     ranking_severidade, identificar_ofensores, calcular_desvios, montar_watchlist,
     comparacao_mensal,
 )
@@ -529,183 +529,60 @@ elif st.session_state.pagina == "severidade":
     m3.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
     m4.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
     st.divider()
-    tab_rank, tab_evolucao, tab_watch, tab_severidade, tab_ofensores = st.tabs(
-        ["Rankings", "Evolução mensal", "Watchlist", "Severidade", "Ofensores"]
+    tab_rank, tab_evolucao, tab_watch, tab_ofensores = st.tabs(
+        ["Ranking de Severidade", "Evolução mensal", "Watchlist", "Ofensores"]
     )
-    # ---------- RANKINGS ----------
-    def _grafico_ranking(df_rank, coluna, titulo):
-        df_sorted = df_rank.sort_values("quantidade_uso").reset_index(drop=True)
+    # ---------- RANKING DE SEVERIDADE (ISR — só gráficos, sem tabelas) ----------
+    def _grafico_severidade(df_rank, coluna, titulo, altura=None):
+        df_plot = df_rank.sort_values("indice_severidade", ascending=True).reset_index(drop=True)
         fig = px.bar(
-            df_sorted, x="quantidade_uso", y=coluna, orientation="h",
-            custom_data=[coluna, "quantidade_uso"],
+            df_plot, x="indice_severidade", y=coluna, orientation="h",
+            custom_data=[coluna, "indice_severidade", "uso_por_procedimento", "uso_por_vida", "credibilidade"],
             title=titulo,
+            color="indice_severidade",
+            color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
+            color_continuous_midpoint=1.0,
         )
         fig.update_traces(
-            texttemplate="%{y}",
-            textposition="inside",
-            insidetextanchor="start",
-            textfont=dict(size=9, color="white"),
-            hovertemplate="<b>%{customdata[0]}</b><br>Uso: %{customdata[1]:,.0f}<extra></extra>",
+            texttemplate="%{x:.2f}",
+            textposition="outside",
+            textfont=dict(size=10),
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                "ISR: %{customdata[1]:.2f}<br>"
+                "Uso por procedimento: %{customdata[2]:.2f}<br>"
+                "Uso por vida: %{customdata[3]:.2f}<br>"
+                "Credibilidade: %{customdata[4]:.2f}"
+                "<extra></extra>"
+            ),
             cliponaxis=False,
         )
-        fig.update_yaxes(showticklabels=False)
-        for _, row in df_sorted.iterrows():
-            fig.add_annotation(
-                x=row["quantidade_uso"], y=row[coluna],
-                text=f"{row['quantidade_uso']:,.0f}".replace(",", "."),
-                showarrow=False, xanchor="left", xshift=3,
-                font=dict(size=9),
-            )
-        fig.update_layout(height=400, margin=dict(l=10, r=60, t=40, b=10))
-        st.plotly_chart(fig, use_container_width=True)
-    def _exibir_ranking(df_rank, coluna):
-        exib = df_rank.copy()
-        exib["qtd_procedimentos"] = exib["qtd_procedimentos"].map(fmt_int)
-        exib["qtd_usuarios"] = exib["qtd_usuarios"].map(fmt_int)
-        exib["quantidade_uso"] = exib["quantidade_uso"].map(fmt_int)
-        exib["uso_por_procedimento"] = exib["uso_por_procedimento"].map(fmt_float2)
-        exib["uso_por_vida"] = exib["uso_por_vida"].map(fmt_float2)
-        st.dataframe(exib, hide_index=True, use_container_width=True)
-    with tab_rank:
-        rc1, rc2 = st.columns(2)
-        with rc1:
-            rank_esp = ranking_por(df_filtrado, "ESPECIALIDADE")
-            _grafico_ranking(rank_esp, "ESPECIALIDADE", "Por especialidade")
-            _exibir_ranking(rank_esp, "ESPECIALIDADE")
-            rank_uf = ranking_por(df_filtrado, "UF")
-            _grafico_ranking(rank_uf, "UF", "Por UF")
-            _exibir_ranking(rank_uf, "UF")
-        with rc2:
-            rank_proc = ranking_por(df_filtrado, "NOME_PROCEDIMENTO")
-            _grafico_ranking(rank_proc, "NOME_PROCEDIMENTO", "Por procedimento")
-            _exibir_ranking(rank_proc, "NOME_PROCEDIMENTO")
-            rank_reg = ranking_por(df_filtrado, "REGIAO")
-            _grafico_ranking(rank_reg, "REGIAO", "Por região")
-            _exibir_ranking(rank_reg, "REGIAO")
-    with tab_evolucao:
-        evolucao = evolucao_mensal(df_filtrado)
-        fig_uso_total = px.line(evolucao, x="MES", y="quantidade_uso", markers=True, text="quantidade_uso", title="Uso total por mês")
-        fig_uso_total.update_traces(texttemplate="%{text:,.0f}", textposition="top center")
-        fig_uso_total.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10))
-        st.plotly_chart(fig_uso_total, use_container_width=True)
-        fig_uso = px.line(evolucao, x="MES", y=["uso_por_procedimento", "uso_por_vida"], markers=True, title="Uso por procedimento e por vida, por mês")
-        fig_uso.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10))
-        st.plotly_chart(fig_uso, use_container_width=True)
-    # ---------- WATCHLIST (baseada apenas em uso e volume) ----------
-    with tab_watch:
-        st.markdown("#### Watchlist — prestadores que merecem atenção")
-        st.caption(
-            "**Pontuação (0-100)** = 35% uso por procedimento + 35% uso por vida + 30% volume de "
-            "procedimentos (percentis). **Tendência %** = variação do volume do último mês vs anterior. "
-            "Quanto maior a pontuação, maior a combinação de intensidade de uso e volume."
+        fig.update_layout(
+            height=altura or max(350, len(df_plot) * 35),
+            margin=dict(l=10, r=60, t=40, b=10),
+            yaxis_type="category",
+            coloraxis_showscale=False,
         )
-        watchlist = montar_watchlist(df_filtrado)
-        if not watchlist.empty:
-            # Preparar DataFrame para o gráfico — garantir tipos corretos
-            wl_plot = watchlist.copy()
-            wl_plot["CD_PRESTADOR"] = wl_plot["CD_PRESTADOR"].astype(str)
-            # Garantir que colunas do custom_data existem e não têm NaN
-            for col in ["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"]:
-                if col not in wl_plot.columns:
-                    wl_plot[col] = "—"
-                wl_plot[col] = wl_plot[col].fillna("—").astype(str)
-            fig_watch = px.bar(
-                wl_plot.sort_values("pontuacao", ascending=True), x="pontuacao",
-                y="CD_PRESTADOR", orientation="h",
-                text="pontuacao", title="Prestadores que merecem atenção",
-                custom_data=["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"],
-            )
-            fig_watch.update_traces(
-                texttemplate="%{text:.0f}",
-                textposition="outside",
-                hovertemplate=(
-                    "<b>Prestador %{y} — %{customdata[0]}</b><br>"
-                    "CPF/CNPJ: %{customdata[1]}<br>"
-                    "Pontuação: %{x:.0f}<br>"
-                    "UF: %{customdata[2]}<br>"
-                    "Cidade: %{customdata[3]}<br>"
-                    "Cluster: %{customdata[4]}"
-                    "<extra></extra>"
-                ),
-            )
-            fig_watch.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10), yaxis_type="category")
-            st.plotly_chart(fig_watch, use_container_width=True)
-            # Tabela com info do prestador
-            exib_watch = watchlist.copy()
-            exib_watch["CD_PRESTADOR"] = exib_watch["CD_PRESTADOR"].astype(str)
-            exib_watch["qtd_procedimentos"] = exib_watch["qtd_procedimentos"].map(fmt_int)
-            exib_watch["qtd_usuarios"] = exib_watch["qtd_usuarios"].map(fmt_int)
-            exib_watch["quantidade_uso"] = exib_watch["quantidade_uso"].map(fmt_int)
-            exib_watch["uso_por_procedimento"] = exib_watch["uso_por_procedimento"].map(fmt_float2)
-            exib_watch["uso_por_vida"] = exib_watch["uso_por_vida"].map(fmt_float2)
-            exib_watch["tendencia_pct"] = exib_watch["tendencia_pct"].map(lambda v: f"{v:+.1f}%")
-            exib_watch["pontuacao"] = exib_watch["pontuacao"].map(lambda v: f"{v:.0f}")
-            st.dataframe(exib_watch, hide_index=True, use_container_width=True)
-        else:
-            st.info("Sem dados para montar a watchlist.")
-    # ---------- SEVERIDADE (índice baseado só em uso) ----------
-    with tab_severidade:
-        # === Ranking de severidade por especialidade ===
-        st.markdown("#### Ranking de severidade por especialidade")
+        fig.add_vline(x=1.0, line_dash="dash", line_color="gray")
+        fig.update_yaxes(tickfont=dict(size=10))
+        st.plotly_chart(fig, use_container_width=True)
+    with tab_rank:
         st.caption(
             "O **Índice de Severidade Relativa (ISR)** compara o **uso por vida** do grupo com a "
             "média geral da base filtrada: **1,00 = na média**, **1,50 = 50% acima da média**, "
             "**0,70 = 30% abaixo**. Grupos com poucas vidas observadas têm o índice \"encolhido\" "
-            "para perto de 1,00 (coluna **credibilidade**, de 0 a 1) — assim um prestador com "
+            "para perto de 1,00 (credibilidade, de 0 a 1) — assim um prestador com "
             "pouquíssimos casos não aparece como extremamente severo só por acaso estatístico. "
             "Não considera valores em R$."
         )
-        rank_sev_esp = ranking_severidade(df_filtrado, "ESPECIALIDADE")
-        if not rank_sev_esp.empty:
-            df_plot = rank_sev_esp.sort_values("indice_severidade", ascending=True).reset_index(drop=True)
-            fig_sev_esp = px.bar(
-                df_plot, x="indice_severidade", y="ESPECIALIDADE", orientation="h",
-                custom_data=["ESPECIALIDADE", "indice_severidade", "uso_por_procedimento", "uso_por_vida", "credibilidade"],
-                title="Severidade por especialidade (do mais ao menos severo)",
-                color="indice_severidade",
-                color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
-                color_continuous_midpoint=1.0,
-            )
-            fig_sev_esp.update_traces(
-                texttemplate="%{x:.2f}",
-                textposition="outside",
-                textfont=dict(size=10),
-                hovertemplate=(
-                    "<b>%{customdata[0]}</b><br>"
-                    "ISR: %{customdata[1]:.2f}<br>"
-                    "Uso por procedimento: %{customdata[2]:.2f}<br>"
-                    "Uso por vida: %{customdata[3]:.2f}<br>"
-                    "Credibilidade: %{customdata[4]:.2f}"
-                    "<extra></extra>"
-                ),
-                cliponaxis=False,
-            )
-            fig_sev_esp.update_layout(
-                height=max(350, len(df_plot) * 35),
-                margin=dict(l=10, r=60, t=40, b=10),
-                coloraxis_showscale=False,
-            )
-            fig_sev_esp.add_vline(x=1.0, line_dash="dash", line_color="gray")
-            fig_sev_esp.update_yaxes(tickfont=dict(size=10))
-            st.plotly_chart(fig_sev_esp, use_container_width=True)
-            exib_sev = rank_sev_esp.copy()
-            exib_sev["qtd_procedimentos"] = exib_sev["qtd_procedimentos"].map(fmt_int)
-            exib_sev["qtd_usuarios"] = exib_sev["qtd_usuarios"].map(fmt_int)
-            exib_sev["quantidade_uso"] = exib_sev["quantidade_uso"].map(fmt_int)
-            exib_sev["uso_por_procedimento"] = exib_sev["uso_por_procedimento"].map(fmt_float2)
-            exib_sev["uso_por_vida"] = exib_sev["uso_por_vida"].map(fmt_float2)
-            exib_sev["credibilidade"] = exib_sev["credibilidade"].map(fmt_float2)
-            exib_sev["indice_severidade"] = exib_sev["indice_severidade"].map(fmt_float2)
-            exib_sev.insert(0, "#", range(1, len(exib_sev) + 1))
-            st.dataframe(exib_sev, hide_index=True, use_container_width=True)
-            st.caption(
-                "🟢 Verde = ISR < 1,00 (abaixo da média, menos severo) · 🟡 Amarelo = ISR ≈ 1,00 "
-                "(na média) · 🔴 Vermelho = ISR > 1,00 (acima da média, mais severo)."
-            )
-        else:
-            st.info("Sem dados de especialidade para os filtros atuais.")
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            _grafico_severidade(ranking_severidade(df_filtrado, "ESPECIALIDADE"), "ESPECIALIDADE", "Por especialidade")
+            _grafico_severidade(ranking_severidade(df_filtrado, "UF", top_n=30), "UF", "Por UF")
+        with rc2:
+            _grafico_severidade(ranking_severidade(df_filtrado, "NOME_PROCEDIMENTO"), "NOME_PROCEDIMENTO", "Por procedimento")
+            _grafico_severidade(ranking_severidade(df_filtrado, "REGIAO"), "REGIAO", "Por região")
         st.divider()
-        # === Severidade por outras dimensões ===
         st.markdown("#### Severidade por outras dimensões")
         dims = {
             "Região": "REGIAO", "Cidade": "CIDADE_PRESTADOR", "Prestador (código)": "CD_PRESTADOR",
@@ -714,68 +591,69 @@ elif st.session_state.pagina == "severidade":
         dim_escolhida = st.selectbox("Dimensão", list(dims.keys()))
         rank_sev = ranking_severidade(df_filtrado, dims[dim_escolhida])
         if not rank_sev.empty:
-            df_plot_gen = rank_sev.sort_values("indice_severidade", ascending=True).reset_index(drop=True)
-            fig_sev = px.bar(
-                df_plot_gen, x="indice_severidade", y=dims[dim_escolhida],
-                orientation="h", text="indice_severidade", title=f"Severidade por {dim_escolhida}",
-                color="indice_severidade",
-                color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
-                color_continuous_midpoint=1.0,
-            )
-            fig_sev.update_traces(texttemplate="%{text:.2f}", textposition="outside", cliponaxis=False)
-            fig_sev.update_layout(
-                height=450, margin=dict(l=10, r=60, t=40, b=10),
-                yaxis_type="category", coloraxis_showscale=False,
-            )
-            fig_sev.add_vline(x=1.0, line_dash="dash", line_color="gray")
-            st.plotly_chart(fig_sev, use_container_width=True)
-            exib_gen = rank_sev.copy()
-            exib_gen["qtd_procedimentos"] = exib_gen["qtd_procedimentos"].map(fmt_int)
-            exib_gen["qtd_usuarios"] = exib_gen["qtd_usuarios"].map(fmt_int)
-            exib_gen["quantidade_uso"] = exib_gen["quantidade_uso"].map(fmt_int)
-            exib_gen["uso_por_procedimento"] = exib_gen["uso_por_procedimento"].map(fmt_float2)
-            exib_gen["uso_por_vida"] = exib_gen["uso_por_vida"].map(fmt_float2)
-            exib_gen["credibilidade"] = exib_gen["credibilidade"].map(fmt_float2)
-            exib_gen["indice_severidade"] = exib_gen["indice_severidade"].map(fmt_float2)
-            exib_gen.insert(0, "#", range(1, len(exib_gen) + 1))
-            st.dataframe(exib_gen, hide_index=True, use_container_width=True)
+            _grafico_severidade(rank_sev, dims[dim_escolhida], f"Severidade por {dim_escolhida}", altura=450)
         else:
             st.info("Sem dados para a dimensão selecionada.")
-        # === Legenda de Cluster ===
-        if dim_escolhida == "Cluster" and not rank_sev.empty:
-            st.divider()
-            st.markdown("#### Legenda de Cluster")
-            media_sev = rank_sev["indice_severidade"].mean()
-            st.markdown(f"**ISR médio entre os clusters:** {media_sev:.2f}")
-            st.markdown(
-                "**Como interpretar o ISR por cluster:**"
-                "\n\n"
-                "- 🟢 **ISR abaixo de 1,00 (ex: 0,70)**: o cluster está **abaixo da média** — "
-                "uso por vida **menor** que a média geral. "
-                "Isso é **positivo**: menor severidade, menor intensidade de uso."
-                "\n"
-                "- 🟡 **ISR próximo de 1,00 (ex: 0,90 a 1,10)**: o cluster está **na média** — "
-                "uso alinhado com o comportamento geral. **Neutro.**"
-                "\n"
-                "- 🔴 **ISR acima de 1,00 (ex: 1,50)**: o cluster está **acima da média** — "
-                "uso por vida **maior** que a média geral. "
-                "Isso é **negativo**: maior severidade, maior intensidade de uso, "
-                "merece investigação sobre quais prestadores/procedimentos estão elevando o índice."
-                "\n\n"
-                "A coluna **credibilidade** (0 a 1) mostra o quanto o ISR reflete dados observados "
-                "desse cluster versus o quanto foi puxado para 1,00 por ter poucas vidas."
+    with tab_evolucao:
+        evolucao = evolucao_mensal(df_filtrado)
+        fig_uso_total = px.line(evolucao, x="MES", y="quantidade_uso", markers=True, text="quantidade_uso", title="Uso total por mês")
+        fig_uso_total.update_traces(texttemplate="%{text:,.0f}", textposition="top center")
+        fig_uso_total.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10))
+        st.plotly_chart(fig_uso_total, use_container_width=True)
+        fig_uso = px.line(
+            evolucao, x="MES", y=["uso_por_procedimento", "uso_por_vida", "indice_severidade"],
+            markers=True, title="Uso - Qtde, Vida e ISR",
+        )
+        _nomes_series = {"uso_por_procedimento": "Qtde", "uso_por_vida": "Vida", "indice_severidade": "ISR"}
+        fig_uso.for_each_trace(lambda t: t.update(name=_nomes_series.get(t.name, t.name), legendgroup=_nomes_series.get(t.name, t.name)))
+        fig_uso.add_hline(y=1.0, line_dash="dash", line_color="gray")
+        fig_uso.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10), legend_title_text="")
+        st.plotly_chart(fig_uso, use_container_width=True)
+    # ---------- WATCHLIST (baseada apenas em uso e volume) ----------
+    with tab_watch:
+        st.markdown("#### Watchlist — prestadores que merecem atenção")
+        watchlist = montar_watchlist(df_filtrado)
+        if not watchlist.empty:
+            # Preparar DataFrame para o gráfico — garantir tipos corretos
+            wl_plot = watchlist.copy()
+            for col in ["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"]:
+                if col not in wl_plot.columns:
+                    wl_plot[col] = "—"
+                wl_plot[col] = wl_plot[col].fillna("—").astype(str)
+            fig_watch = px.bar(
+                wl_plot.sort_values("pontuacao", ascending=True), x="pontuacao",
+                y="NOME_PRESTADOR", orientation="h",
+                text="pontuacao", title="Prestadores que merecem atenção",
+                custom_data=["CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"],
             )
-            # Tabela resumo com classificação
-            resumo_cluster = rank_sev[["CLUSTER", "indice_severidade", "credibilidade", "uso_por_procedimento", "uso_por_vida"]].copy()
-            resumo_cluster["classificacao"] = resumo_cluster["indice_severidade"].apply(
-                lambda v: "🔴 Acima da média (severo)" if v > 1.1
-                else ("🟢 Abaixo da média (baixo)" if v < 0.9 else "🟡 Na média (neutro)")
+            fig_watch.update_traces(
+                texttemplate="%{text:.0f}",
+                textposition="outside",
+                hovertemplate=(
+                    "<b>%{y}</b><br>"
+                    "CPF/CNPJ: %{customdata[0]}<br>"
+                    "Pontuação: %{x:.0f}<br>"
+                    "UF: %{customdata[1]}<br>"
+                    "Cidade: %{customdata[2]}<br>"
+                    "Cluster: %{customdata[3]}"
+                    "<extra></extra>"
+                ),
             )
-            resumo_cluster["uso_por_procedimento"] = resumo_cluster["uso_por_procedimento"].map(fmt_float2)
-            resumo_cluster["uso_por_vida"] = resumo_cluster["uso_por_vida"].map(fmt_float2)
-            resumo_cluster["credibilidade"] = resumo_cluster["credibilidade"].map(fmt_float2)
-            resumo_cluster["indice_severidade"] = resumo_cluster["indice_severidade"].map(fmt_float2)
-            st.dataframe(resumo_cluster, hide_index=True, use_container_width=True)
+            fig_watch.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10), yaxis_type="category")
+            st.plotly_chart(fig_watch, use_container_width=True)
+            # Tabela com info do prestador (sem o código, com nome)
+            exib_watch = watchlist.drop(columns=["CD_PRESTADOR"], errors="ignore").copy()
+            exib_watch["qtd_procedimentos"] = exib_watch["qtd_procedimentos"].map(fmt_int)
+            exib_watch["qtd_usuarios"] = exib_watch["qtd_usuarios"].map(fmt_int)
+            exib_watch["quantidade_uso"] = exib_watch["quantidade_uso"].map(fmt_int)
+            exib_watch["uso_por_procedimento"] = exib_watch["uso_por_procedimento"].map(fmt_float2)
+            exib_watch["uso_por_vida"] = exib_watch["uso_por_vida"].map(fmt_float2)
+            exib_watch["indice_severidade"] = exib_watch["indice_severidade"].map(fmt_float2)
+            exib_watch["tendencia_pct"] = exib_watch["tendencia_pct"].map(lambda v: f"{v:+.1f}%")
+            exib_watch["pontuacao"] = exib_watch["pontuacao"].map(lambda v: f"{v:.0f}")
+            st.dataframe(exib_watch, hide_index=True, use_container_width=True)
+        else:
+            st.info("Sem dados para montar a watchlist.")
     # ---------- OFENSORES (baseado só em volume e uso) ----------
     with tab_ofensores:
         st.markdown("#### 🚨 Prestadores ofensores")
@@ -806,13 +684,14 @@ elif st.session_state.pagina == "severidade":
             )
         ofensores = identificar_ofensores(df_filtrado)
         if not ofensores.empty:
-            # Formatar tabela para exibição
+            # Formatar tabela para exibição — já vem ordenada do mais para o menos severo (ISR)
             exib_of = ofensores.copy()
             exib_of["qtd_procedimentos"] = exib_of["qtd_procedimentos"].map(fmt_int)
             exib_of["qtd_usuarios"] = exib_of["qtd_usuarios"].map(fmt_int)
             exib_of["quantidade_uso"] = exib_of["quantidade_uso"].map(fmt_int)
             exib_of["uso_por_procedimento"] = exib_of["uso_por_procedimento"].map(fmt_float2)
             exib_of["uso_por_vida"] = exib_of["uso_por_vida"].map(fmt_float2)
+            exib_of["indice_severidade"] = exib_of["indice_severidade"].map(fmt_float2)
             # Flags com cores
             exib_of["alerta_volume"] = exib_of["alerta_volume"].map(lambda b: "🔴 Sim" if b else "✅ Não")
             exib_of["alerta_uso_procedimento"] = exib_of["alerta_uso_procedimento"].map(lambda b: "🔴 Sim" if b else "✅ Não")
@@ -820,24 +699,39 @@ elif st.session_state.pagina == "severidade":
             exib_of["criterios_atingidos"] = exib_of["criterios_atingidos"].map(lambda v: f"{v}/3")
             exib_of["relevante"] = exib_of["relevante"].map(lambda b: "🚨 OFENSOR" if b else "—")
             st.dataframe(exib_of, hide_index=True, use_container_width=True)
-            # Destaque para ofensores relevantes com justificativa
+            # Destaque para ofensores relevantes com justificativa — retrátil e pesquisável
             relevantes = ofensores[ofensores["relevante"]].copy()
             if not relevantes.empty:
                 st.divider()
                 st.markdown("#### 📝 Justificativa dos ofensores")
-                for _, row in relevantes.iterrows():
+                busca_ofensor = st.text_input(
+                    "🔎 Buscar prestador (nome, código, CPF/CNPJ ou especialidade)", key="busca_ofensor"
+                )
+                if busca_ofensor.strip():
+                    termo = busca_ofensor.strip().upper()
+                    def _bate_busca(row):
+                        campos = [
+                            str(row.get("CD_PRESTADOR", "")), str(row.get("NOME_PRESTADOR", "")),
+                            str(row.get("CNPJ_CPF_PRESTADOR", "")), str(row.get("ESPECIALIDADE", "")),
+                        ]
+                        return any(termo in campo.upper() for campo in campos)
+                    relevantes_filtrados = relevantes[relevantes.apply(_bate_busca, axis=1)]
+                else:
+                    relevantes_filtrados = relevantes
+                st.caption(f"{len(relevantes_filtrados)} de {len(relevantes)} ofensores exibidos.")
+                for _, row in relevantes_filtrados.iterrows():
                     nome_prestador = row.get("NOME_PRESTADOR") or "—"
                     cnpj_prestador = row.get("CNPJ_CPF_PRESTADOR") or "—"
-                    st.markdown(
-                        f"**Prestador {int(row['CD_PRESTADOR'])} — {nome_prestador}** "
-                        f"(CPF/CNPJ: {cnpj_prestador}) — {row['UF']} · {row['CIDADE']} · Cluster: {row['CLUSTER']}"
-                    )
-                    st.markdown(f"> {row['justificativa']}")
-                    st.caption(
-                        f"Especialidade principal: {row['ESPECIALIDADE']} · Procedimentos: {int(row['qtd_procedimentos'])} · "
-                        f"Uso por procedimento: {fmt_float2(row['uso_por_procedimento'])} · Uso por vida: {fmt_float2(row['uso_por_vida'])}"
-                    )
-                    st.markdown("")
+                    titulo_exp = f"Prestador {int(row['CD_PRESTADOR'])} — {nome_prestador} · ISR {row['indice_severidade']:.2f}"
+                    with st.expander(titulo_exp):
+                        st.markdown(
+                            f"CPF/CNPJ: {cnpj_prestador} — {row['UF']} · {row['CIDADE']} · Cluster: {row['CLUSTER']}"
+                        )
+                        st.markdown(f"> {row['justificativa']}")
+                        st.caption(
+                            f"Especialidade principal: {row['ESPECIALIDADE']} · Procedimentos: {int(row['qtd_procedimentos'])} · "
+                            f"Uso por procedimento: {fmt_float2(row['uso_por_procedimento'])} · Uso por vida: {fmt_float2(row['uso_por_vida'])}"
+                        )
         else:
             st.info("Nenhum ofensor encontrado com os filtros atuais.")
         st.divider()
