@@ -648,20 +648,23 @@ elif st.session_state.pagina == "severidade":
         # === Ranking de severidade por especialidade ===
         st.markdown("#### Ranking de severidade por especialidade")
         st.caption(
-            "O **índice de severidade** combina **uso por procedimento** (uso ÷ procedimentos) e "
-            "**uso por vida** (uso ÷ vidas/usuários distintos) de cada especialidade, cada um "
-            "padronizado em z-score e com peso igual. Quanto maior o índice, maior a intensidade de "
-            "uso da especialidade — sem considerar valores em R$."
+            "O **Índice de Severidade Relativa (ISR)** compara o **uso por vida** do grupo com a "
+            "média geral da base filtrada: **1,00 = na média**, **1,50 = 50% acima da média**, "
+            "**0,70 = 30% abaixo**. Grupos com poucas vidas observadas têm o índice \"encolhido\" "
+            "para perto de 1,00 (coluna **credibilidade**, de 0 a 1) — assim um prestador com "
+            "pouquíssimos casos não aparece como extremamente severo só por acaso estatístico. "
+            "Não considera valores em R$."
         )
         rank_sev_esp = ranking_severidade(df_filtrado, "ESPECIALIDADE")
         if not rank_sev_esp.empty:
             df_plot = rank_sev_esp.sort_values("indice_severidade", ascending=True).reset_index(drop=True)
             fig_sev_esp = px.bar(
                 df_plot, x="indice_severidade", y="ESPECIALIDADE", orientation="h",
-                custom_data=["ESPECIALIDADE", "indice_severidade", "uso_por_procedimento", "uso_por_vida"],
+                custom_data=["ESPECIALIDADE", "indice_severidade", "uso_por_procedimento", "uso_por_vida", "credibilidade"],
                 title="Severidade por especialidade (do mais ao menos severo)",
                 color="indice_severidade",
                 color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
+                color_continuous_midpoint=1.0,
             )
             fig_sev_esp.update_traces(
                 texttemplate="%{x:.2f}",
@@ -669,9 +672,10 @@ elif st.session_state.pagina == "severidade":
                 textfont=dict(size=10),
                 hovertemplate=(
                     "<b>%{customdata[0]}</b><br>"
-                    "Índice: %{customdata[1]:.2f}<br>"
+                    "ISR: %{customdata[1]:.2f}<br>"
                     "Uso por procedimento: %{customdata[2]:.2f}<br>"
-                    "Uso por vida: %{customdata[3]:.2f}"
+                    "Uso por vida: %{customdata[3]:.2f}<br>"
+                    "Credibilidade: %{customdata[4]:.2f}"
                     "<extra></extra>"
                 ),
                 cliponaxis=False,
@@ -681,6 +685,7 @@ elif st.session_state.pagina == "severidade":
                 margin=dict(l=10, r=60, t=40, b=10),
                 coloraxis_showscale=False,
             )
+            fig_sev_esp.add_vline(x=1.0, line_dash="dash", line_color="gray")
             fig_sev_esp.update_yaxes(tickfont=dict(size=10))
             st.plotly_chart(fig_sev_esp, use_container_width=True)
             exib_sev = rank_sev_esp.copy()
@@ -689,12 +694,13 @@ elif st.session_state.pagina == "severidade":
             exib_sev["quantidade_uso"] = exib_sev["quantidade_uso"].map(fmt_int)
             exib_sev["uso_por_procedimento"] = exib_sev["uso_por_procedimento"].map(fmt_float2)
             exib_sev["uso_por_vida"] = exib_sev["uso_por_vida"].map(fmt_float2)
+            exib_sev["credibilidade"] = exib_sev["credibilidade"].map(fmt_float2)
             exib_sev["indice_severidade"] = exib_sev["indice_severidade"].map(fmt_float2)
             exib_sev.insert(0, "#", range(1, len(exib_sev) + 1))
             st.dataframe(exib_sev, hide_index=True, use_container_width=True)
             st.caption(
-                "🟢 Verde = abaixo da média (menos severo) · 🟡 Amarelo = próximo da média · "
-                "🔴 Vermelho = acima da média (mais severo)."
+                "🟢 Verde = ISR < 1,00 (abaixo da média, menos severo) · 🟡 Amarelo = ISR ≈ 1,00 "
+                "(na média) · 🔴 Vermelho = ISR > 1,00 (acima da média, mais severo)."
             )
         else:
             st.info("Sem dados de especialidade para os filtros atuais.")
@@ -714,12 +720,14 @@ elif st.session_state.pagina == "severidade":
                 orientation="h", text="indice_severidade", title=f"Severidade por {dim_escolhida}",
                 color="indice_severidade",
                 color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
+                color_continuous_midpoint=1.0,
             )
             fig_sev.update_traces(texttemplate="%{text:.2f}", textposition="outside", cliponaxis=False)
             fig_sev.update_layout(
                 height=450, margin=dict(l=10, r=60, t=40, b=10),
                 yaxis_type="category", coloraxis_showscale=False,
             )
+            fig_sev.add_vline(x=1.0, line_dash="dash", line_color="gray")
             st.plotly_chart(fig_sev, use_container_width=True)
             exib_gen = rank_sev.copy()
             exib_gen["qtd_procedimentos"] = exib_gen["qtd_procedimentos"].map(fmt_int)
@@ -727,6 +735,7 @@ elif st.session_state.pagina == "severidade":
             exib_gen["quantidade_uso"] = exib_gen["quantidade_uso"].map(fmt_int)
             exib_gen["uso_por_procedimento"] = exib_gen["uso_por_procedimento"].map(fmt_float2)
             exib_gen["uso_por_vida"] = exib_gen["uso_por_vida"].map(fmt_float2)
+            exib_gen["credibilidade"] = exib_gen["credibilidade"].map(fmt_float2)
             exib_gen["indice_severidade"] = exib_gen["indice_severidade"].map(fmt_float2)
             exib_gen.insert(0, "#", range(1, len(exib_gen) + 1))
             st.dataframe(exib_gen, hide_index=True, use_container_width=True)
@@ -737,30 +746,34 @@ elif st.session_state.pagina == "severidade":
             st.divider()
             st.markdown("#### Legenda de Cluster")
             media_sev = rank_sev["indice_severidade"].mean()
-            st.markdown(f"**Média de severidade geral:** {media_sev:.2f}")
+            st.markdown(f"**ISR médio entre os clusters:** {media_sev:.2f}")
             st.markdown(
-                "**Como interpretar o índice por cluster:**"
+                "**Como interpretar o ISR por cluster:**"
                 "\n\n"
-                "- 🟢 **Índice negativo (ex: -0.5)**: o cluster está **abaixo da média** — "
-                "uso por procedimento e/ou uso por vida **menores** que a média geral. "
+                "- 🟢 **ISR abaixo de 1,00 (ex: 0,70)**: o cluster está **abaixo da média** — "
+                "uso por vida **menor** que a média geral. "
                 "Isso é **positivo**: menor severidade, menor intensidade de uso."
                 "\n"
-                "- 🟡 **Índice próximo de zero (ex: 0.0 a 0.3)**: o cluster está **na média** — "
+                "- 🟡 **ISR próximo de 1,00 (ex: 0,90 a 1,10)**: o cluster está **na média** — "
                 "uso alinhado com o comportamento geral. **Neutro.**"
                 "\n"
-                "- 🔴 **Índice positivo alto (ex: +1.0)**: o cluster está **acima da média** — "
-                "uso por procedimento e/ou uso por vida **maiores** que a média geral. "
+                "- 🔴 **ISR acima de 1,00 (ex: 1,50)**: o cluster está **acima da média** — "
+                "uso por vida **maior** que a média geral. "
                 "Isso é **negativo**: maior severidade, maior intensidade de uso, "
                 "merece investigação sobre quais prestadores/procedimentos estão elevando o índice."
+                "\n\n"
+                "A coluna **credibilidade** (0 a 1) mostra o quanto o ISR reflete dados observados "
+                "desse cluster versus o quanto foi puxado para 1,00 por ter poucas vidas."
             )
             # Tabela resumo com classificação
-            resumo_cluster = rank_sev[["CLUSTER", "indice_severidade", "uso_por_procedimento", "uso_por_vida"]].copy()
+            resumo_cluster = rank_sev[["CLUSTER", "indice_severidade", "credibilidade", "uso_por_procedimento", "uso_por_vida"]].copy()
             resumo_cluster["classificacao"] = resumo_cluster["indice_severidade"].apply(
-                lambda v: "🔴 Acima da média (severo)" if v > 0.3
-                else ("🟢 Abaixo da média (baixo)" if v < -0.3 else "🟡 Na média (neutro)")
+                lambda v: "🔴 Acima da média (severo)" if v > 1.1
+                else ("🟢 Abaixo da média (baixo)" if v < 0.9 else "🟡 Na média (neutro)")
             )
             resumo_cluster["uso_por_procedimento"] = resumo_cluster["uso_por_procedimento"].map(fmt_float2)
             resumo_cluster["uso_por_vida"] = resumo_cluster["uso_por_vida"].map(fmt_float2)
+            resumo_cluster["credibilidade"] = resumo_cluster["credibilidade"].map(fmt_float2)
             resumo_cluster["indice_severidade"] = resumo_cluster["indice_severidade"].map(fmt_float2)
             st.dataframe(resumo_cluster, hide_index=True, use_container_width=True)
     # ---------- OFENSORES (baseado só em volume e uso) ----------
