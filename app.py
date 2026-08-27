@@ -533,8 +533,15 @@ elif st.session_state.pagina == "severidade":
         ["Ranking de Severidade", "Evolução mensal", "Watchlist", "Ofensores"]
     )
     # ---------- RANKING DE SEVERIDADE (ISR — só gráficos, sem tabelas) ----------
-    def _grafico_severidade(df_rank, coluna, titulo, altura=None):
+    JANELA_5_BARRAS = 300  # altura fixa (px) que mostra ~5 barras; o resto rola dentro do quadro
+    def _grafico_severidade(df_rank, coluna, titulo, altura=None, janela=None):
         df_plot = df_rank.sort_values("indice_severidade", ascending=True).reset_index(drop=True)
+        if janela:
+            # altura total cresce com a quantidade de itens (barra do mesmo tamanho sempre),
+            # o quadro em volta é que fica fixo em `janela` e ganha rolagem quando sobra.
+            altura_total = max(janela, 90 + len(df_plot) * 40)
+        else:
+            altura_total = altura or max(350, len(df_plot) * 35)
         fig = px.bar(
             df_plot, x="indice_severidade", y=coluna, orientation="h",
             custom_data=[coluna, "indice_severidade", "uso_por_procedimento", "uso_por_vida", "credibilidade"],
@@ -558,14 +565,18 @@ elif st.session_state.pagina == "severidade":
             cliponaxis=False,
         )
         fig.update_layout(
-            height=altura or max(350, len(df_plot) * 35),
+            height=altura_total,
             margin=dict(l=10, r=60, t=40, b=10),
             yaxis_type="category",
             coloraxis_showscale=False,
         )
         fig.add_vline(x=1.0, line_dash="dash", line_color="gray")
         fig.update_yaxes(tickfont=dict(size=10))
-        st.plotly_chart(fig, use_container_width=True)
+        if janela:
+            with st.container(height=janela):
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.plotly_chart(fig, use_container_width=True)
     with tab_rank:
         st.caption(
             "O **Índice de Severidade Relativa (ISR)** compara o **uso por vida** do grupo com a "
@@ -577,11 +588,11 @@ elif st.session_state.pagina == "severidade":
         )
         rc1, rc2 = st.columns(2)
         with rc1:
-            _grafico_severidade(ranking_severidade(df_filtrado, "ESPECIALIDADE", top_n=40), "ESPECIALIDADE", "Por especialidade")
-            _grafico_severidade(ranking_severidade(df_filtrado, "UF", top_n=30), "UF", "Por UF")
+            _grafico_severidade(ranking_severidade(df_filtrado, "ESPECIALIDADE", top_n=40), "ESPECIALIDADE", "Por especialidade", janela=JANELA_5_BARRAS)
+            _grafico_severidade(ranking_severidade(df_filtrado, "UF", top_n=30), "UF", "Por UF", janela=JANELA_5_BARRAS)
         with rc2:
-            _grafico_severidade(ranking_severidade(df_filtrado, "NOME_PROCEDIMENTO"), "NOME_PROCEDIMENTO", "Por procedimento")
-            _grafico_severidade(ranking_severidade(df_filtrado, "REGIAO"), "REGIAO", "Por região")
+            _grafico_severidade(ranking_severidade(df_filtrado, "NOME_PROCEDIMENTO", top_n=50), "NOME_PROCEDIMENTO", "Por procedimento", janela=JANELA_5_BARRAS)
+            _grafico_severidade(ranking_severidade(df_filtrado, "REGIAO"), "REGIAO", "Por região", janela=JANELA_5_BARRAS)
         st.divider()
         st.markdown("#### Severidade por outras dimensões")
         dims = {
