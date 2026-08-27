@@ -552,12 +552,12 @@ elif st.session_state.pagina == "severidade":
             color_continuous_midpoint=media_grupo,
         )
         fig.update_traces(
-            texttemplate="%{x:,.0f}",
+            texttemplate="%{x:,.2f}",
             textposition="outside",
             textfont=dict(size=10),
             hovertemplate=(
                 "<b>%{customdata[0]}</b><br>"
-                "ISR: %{customdata[1]:,.0f}<br>"
+                "ISR: %{customdata[1]:,.2f}<br>"
                 "Uso por procedimento: %{customdata[2]:.2f}<br>"
                 "Uso por vida: %{customdata[3]:.2f}"
                 "<extra></extra>"
@@ -618,7 +618,7 @@ elif st.session_state.pagina == "severidade":
         fig_isr = px.line(
             evolucao, x="MES", y="indice_severidade", markers=True, text="indice_severidade", title="ISR por mês",
         )
-        fig_isr.update_traces(texttemplate="%{text:,.0f}", textposition="top center")
+        fig_isr.update_traces(texttemplate="%{text:,.2f}", textposition="top center")
         fig_isr.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10), yaxis_title="ISR")
         st.plotly_chart(fig_isr, use_container_width=True)
         fig_uso_total = px.line(evolucao, x="MES", y="quantidade_uso", markers=True, text="quantidade_uso", title="Uso total por mês")
