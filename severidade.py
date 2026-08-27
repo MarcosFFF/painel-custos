@@ -250,10 +250,16 @@ def carregar_base_severidade(pasta="."):
     colunas_chave = ["MES", "UF", "REGIAO", "ESPECIALIDADE", "CD_PRESTADOR", "NOME_PROCEDIMENTO", "CIDADE_PRESTADOR"]
     agregado = agregado.dropna(subset=colunas_chave).reset_index(drop=True)
     linhas_desconsideradas = linhas_antes - len(agregado)
-    # Remove especialidades fora da análise de severidade (ex.: Responsabilidade Técnica)
+    # Remove tudo que for "Responsabilidade Técnica" — tanto quando é a
+    # ESPECIALIDADE da linha quanto quando é o NOME_PROCEDIMENTO (existe um
+    # procedimento com esse nome, que não é um atendimento clínico de fato) —
+    # comparação por texto normalizado, então funciona com ou sem acento/maiúsculas.
     linhas_antes_excl = len(agregado)
+    esp_normalizada = agregado["ESPECIALIDADE"].apply(normalizar_texto)
+    proc_normalizado = agregado["NOME_PROCEDIMENTO"].apply(normalizar_texto)
     agregado = agregado[
-        ~agregado["ESPECIALIDADE"].apply(normalizar_texto).isin(ESPECIALIDADES_EXCLUIDAS)
+        ~esp_normalizada.isin(ESPECIALIDADES_EXCLUIDAS)
+        & ~proc_normalizado.isin(ESPECIALIDADES_EXCLUIDAS)
     ].reset_index(drop=True)
     linhas_especialidade_excluida = linhas_antes_excl - len(agregado)
     avisos = []
@@ -264,8 +270,8 @@ def carregar_base_severidade(pasta="."):
         )
     if linhas_especialidade_excluida > 0:
         avisos.append(
-            f"{linhas_especialidade_excluida:,} linhas de especialidades fora da análise "
-            "(ex.: Responsabilidade Técnica) desconsideradas."
+            f"{linhas_especialidade_excluida:,} linhas de 'Responsabilidade Técnica' "
+            "(especialidade ou procedimento) desconsideradas."
         )
     if caminho_prestadores is None:
         avisos.append(
