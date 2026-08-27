@@ -584,6 +584,8 @@ elif st.session_state.pagina == "severidade":
             "concentrado por 100 mil vidas/procedimentos. Quanto maior, mais uso concentrado em "
             "poucas vidas e poucos procedimentos (mais severo); quanto menor, mais distribuído. "
             "A linha tracejada marca a média do próprio grupo exibido em cada gráfico. "
+            "Grupos com menos de 5 vidas ou 5 procedimentos não entram no ranking — com uma amostra "
+            "tão pequena a taxa perde o sentido e pode disparar para valores enormes só por acaso. "
             "Não considera valores em R$."
         )
         rc1, rc2 = st.columns(2)
