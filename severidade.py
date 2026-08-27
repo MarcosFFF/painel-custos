@@ -513,3 +513,80 @@ def comparacao_mensal(df, coluna, volume_minimo=30):
     msg = (f"Comparando {ultimo} vs {penult} por {coluna}. "
            f"Relevante = volume atual ≥ {volume_minimo} procedimentos.")
     return comp, msg
+def _variacao_pct_uso(df, coluna, volume_minimo, top_n):
+    """
+    Variação % de uso (mês atual vs anterior) agrupada por `coluna`. Só entram
+    grupos com volume (qtd_procedimentos) ≥ volume_minimo em AMBOS os meses e
+    uso > 0 no mês anterior — evita que um grupo minúsculo mostre uma
+    variação % gigante e sem significado.
+    """
+    meses_ord = sorted(df["MES"].dropna().unique())
+    ultimo, penult = meses_ord[-1], meses_ord[-2]
+    atual = df[df["MES"] == ultimo].groupby(coluna, dropna=False, observed=True).agg(
+        qtd_procedimentos_atual=("qtd_procedimentos", "sum"),
+        soma_uso_atual=("soma_uso", "sum"),
+    ).reset_index()
+    anterior = df[df["MES"] == penult].groupby(coluna, dropna=False, observed=True).agg(
+        qtd_procedimentos_anterior=("qtd_procedimentos", "sum"),
+        soma_uso_anterior=("soma_uso", "sum"),
+    ).reset_index()
+    comp = atual.merge(anterior, on=coluna, how="inner")
+    comp = comp[comp[coluna].notna()]
+    comp = comp[
+        (comp["qtd_procedimentos_atual"] >= volume_minimo)
+        & (comp["qtd_procedimentos_anterior"] >= volume_minimo)
+        & (comp["soma_uso_anterior"] > 0)
+    ]
+    comp["variacao_pct"] = (
+        (comp["soma_uso_atual"] - comp["soma_uso_anterior"]) / comp["soma_uso_anterior"] * 100
+    ).round(1)
+    return comp.sort_values("variacao_pct", ascending=False).head(top_n).reset_index(drop=True)
+def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, top_prestadores=20, top_detalhe=5):
+    """
+    Resumo do mês vs o anterior, baseado na variação % de USO (não em números
+    absolutos): 5 especialidades que mais subiram, os procedimentos que
+    causaram essa subida; 10 UFs que mais subiram, as cidades (com cluster)
+    que causaram essa subida; 20 prestadores que mais subiram, com
+    cidade/UF/cluster/especialidade e os procedimentos responsáveis.
+    """
+    if "MES" not in df.columns or df["MES"].dropna().nunique() < 2:
+        return None, "Dados insuficientes para comparação (necessário ≥ 2 meses)."
+    meses_ord = sorted(df["MES"].dropna().unique())
+    ultimo, penult = meses_ord[-1], meses_ord[-2]
+
+    especialidades = _variacao_pct_uso(df, "ESPECIALIDADE", volume_minimo, top_especialidades)
+    detalhes_especialidade = {
+        esp: _variacao_pct_uso(df[df["ESPECIALIDADE"] == esp], "NOME_PROCEDIMENTO", volume_minimo, top_detalhe)
+        for esp in especialidades["ESPECIALIDADE"]
+    }
+
+    ufs = _variacao_pct_uso(df, "UF", volume_minimo, top_ufs)
+    detalhes_uf = {}
+    for uf in ufs["UF"]:
+        sub = df[df["UF"] == uf]
+        cidades = _variacao_pct_uso(sub, "CIDADE_PRESTADOR", volume_minimo, top_detalhe)
+        if not cidades.empty and "CLUSTER" in sub.columns:
+            mapa_cluster = sub.groupby("CIDADE_PRESTADOR", observed=True)["CLUSTER"].agg(
+                lambda x: x.mode().iloc[0] if not x.mode().empty else "—"
+            )
+            cidades["CLUSTER"] = cidades["CIDADE_PRESTADOR"].map(mapa_cluster)
+        detalhes_uf[uf] = cidades
+
+    prestadores = _variacao_pct_uso(df, "CD_PRESTADOR", volume_minimo, top_prestadores)
+    info = _info_prestador(df)
+    colunas_info = [c for c in ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER", "ESPECIALIDADE"] if c in info.columns]
+    prestadores = prestadores.merge(info[colunas_info], on="CD_PRESTADOR", how="left")
+    detalhes_prestador = {
+        cd: _variacao_pct_uso(df[df["CD_PRESTADOR"] == cd], "NOME_PROCEDIMENTO", volume_minimo, top_detalhe)
+        for cd in prestadores["CD_PRESTADOR"]
+    }
+
+    resultado = {
+        "ultimo": ultimo, "penultimo": penult,
+        "especialidades": especialidades, "detalhes_especialidade": detalhes_especialidade,
+        "ufs": ufs, "detalhes_uf": detalhes_uf,
+        "prestadores": prestadores, "detalhes_prestador": detalhes_prestador,
+    }
+    msg = (f"Comparando {ultimo} vs {penult}, por variação % de uso. "
+           f"Só entram grupos com volume ≥ {volume_minimo} procedimentos em ambos os meses.")
+    return resultado, msg
