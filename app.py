@@ -80,6 +80,32 @@ div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="slider"] span,
 div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="slider"] div {
     font-size: 0.72rem !important;
 }
+/* Abas (st.tabs): visual de botão, com o mesmo azul dos botões primários —
+   substitui o vermelho/laranja padrão do Streamlit na aba selecionada */
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    gap: 4px !important;
+}
+[data-testid="stTabs"] [data-testid="stTab"] {
+    background-color: #eef6fb !important;
+    border: 1px solid #d6e8f2 !important;
+    border-bottom: none !important;
+    border-radius: 8px 8px 0 0 !important;
+    padding: 0.4rem 0.9rem !important;
+}
+[data-testid="stTabs"] [data-testid="stTab"] p {
+    color: #0d2b3e !important;
+}
+[data-testid="stTabs"] [data-testid="stTab"][aria-selected="true"] {
+    background-color: #87CEEB !important;
+    border-color: #87CEEB !important;
+}
+[data-testid="stTabs"] [data-testid="stTab"][aria-selected="true"] p {
+    color: #0d2b3e !important;
+    font-weight: 600 !important;
+}
+[data-testid="stTabs"] .react-aria-SelectionIndicator {
+    background-color: #87CEEB !important;
+}
 </style>
 """, unsafe_allow_html=True)
 MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho",
