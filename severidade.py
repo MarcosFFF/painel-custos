@@ -273,36 +273,45 @@ def _info_prestador(df):
     return df.groupby("CD_PRESTADOR", observed=True).agg(**agregacoes).reset_index()
 def _indice_severidade(r):
     """
-    Índice de Severidade Relativa (ISR) — taxa de uso concentrado por 100.000
-    vidas/procedimentos, cruzando os três parâmetros de uso:
+    Índice de Severidade Relativa (ISR) — média de duas relatividades, cada
+    uma cruzando dois dos três parâmetros de uso e comparada à média da base:
 
-        ISR = quantidade_uso ÷ (qtd_usuarios × qtd_procedimentos) × 100.000
+        Frequência  = qtd_procedimentos ÷ qtd_usuarios     (procedimentos por vida)
+        Intensidade = quantidade_uso ÷ qtd_procedimentos    (uso por procedimento)
 
-    Quanto maior o ISR, mais uso concentrado em poucas vidas e poucos
-    procedimentos (mais severo); quanto menor, mais distribuído. Não é mais um
-    índice relativo a uma média fixa (não há um "1,00 = na média") — é uma taxa
-    direta, comparável entre grupos. Não considera valores em R$.
+        R_frequência  = Frequência do grupo  ÷ Frequência média da base
+        R_intensidade = Intensidade do grupo ÷ Intensidade média da base
+        ISR = (R_frequência + R_intensidade) ÷ 2
+
+    ISR = 1,00 é a média da base; acima de 1,00 é mais severo (uso mais
+    concentrado em poucas vidas/procedimentos ou mais intenso por
+    procedimento); abaixo de 1,00 é menos severo. Ao contrário de uma taxa
+    "por 100.000" fixa, esta versão se autoajusta à escala real dos dados —
+    não explode para grupos de baixo volume, porque cada relatividade só
+    divide por uma grandeza de cada vez (não pelo produto das duas). Não
+    considera valores em R$.
 
     Recebe um DataFrame com as colunas quantidade_uso, qtd_usuarios e
     qtd_procedimentos e devolve uma Series (indice_severidade) alinhada ao
     índice de r.
     """
-    denominador = r["qtd_usuarios"] * r["qtd_procedimentos"]
-    indice = np.where(denominador > 0, r["quantidade_uso"] / denominador * 100000, np.nan)
+    total_proc = r["qtd_procedimentos"].sum()
+    total_usuarios = r["qtd_usuarios"].sum()
+    total_uso = r["quantidade_uso"].sum()
+    freq_media = (total_proc / total_usuarios) if total_usuarios else np.nan
+    intens_media = (total_uso / total_proc) if total_proc else np.nan
+    freq_grupo = np.where(r["qtd_usuarios"] > 0, r["qtd_procedimentos"] / r["qtd_usuarios"], np.nan)
+    intens_grupo = np.where(r["qtd_procedimentos"] > 0, r["quantidade_uso"] / r["qtd_procedimentos"], np.nan)
+    if not freq_media or pd.isna(freq_media):
+        r_freq = np.full(len(r), np.nan)
+    else:
+        r_freq = freq_grupo / freq_media
+    if not intens_media or pd.isna(intens_media):
+        r_intens = np.full(len(r), np.nan)
+    else:
+        r_intens = intens_grupo / intens_media
+    indice = (r_freq + r_intens) / 2
     return pd.Series(indice, index=r.index).round(2)
-VOLUME_MINIMO_ISR = 5
-def _filtrar_volume_minimo_isr(r, volume_minimo=VOLUME_MINIMO_ISR):
-    """
-    O ISR divide por (vidas × procedimentos): quando um grupo tem pouquíssimas
-    vidas ou procedimentos (ex.: 1 e 1), o denominador quase zera e a taxa
-    explode para um número gigante sem significado — é o clássico problema de
-    "denominador pequeno" em taxas normalizadas (o mesmo motivo pelo qual
-    taxas epidemiológicas com poucos casos costumam ser suprimidas). Este
-    filtro exige um volume mínimo de vidas E de procedimentos para o grupo
-    entrar no ranking — não é credibilidade/encolhimento, é só uma exigência
-    de amostra mínima para a taxa fazer sentido.
-    """
-    return r[(r["qtd_usuarios"] >= volume_minimo) & (r["qtd_procedimentos"] >= volume_minimo)]
 def ranking_por(df, coluna, top_n=15):
     r = df.groupby(coluna, dropna=False, observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
@@ -322,7 +331,7 @@ def evolucao_mensal(df):
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     r["indice_severidade"] = _indice_severidade(r)
     return r
-def ranking_severidade(df, coluna, top_n=15, volume_minimo=VOLUME_MINIMO_ISR):
+def ranking_severidade(df, coluna, top_n=15):
     grupo_cols = [coluna]
     if coluna == "CD_PRESTADOR":
         for extra in ["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR"]:
@@ -334,7 +343,6 @@ def ranking_severidade(df, coluna, top_n=15, volume_minimo=VOLUME_MINIMO_ISR):
         quantidade_uso=("soma_uso", "sum"),
     ).reset_index()
     r = r[r[coluna].notna()]
-    r = _filtrar_volume_minimo_isr(r, volume_minimo)
     r["uso_por_procedimento"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     r["indice_severidade"] = _indice_severidade(r)
@@ -374,8 +382,6 @@ def montar_watchlist(df, top_n=20):
          + por_prestador["pct_qtd_procedimentos"] * 0.30) * 100
     ).round(0)
     por_prestador["indice_severidade"] = _indice_severidade(por_prestador)
-    baixo_volume = (por_prestador["qtd_usuarios"] < VOLUME_MINIMO_ISR) | (por_prestador["qtd_procedimentos"] < VOLUME_MINIMO_ISR)
-    por_prestador.loc[baixo_volume, "indice_severidade"] = np.nan
     # Tendência percentual (variação do volume do mês mais recente vs anterior, se houver)
     if "MES" in df.columns and df["MES"].nunique() > 1:
         meses_ord = sorted(df["MES"].unique())
@@ -438,8 +444,6 @@ def identificar_ofensores(df, percentil=0.95):
     por_prestador["justificativa"] = justificativas
     por_prestador["relevante"] = por_prestador["criterios_atingidos"] >= 2
     por_prestador["indice_severidade"] = _indice_severidade(por_prestador)
-    baixo_volume = (por_prestador["qtd_usuarios"] < VOLUME_MINIMO_ISR) | (por_prestador["qtd_procedimentos"] < VOLUME_MINIMO_ISR)
-    por_prestador.loc[baixo_volume, "indice_severidade"] = np.nan
     resultado = por_prestador.sort_values(
         ["indice_severidade", "criterios_atingidos"], ascending=[False, False], na_position="last"
     )
