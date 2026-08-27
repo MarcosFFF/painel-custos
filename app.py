@@ -663,20 +663,20 @@ elif st.session_state.pagina == "severidade":
         )
         with st.expander("📖 O que significa cada alerta?", expanded=True):
             st.markdown(
-                "- 🔴 **alerta_volume** = `True` quando a **quantidade de procedimentos** "
+                "- 🔴 **alerta_volume** é acionado quando a **quantidade de procedimentos** "
                 "está no **top 5% maior**. Indica volume anormalmente alto de solicitações."
                 "\n"
-                "- 🔴 **alerta_uso_procedimento** = `True` quando o **uso por procedimento** "
+                "- 🔴 **alerta_uso_procedimento** é acionado quando o **uso por procedimento** "
                 "(quantidade de uso ÷ procedimentos) está no **top 5% mais alto**. "
                 "Indica intensidade de uso elevada por procedimento."
                 "\n"
-                "- 🔴 **alerta_uso_vida** = `True` quando o **uso por vida** "
+                "- 🔴 **alerta_uso_vida** é acionado quando o **uso por vida** "
                 "(quantidade de uso ÷ vidas/usuários distintos) está no **top 5% mais alto**. "
                 "Indica intensidade de uso elevada por usuário atendido."
                 "\n"
                 "- 📊 **criterios_atingidos** = quantos dos 3 alertas acima foram acionados (0 a 3)."
                 "\n"
-                "- 🚨 **relevante** = `True` quando **criterios_atingidos ≥ 2** — "
+                "- 🚨 **relevante** é acionado quando **criterios_atingidos ≥ 2** — "
                 "é o flag que marca o prestador como ofensor de fato."
                 "\n"
                 "- 📝 **justificativa** = texto explicando **exatamente quais critérios** "
@@ -754,8 +754,8 @@ elif st.session_state.pagina == "severidade":
         comp, msg_comp = comparacao_mensal(df_filtrado, "NOME_PROCEDIMENTO", volume_minimo=volume_minimo)
         st.caption(msg_comp)
         if not comp.empty:
-            comp_relevante = comp[comp["relevante"]]
-            comp_ignorado = comp[~comp["relevante"]]
+            comp_relevante = comp[comp["relevante"]].drop(columns=["relevante"])
+            comp_ignorado = comp[~comp["relevante"]].drop(columns=["relevante"])
             st.markdown(f"*Variações relevantes (volume atual ≥ {volume_minimo}):*")
             st.dataframe(comp_relevante, hide_index=True, use_container_width=True)
             with st.expander(f"Ver também as {len(comp_ignorado)} variações abaixo do volume mínimo"):
