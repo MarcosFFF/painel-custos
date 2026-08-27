@@ -27,6 +27,10 @@ UF_PARA_REGIAO = {
 # normalizado — o arquivo pode ter outras colunas (TIPO PRESTADOR, STATUS etc.),
 # só estas três são usadas.
 COLUNAS_PRESTADORES = ["CODIGO", "CREDENCIADO", "CNPJ_CPF"]
+# Especialidades completamente fora da análise de severidade (não representam
+# atendimento clínico de fato) — comparação por texto normalizado, então
+# funciona com ou sem acento/maiúsculas.
+ESPECIALIDADES_EXCLUIDAS = {"RESPONSABILIDADE TECNICA"}
 def normalizar_texto(v):
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return None
@@ -246,11 +250,22 @@ def carregar_base_severidade(pasta="."):
     colunas_chave = ["MES", "UF", "REGIAO", "ESPECIALIDADE", "CD_PRESTADOR", "NOME_PROCEDIMENTO", "CIDADE_PRESTADOR"]
     agregado = agregado.dropna(subset=colunas_chave).reset_index(drop=True)
     linhas_desconsideradas = linhas_antes - len(agregado)
+    # Remove especialidades fora da análise de severidade (ex.: Responsabilidade Técnica)
+    linhas_antes_excl = len(agregado)
+    agregado = agregado[
+        ~agregado["ESPECIALIDADE"].apply(normalizar_texto).isin(ESPECIALIDADES_EXCLUIDAS)
+    ].reset_index(drop=True)
+    linhas_especialidade_excluida = linhas_antes_excl - len(agregado)
     avisos = []
     if linhas_desconsideradas > 0:
         avisos.append(
             f"{linhas_desconsideradas:,} linhas desconsideradas por terem mês, UF, região, "
             "especialidade, prestador, procedimento ou cidade não identificados (nan)."
+        )
+    if linhas_especialidade_excluida > 0:
+        avisos.append(
+            f"{linhas_especialidade_excluida:,} linhas de especialidades fora da análise "
+            "(ex.: Responsabilidade Técnica) desconsideradas."
         )
     if caminho_prestadores is None:
         avisos.append(
