@@ -542,14 +542,13 @@ elif st.session_state.pagina == "severidade":
             altura_total = max(janela, 90 + len(df_plot) * 40)
         else:
             altura_total = altura or max(350, len(df_plot) * 35)
-        media_grupo = df_plot["indice_severidade"].mean()
         fig = px.bar(
             df_plot, x="indice_severidade", y=coluna, orientation="h",
             custom_data=[coluna, "indice_severidade", "uso_por_procedimento", "uso_por_vida"],
             title=titulo,
             color="indice_severidade",
             color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
-            color_continuous_midpoint=media_grupo,
+            color_continuous_midpoint=1.0,
         )
         fig.update_traces(
             texttemplate="%{x:,.2f}",
@@ -570,7 +569,7 @@ elif st.session_state.pagina == "severidade":
             yaxis_type="category",
             coloraxis_showscale=False,
         )
-        fig.add_vline(x=media_grupo, line_dash="dash", line_color="gray")
+        fig.add_vline(x=1.0, line_dash="dash", line_color="gray")
         fig.update_yaxes(tickfont=dict(size=10))
         if janela:
             with st.container(height=janela):
@@ -579,13 +578,11 @@ elif st.session_state.pagina == "severidade":
             st.plotly_chart(fig, use_container_width=True)
     with tab_rank:
         st.caption(
-            "O **Índice de Severidade Relativa (ISR)** cruza os três parâmetros de uso: "
-            "**ISR = quantidade de uso ÷ (vidas × procedimentos) × 100.000** — uma taxa de uso "
-            "concentrado por 100 mil vidas/procedimentos. Quanto maior, mais uso concentrado em "
-            "poucas vidas e poucos procedimentos (mais severo); quanto menor, mais distribuído. "
-            "A linha tracejada marca a média do próprio grupo exibido em cada gráfico. "
-            "Grupos com menos de 5 vidas ou 5 procedimentos não entram no ranking — com uma amostra "
-            "tão pequena a taxa perde o sentido e pode disparar para valores enormes só por acaso. "
+            "O **Índice de Severidade Relativa (ISR)** cruza os três parâmetros de uso — "
+            "quantidade de uso, vidas e procedimentos — pela média de duas relatividades: "
+            "**Frequência** (procedimentos por vida) e **Intensidade** (uso por procedimento), "
+            "cada uma comparada com a média da base filtrada. **1,00 = na média**, **2,00 = duas "
+            "vezes mais severo que a média**, **0,50 = metade**. A linha tracejada marca 1,00. "
             "Não considera valores em R$."
         )
         rc1, rc2 = st.columns(2)
@@ -621,6 +618,7 @@ elif st.session_state.pagina == "severidade":
             evolucao, x="MES", y="indice_severidade", markers=True, text="indice_severidade", title="ISR por mês",
         )
         fig_isr.update_traces(texttemplate="%{text:,.2f}", textposition="top center")
+        fig_isr.add_hline(y=1.0, line_dash="dash", line_color="gray")
         fig_isr.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10), yaxis_title="ISR")
         st.plotly_chart(fig_isr, use_container_width=True)
         fig_uso_total = px.line(evolucao, x="MES", y="quantidade_uso", markers=True, text="quantidade_uso", title="Uso total por mês")
