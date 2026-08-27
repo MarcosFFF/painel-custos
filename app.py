@@ -5,11 +5,18 @@ from datetime import date, datetime
 from supabase import create_client, Client
 import plotly.express as px
 from projecao_sinistro import projetar_sinistro_mes_atual, projetar_dias_restantes
-from severidade import (
-    carregar_base_severidade, aplicar_filtros, evolucao_mensal,
-    ranking_severidade, identificar_ofensores, calcular_desvios, montar_watchlist,
-    comparacao_mensal, resumo_comparativo,
-)
+try:
+    from severidade import (
+        carregar_base_severidade, aplicar_filtros, evolucao_mensal,
+        ranking_severidade, identificar_ofensores, calcular_desvios, montar_watchlist,
+        comparacao_mensal, resumo_comparativo,
+    )
+except Exception as _erro_import_severidade:
+    # O Streamlit Cloud redige a mensagem de erro padrão — mostramos o traceback
+    # completo aqui pra dar pra diagnosticar sem precisar entrar nos logs.
+    st.error("Erro ao importar severidade.py — traceback completo abaixo:")
+    st.exception(_erro_import_severidade)
+    st.stop()
 # ============================================================
 # Painel de Gestão de Sinistro — versão Streamlit
 # ============================================================
