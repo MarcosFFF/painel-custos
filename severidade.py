@@ -309,13 +309,28 @@ def ranking_severidade(df, coluna, top_n=15):
     ).reset_index()
     r["uso_por_procedimento"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
-    for c in ["uso_por_procedimento", "uso_por_vida"]:
-        media, desvio = r[c].mean(), r[c].std()
-        r[f"z_{c}"] = 0.0 if desvio == 0 or pd.isna(desvio) else (r[c] - media) / desvio
-    r["indice_severidade"] = (r["z_uso_por_procedimento"] + r["z_uso_por_vida"]) / 2
-    return r.sort_values("indice_severidade", ascending=False).head(top_n).drop(
-        columns=["z_uso_por_procedimento", "z_uso_por_vida"]
-    )
+    # --- Índice de Severidade Relativa (ISR), com credibilidade atuarial ---
+    # Relatividade = uso por vida do grupo ÷ uso por vida médio geral, ponderado pelo
+    # volume total (soma de uso ÷ soma de vidas de todos os grupos), não pela média
+    # simples entre grupos — assim um grupo pequeno não pesa igual a um grande na
+    # referência. ISR = 1,0 é a média; acima de 1,0 é mais severo, abaixo é menos.
+    #
+    # Grupos com poucas vidas observadas são "encolhidos" em direção a 1,0
+    # (credibilidade de Bühlmann: credibilidade = vidas ÷ (vidas + k), k = mediana de
+    # vidas entre os grupos). Isso evita que um prestador/especialidade com pouquíssimo
+    # volume pareça extremamente severo só por acaso estatístico.
+    total_uso = r["quantidade_uso"].sum()
+    total_usuarios = r["qtd_usuarios"].sum()
+    media_uso_vida_geral = (total_uso / total_usuarios) if total_usuarios else np.nan
+    if pd.isna(media_uso_vida_geral) or media_uso_vida_geral == 0:
+        isr_bruto = pd.Series(1.0, index=r.index)
+    else:
+        isr_bruto = r["uso_por_vida"] / media_uso_vida_geral
+    k = r["qtd_usuarios"].median()
+    k = k if k and k > 0 else 1
+    r["credibilidade"] = (r["qtd_usuarios"] / (r["qtd_usuarios"] + k)).round(2)
+    r["indice_severidade"] = (r["credibilidade"] * isr_bruto + (1 - r["credibilidade"]) * 1.0).round(2)
+    return r.sort_values("indice_severidade", ascending=False).head(top_n)
 def calcular_media_nacional(agregado, coluna_dimensao):
     """Média de uso nacional (sem filtros) por dimensão."""
     r = agregado.groupby(coluna_dimensao, observed=True).agg(
