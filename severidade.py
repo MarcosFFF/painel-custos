@@ -271,35 +271,25 @@ def _info_prestador(df):
     if "CNPJ_CPF_PRESTADOR" in df.columns:
         agregacoes["CNPJ_CPF_PRESTADOR"] = ("CNPJ_CPF_PRESTADOR", lambda x: x.mode().iloc[0] if not x.mode().empty else "—")
     return df.groupby("CD_PRESTADOR", observed=True).agg(**agregacoes).reset_index()
-def _indice_severidade_credibilidade(r):
+def _indice_severidade(r):
     """
-    Índice de Severidade Relativa (ISR), com credibilidade atuarial.
+    Índice de Severidade Relativa (ISR) — taxa de uso concentrado por 100.000
+    vidas/procedimentos, cruzando os três parâmetros de uso:
 
-    Relatividade = uso por vida do grupo ÷ uso por vida médio geral, ponderado pelo
-    volume total (soma de uso ÷ soma de vidas de todos os grupos), não pela média
-    simples entre grupos — assim um grupo pequeno não pesa igual a um grande na
-    referência. ISR = 1,0 é a média; acima de 1,0 é mais severo, abaixo é menos.
+        ISR = quantidade_uso ÷ (qtd_usuarios × qtd_procedimentos) × 100.000
 
-    Grupos com poucas vidas observadas são "encolhidos" em direção a 1,0
-    (credibilidade de Bühlmann: credibilidade = vidas ÷ (vidas + k), k = mediana de
-    vidas entre os grupos). Isso evita que um prestador/especialidade com pouquíssimo
-    volume pareça extremamente severo só por acaso estatístico.
+    Quanto maior o ISR, mais uso concentrado em poucas vidas e poucos
+    procedimentos (mais severo); quanto menor, mais distribuído. Não é mais um
+    índice relativo a uma média fixa (não há um "1,00 = na média") — é uma taxa
+    direta, comparável entre grupos. Não considera valores em R$.
 
-    Recebe um DataFrame com as colunas quantidade_uso, qtd_usuarios e uso_por_vida e
-    devolve (indice_severidade, credibilidade), ambas Series alinhadas ao índice de r.
+    Recebe um DataFrame com as colunas quantidade_uso, qtd_usuarios e
+    qtd_procedimentos e devolve uma Series (indice_severidade) alinhada ao
+    índice de r.
     """
-    total_uso = r["quantidade_uso"].sum()
-    total_usuarios = r["qtd_usuarios"].sum()
-    media_uso_vida_geral = (total_uso / total_usuarios) if total_usuarios else np.nan
-    if pd.isna(media_uso_vida_geral) or media_uso_vida_geral == 0:
-        isr_bruto = pd.Series(1.0, index=r.index)
-    else:
-        isr_bruto = r["uso_por_vida"] / media_uso_vida_geral
-    k = r["qtd_usuarios"].median()
-    k = k if k and k > 0 else 1
-    credibilidade = (r["qtd_usuarios"] / (r["qtd_usuarios"] + k)).round(2)
-    indice_severidade = (credibilidade * isr_bruto + (1 - credibilidade) * 1.0).round(2)
-    return indice_severidade, credibilidade
+    denominador = r["qtd_usuarios"] * r["qtd_procedimentos"]
+    indice = np.where(denominador > 0, r["quantidade_uso"] / denominador * 100000, np.nan)
+    return pd.Series(indice, index=r.index).round(2)
 def ranking_por(df, coluna, top_n=15):
     r = df.groupby(coluna, dropna=False, observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
@@ -317,7 +307,7 @@ def evolucao_mensal(df):
     ).reset_index().sort_values("MES")
     r["uso_por_procedimento"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
-    r["indice_severidade"], r["credibilidade"] = _indice_severidade_credibilidade(r)
+    r["indice_severidade"] = _indice_severidade(r)
     return r
 def ranking_severidade(df, coluna, top_n=15):
     grupo_cols = [coluna]
@@ -332,7 +322,7 @@ def ranking_severidade(df, coluna, top_n=15):
     ).reset_index()
     r["uso_por_procedimento"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
-    r["indice_severidade"], r["credibilidade"] = _indice_severidade_credibilidade(r)
+    r["indice_severidade"] = _indice_severidade(r)
     return r.sort_values("indice_severidade", ascending=False).head(top_n)
 def calcular_media_nacional(agregado, coluna_dimensao):
     """Média de uso nacional (sem filtros) por dimensão."""
@@ -368,7 +358,7 @@ def montar_watchlist(df, top_n=20):
          + por_prestador["pct_uso_por_vida"] * 0.35
          + por_prestador["pct_qtd_procedimentos"] * 0.30) * 100
     ).round(0)
-    por_prestador["indice_severidade"], _ = _indice_severidade_credibilidade(por_prestador)
+    por_prestador["indice_severidade"] = _indice_severidade(por_prestador)
     # Tendência percentual (variação do volume do mês mais recente vs anterior, se houver)
     if "MES" in df.columns and df["MES"].nunique() > 1:
         meses_ord = sorted(df["MES"].unique())
@@ -430,7 +420,7 @@ def identificar_ofensores(df, percentil=0.95):
         justificativas.append(just)
     por_prestador["justificativa"] = justificativas
     por_prestador["relevante"] = por_prestador["criterios_atingidos"] >= 2
-    por_prestador["indice_severidade"], _ = _indice_severidade_credibilidade(por_prestador)
+    por_prestador["indice_severidade"] = _indice_severidade(por_prestador)
     resultado = por_prestador.sort_values(
         ["indice_severidade", "criterios_atingidos"], ascending=[False, False]
     )
