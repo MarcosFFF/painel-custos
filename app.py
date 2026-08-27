@@ -8,7 +8,7 @@ from projecao_sinistro import projetar_sinistro_mes_atual, projetar_dias_restant
 from severidade import (
     carregar_base_severidade, aplicar_filtros, evolucao_mensal,
     ranking_severidade, identificar_ofensores, calcular_desvios, montar_watchlist,
-    comparacao_mensal,
+    comparacao_mensal, resumo_comparativo,
 )
 # ============================================================
 # Painel de Gestão de Sinistro — versão Streamlit
@@ -529,8 +529,8 @@ elif st.session_state.pagina == "severidade":
     m3.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
     m4.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
     st.divider()
-    tab_rank, tab_evolucao, tab_watch, tab_ofensores = st.tabs(
-        ["Ranking de Severidade", "Evolução mensal", "Atenção", "Ofensores"]
+    tab_rank, tab_evolucao, tab_watch, tab_ofensores, tab_resumo = st.tabs(
+        ["Ranking de Severidade", "Evolução mensal", "Atenção", "Ofensores", "Resumo"]
     )
     # ---------- RANKING DE SEVERIDADE (ISR — só gráficos, sem tabelas) ----------
     JANELA_5_BARRAS = 300  # altura fixa (px) que mostra ~5 barras; o resto rola dentro do quadro
@@ -776,3 +776,96 @@ elif st.session_state.pagina == "severidade":
             st.dataframe(comp_relevante, hide_index=True, use_container_width=True)
             with st.expander(f"Ver também as {len(comp_ignorado)} variações abaixo do volume mínimo"):
                 st.dataframe(comp_ignorado, hide_index=True, use_container_width=True)
+    # ---------- RESUMO (mês vs. mês anterior, por variação % de uso) ----------
+    with tab_resumo:
+        st.markdown("#### 📌 Resumo do mês vs. mês anterior")
+        st.caption(
+            "Compara o último mês com o anterior pela **variação % de uso** (não em números "
+            "absolutos). Clique num item abaixo para ver o que causou o aumento — o selecionado "
+            f"fica destacado em azul. Só entram grupos com volume ≥ {volume_minimo} procedimentos "
+            "em ambos os meses (ajustável no filtro acima)."
+        )
+        resumo, msg_resumo = resumo_comparativo(df_filtrado, volume_minimo=volume_minimo)
+        if resumo is None:
+            st.info(msg_resumo)
+        else:
+            st.caption(msg_resumo)
+
+            def _grade_botoes(df_itens, coluna_label, coluna_key, session_key, por_linha=5):
+                if session_key not in st.session_state or st.session_state[session_key] not in df_itens[coluna_key].values:
+                    st.session_state[session_key] = df_itens[coluna_key].iloc[0]
+                for i in range(0, len(df_itens), por_linha):
+                    linha = df_itens.iloc[i:i + por_linha]
+                    cols = st.columns(len(linha))
+                    for col, (_, row) in zip(cols, linha.iterrows()):
+                        with col:
+                            rotulo = f"{row[coluna_label]} · {row['variacao_pct']:+.1f}%"
+                            selecionado = st.session_state[session_key] == row[coluna_key]
+                            if st.button(
+                                rotulo, key=f"btn_{session_key}_{row[coluna_key]}",
+                                type="primary" if selecionado else "secondary",
+                                use_container_width=True,
+                            ):
+                                st.session_state[session_key] = row[coluna_key]
+                                st.rerun()
+                return st.session_state[session_key]
+
+            def _tabela_detalhe(det, mapa_colunas=None, vazio_msg="Sem dados suficientes."):
+                if det is None or det.empty:
+                    st.info(vazio_msg)
+                    return
+                det_show = det.copy()
+                if mapa_colunas:
+                    det_show = det_show.rename(columns=mapa_colunas)
+                det_show["variacao_pct"] = det_show["variacao_pct"].map(lambda v: f"{v:+.1f}%")
+                for c in ["qtd_procedimentos_atual", "qtd_procedimentos_anterior"]:
+                    if c in det_show.columns:
+                        det_show[c] = det_show[c].map(fmt_int)
+                for c in ["soma_uso_atual", "soma_uso_anterior"]:
+                    if c in det_show.columns:
+                        det_show[c] = det_show[c].map(fmt_int)
+                st.dataframe(det_show, hide_index=True, use_container_width=True)
+
+            # ---------- Especialidades ----------
+            st.markdown("##### 5 especialidades com maior aumento")
+            especialidades = resumo["especialidades"]
+            if especialidades.empty:
+                st.info("Nenhuma especialidade com volume suficiente nos dois meses para comparar.")
+            else:
+                esp_sel = _grade_botoes(especialidades, "ESPECIALIDADE", "ESPECIALIDADE", "resumo_esp_sel")
+                st.markdown(f"**Procedimentos que causaram o aumento em {esp_sel}:**")
+                _tabela_detalhe(resumo["detalhes_especialidade"].get(esp_sel))
+        st.divider()
+        if resumo is not None:
+            # ---------- UFs ----------
+            st.markdown("##### 10 UFs com maior aumento")
+            ufs = resumo["ufs"]
+            if ufs.empty:
+                st.info("Nenhuma UF com volume suficiente nos dois meses para comparar.")
+            else:
+                uf_sel = _grade_botoes(ufs, "UF", "UF", "resumo_uf_sel")
+                st.markdown(f"**Cidades (com cluster) que causaram o aumento em {uf_sel}:**")
+                _tabela_detalhe(resumo["detalhes_uf"].get(uf_sel), mapa_colunas={"CIDADE_PRESTADOR": "CIDADE"})
+        st.divider()
+        if resumo is not None:
+            # ---------- Prestadores ----------
+            st.markdown("##### 20 prestadores com maior aumento")
+            prestadores = resumo["prestadores"]
+            if prestadores.empty:
+                st.info("Nenhum prestador com volume suficiente nos dois meses para comparar.")
+            else:
+                prest_labels = prestadores.copy()
+                prest_labels["_label"] = prest_labels.apply(
+                    lambda r: (r.get("NOME_PRESTADOR") or f"Prestador {int(r['CD_PRESTADOR'])}")[:22], axis=1
+                )
+                cd_sel = _grade_botoes(prest_labels, "_label", "CD_PRESTADOR", "resumo_prest_sel")
+                linha_sel = prestadores[prestadores["CD_PRESTADOR"] == cd_sel]
+                if not linha_sel.empty:
+                    r = linha_sel.iloc[0]
+                    st.markdown(
+                        f"**{r.get('NOME_PRESTADOR') or '—'}** — CPF/CNPJ: {r.get('CNPJ_CPF_PRESTADOR') or '—'} · "
+                        f"{r.get('UF') or '—'} · {r.get('CIDADE') or '—'} · Cluster: {r.get('CLUSTER') or '—'} · "
+                        f"Especialidade principal: {r.get('ESPECIALIDADE') or '—'} · Variação: {r['variacao_pct']:+.1f}%"
+                    )
+                st.markdown("**Procedimentos que causaram o aumento:**")
+                _tabela_detalhe(resumo["detalhes_prestador"].get(cd_sel))
