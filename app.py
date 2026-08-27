@@ -520,12 +520,14 @@ elif st.session_state.pagina == "severidade":
     if df_filtrado.empty:
         st.info("Nenhum dado para esses filtros.")
         st.stop()
-    m1, m2, m3 = st.columns(3)
+    m1, m2, m3, m4 = st.columns(4)
     m1.metric("Procedimentos", fmt_int(df_filtrado["qtd_procedimentos"].sum()))
     m2.metric("Uso total", fmt_int(df_filtrado["soma_uso"].sum()))
     _uso_total = df_filtrado["soma_uso"].sum()
     _qtd_total = df_filtrado["qtd_procedimentos"].sum()
-    m3.metric("Uso médio por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
+    _usuarios_total = df_filtrado["qtd_usuarios"].sum()
+    m3.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
+    m4.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
     st.divider()
     tab_rank, tab_evolucao, tab_watch, tab_severidade, tab_ofensores = st.tabs(
         ["Rankings", "Evolução mensal", "Watchlist", "Severidade", "Ofensores"]
@@ -559,8 +561,10 @@ elif st.session_state.pagina == "severidade":
     def _exibir_ranking(df_rank, coluna):
         exib = df_rank.copy()
         exib["qtd_procedimentos"] = exib["qtd_procedimentos"].map(fmt_int)
+        exib["qtd_usuarios"] = exib["qtd_usuarios"].map(fmt_int)
         exib["quantidade_uso"] = exib["quantidade_uso"].map(fmt_int)
-        exib["media_uso"] = exib["media_uso"].map(fmt_float2)
+        exib["uso_por_procedimento"] = exib["uso_por_procedimento"].map(fmt_float2)
+        exib["uso_por_vida"] = exib["uso_por_vida"].map(fmt_float2)
         st.dataframe(exib, hide_index=True, use_container_width=True)
     with tab_rank:
         rc1, rc2 = st.columns(2)
@@ -584,15 +588,15 @@ elif st.session_state.pagina == "severidade":
         fig_uso_total.update_traces(texttemplate="%{text:,.0f}", textposition="top center")
         fig_uso_total.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10))
         st.plotly_chart(fig_uso_total, use_container_width=True)
-        fig_uso = px.line(evolucao, x="MES", y=["quantidade_uso", "media_uso"], markers=True, title="Uso por mês")
+        fig_uso = px.line(evolucao, x="MES", y=["uso_por_procedimento", "uso_por_vida"], markers=True, title="Uso por procedimento e por vida, por mês")
         fig_uso.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10))
         st.plotly_chart(fig_uso, use_container_width=True)
     # ---------- WATCHLIST (baseada apenas em uso e volume) ----------
     with tab_watch:
         st.markdown("#### Watchlist — prestadores que merecem atenção")
         st.caption(
-            "**Pontuação (0-100)** = 60% uso médio por procedimento + 40% volume de procedimentos (percentis). "
-            "**Tendência %** = variação do volume do último mês vs anterior. "
+            "**Pontuação (0-100)** = 35% uso por procedimento + 35% uso por vida + 30% volume de "
+            "procedimentos (percentis). **Tendência %** = variação do volume do último mês vs anterior. "
             "Quanto maior a pontuação, maior a combinação de intensidade de uso e volume."
         )
         watchlist = montar_watchlist(df_filtrado)
@@ -601,7 +605,7 @@ elif st.session_state.pagina == "severidade":
             wl_plot = watchlist.copy()
             wl_plot["CD_PRESTADOR"] = wl_plot["CD_PRESTADOR"].astype(str)
             # Garantir que colunas do custom_data existem e não têm NaN
-            for col in ["UF", "CIDADE", "CLUSTER"]:
+            for col in ["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"]:
                 if col not in wl_plot.columns:
                     wl_plot[col] = "—"
                 wl_plot[col] = wl_plot[col].fillna("—").astype(str)
@@ -609,17 +613,18 @@ elif st.session_state.pagina == "severidade":
                 wl_plot.sort_values("pontuacao", ascending=True), x="pontuacao",
                 y="CD_PRESTADOR", orientation="h",
                 text="pontuacao", title="Prestadores que merecem atenção",
-                custom_data=["UF", "CIDADE", "CLUSTER"],
+                custom_data=["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"],
             )
             fig_watch.update_traces(
                 texttemplate="%{text:.0f}",
                 textposition="outside",
                 hovertemplate=(
-                    "<b>Prestador %{y}</b><br>"
+                    "<b>Prestador %{y} — %{customdata[0]}</b><br>"
+                    "CPF/CNPJ: %{customdata[1]}<br>"
                     "Pontuação: %{x:.0f}<br>"
-                    "UF: %{customdata[0]}<br>"
-                    "Cidade: %{customdata[1]}<br>"
-                    "Cluster: %{customdata[2]}"
+                    "UF: %{customdata[2]}<br>"
+                    "Cidade: %{customdata[3]}<br>"
+                    "Cluster: %{customdata[4]}"
                     "<extra></extra>"
                 ),
             )
@@ -629,8 +634,10 @@ elif st.session_state.pagina == "severidade":
             exib_watch = watchlist.copy()
             exib_watch["CD_PRESTADOR"] = exib_watch["CD_PRESTADOR"].astype(str)
             exib_watch["qtd_procedimentos"] = exib_watch["qtd_procedimentos"].map(fmt_int)
+            exib_watch["qtd_usuarios"] = exib_watch["qtd_usuarios"].map(fmt_int)
             exib_watch["quantidade_uso"] = exib_watch["quantidade_uso"].map(fmt_int)
-            exib_watch["media_uso"] = exib_watch["media_uso"].map(fmt_float2)
+            exib_watch["uso_por_procedimento"] = exib_watch["uso_por_procedimento"].map(fmt_float2)
+            exib_watch["uso_por_vida"] = exib_watch["uso_por_vida"].map(fmt_float2)
             exib_watch["tendencia_pct"] = exib_watch["tendencia_pct"].map(lambda v: f"{v:+.1f}%")
             exib_watch["pontuacao"] = exib_watch["pontuacao"].map(lambda v: f"{v:.0f}")
             st.dataframe(exib_watch, hide_index=True, use_container_width=True)
@@ -641,16 +648,17 @@ elif st.session_state.pagina == "severidade":
         # === Ranking de severidade por especialidade ===
         st.markdown("#### Ranking de severidade por especialidade")
         st.caption(
-            "O **índice de severidade** é o **uso médio** de cada especialidade (uso ÷ procedimentos) "
-            "padronizado em z-score. Quanto maior o índice, maior a intensidade de uso da especialidade — "
-            "sem considerar valores em R$."
+            "O **índice de severidade** combina **uso por procedimento** (uso ÷ procedimentos) e "
+            "**uso por vida** (uso ÷ vidas/usuários distintos) de cada especialidade, cada um "
+            "padronizado em z-score e com peso igual. Quanto maior o índice, maior a intensidade de "
+            "uso da especialidade — sem considerar valores em R$."
         )
         rank_sev_esp = ranking_severidade(df_filtrado, "ESPECIALIDADE")
         if not rank_sev_esp.empty:
             df_plot = rank_sev_esp.sort_values("indice_severidade", ascending=True).reset_index(drop=True)
             fig_sev_esp = px.bar(
                 df_plot, x="indice_severidade", y="ESPECIALIDADE", orientation="h",
-                custom_data=["ESPECIALIDADE", "indice_severidade", "media_uso"],
+                custom_data=["ESPECIALIDADE", "indice_severidade", "uso_por_procedimento", "uso_por_vida"],
                 title="Severidade por especialidade (do mais ao menos severo)",
                 color="indice_severidade",
                 color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
@@ -662,7 +670,8 @@ elif st.session_state.pagina == "severidade":
                 hovertemplate=(
                     "<b>%{customdata[0]}</b><br>"
                     "Índice: %{customdata[1]:.2f}<br>"
-                    "Uso médio: %{customdata[2]:.2f}"
+                    "Uso por procedimento: %{customdata[2]:.2f}<br>"
+                    "Uso por vida: %{customdata[3]:.2f}"
                     "<extra></extra>"
                 ),
                 cliponaxis=False,
@@ -676,8 +685,10 @@ elif st.session_state.pagina == "severidade":
             st.plotly_chart(fig_sev_esp, use_container_width=True)
             exib_sev = rank_sev_esp.copy()
             exib_sev["qtd_procedimentos"] = exib_sev["qtd_procedimentos"].map(fmt_int)
+            exib_sev["qtd_usuarios"] = exib_sev["qtd_usuarios"].map(fmt_int)
             exib_sev["quantidade_uso"] = exib_sev["quantidade_uso"].map(fmt_int)
-            exib_sev["media_uso"] = exib_sev["media_uso"].map(fmt_float2)
+            exib_sev["uso_por_procedimento"] = exib_sev["uso_por_procedimento"].map(fmt_float2)
+            exib_sev["uso_por_vida"] = exib_sev["uso_por_vida"].map(fmt_float2)
             exib_sev["indice_severidade"] = exib_sev["indice_severidade"].map(fmt_float2)
             exib_sev.insert(0, "#", range(1, len(exib_sev) + 1))
             st.dataframe(exib_sev, hide_index=True, use_container_width=True)
@@ -712,8 +723,10 @@ elif st.session_state.pagina == "severidade":
             st.plotly_chart(fig_sev, use_container_width=True)
             exib_gen = rank_sev.copy()
             exib_gen["qtd_procedimentos"] = exib_gen["qtd_procedimentos"].map(fmt_int)
+            exib_gen["qtd_usuarios"] = exib_gen["qtd_usuarios"].map(fmt_int)
             exib_gen["quantidade_uso"] = exib_gen["quantidade_uso"].map(fmt_int)
-            exib_gen["media_uso"] = exib_gen["media_uso"].map(fmt_float2)
+            exib_gen["uso_por_procedimento"] = exib_gen["uso_por_procedimento"].map(fmt_float2)
+            exib_gen["uso_por_vida"] = exib_gen["uso_por_vida"].map(fmt_float2)
             exib_gen["indice_severidade"] = exib_gen["indice_severidade"].map(fmt_float2)
             exib_gen.insert(0, "#", range(1, len(exib_gen) + 1))
             st.dataframe(exib_gen, hide_index=True, use_container_width=True)
@@ -729,24 +742,25 @@ elif st.session_state.pagina == "severidade":
                 "**Como interpretar o índice por cluster:**"
                 "\n\n"
                 "- 🟢 **Índice negativo (ex: -0.5)**: o cluster está **abaixo da média** — "
-                "uso médio **menor** que a média geral. "
+                "uso por procedimento e/ou uso por vida **menores** que a média geral. "
                 "Isso é **positivo**: menor severidade, menor intensidade de uso."
                 "\n"
                 "- 🟡 **Índice próximo de zero (ex: 0.0 a 0.3)**: o cluster está **na média** — "
                 "uso alinhado com o comportamento geral. **Neutro.**"
                 "\n"
                 "- 🔴 **Índice positivo alto (ex: +1.0)**: o cluster está **acima da média** — "
-                "uso médio **maior** que a média geral. "
+                "uso por procedimento e/ou uso por vida **maiores** que a média geral. "
                 "Isso é **negativo**: maior severidade, maior intensidade de uso, "
                 "merece investigação sobre quais prestadores/procedimentos estão elevando o índice."
             )
             # Tabela resumo com classificação
-            resumo_cluster = rank_sev[["CLUSTER", "indice_severidade", "media_uso"]].copy()
+            resumo_cluster = rank_sev[["CLUSTER", "indice_severidade", "uso_por_procedimento", "uso_por_vida"]].copy()
             resumo_cluster["classificacao"] = resumo_cluster["indice_severidade"].apply(
                 lambda v: "🔴 Acima da média (severo)" if v > 0.3
                 else ("🟢 Abaixo da média (baixo)" if v < -0.3 else "🟡 Na média (neutro)")
             )
-            resumo_cluster["media_uso"] = resumo_cluster["media_uso"].map(fmt_float2)
+            resumo_cluster["uso_por_procedimento"] = resumo_cluster["uso_por_procedimento"].map(fmt_float2)
+            resumo_cluster["uso_por_vida"] = resumo_cluster["uso_por_vida"].map(fmt_float2)
             resumo_cluster["indice_severidade"] = resumo_cluster["indice_severidade"].map(fmt_float2)
             st.dataframe(resumo_cluster, hide_index=True, use_container_width=True)
     # ---------- OFENSORES (baseado só em volume e uso) ----------
@@ -761,12 +775,13 @@ elif st.session_state.pagina == "severidade":
                 "- 🔴 **alerta_volume** = `True` quando a **quantidade de procedimentos** "
                 "está no **top 5% maior**. Indica volume anormalmente alto de solicitações."
                 "\n"
-                "- 🔴 **alerta_uso_medio** = `True` quando o **uso médio por procedimento** "
+                "- 🔴 **alerta_uso_procedimento** = `True` quando o **uso por procedimento** "
                 "(quantidade de uso ÷ procedimentos) está no **top 5% mais alto**. "
                 "Indica intensidade de uso elevada por procedimento."
                 "\n"
-                "- 🔴 **alerta_uso_total** = `True` quando o **uso total** do prestador "
-                "está no **top 5% mais alto**. Indica volume agregado de uso anormalmente alto."
+                "- 🔴 **alerta_uso_vida** = `True` quando o **uso por vida** "
+                "(quantidade de uso ÷ vidas/usuários distintos) está no **top 5% mais alto**. "
+                "Indica intensidade de uso elevada por usuário atendido."
                 "\n"
                 "- 📊 **criterios_atingidos** = quantos dos 3 alertas acima foram acionados (0 a 3)."
                 "\n"
@@ -781,12 +796,14 @@ elif st.session_state.pagina == "severidade":
             # Formatar tabela para exibição
             exib_of = ofensores.copy()
             exib_of["qtd_procedimentos"] = exib_of["qtd_procedimentos"].map(fmt_int)
+            exib_of["qtd_usuarios"] = exib_of["qtd_usuarios"].map(fmt_int)
             exib_of["quantidade_uso"] = exib_of["quantidade_uso"].map(fmt_int)
-            exib_of["media_uso"] = exib_of["media_uso"].map(fmt_float2)
+            exib_of["uso_por_procedimento"] = exib_of["uso_por_procedimento"].map(fmt_float2)
+            exib_of["uso_por_vida"] = exib_of["uso_por_vida"].map(fmt_float2)
             # Flags com cores
             exib_of["alerta_volume"] = exib_of["alerta_volume"].map(lambda b: "🔴 Sim" if b else "✅ Não")
-            exib_of["alerta_uso_medio"] = exib_of["alerta_uso_medio"].map(lambda b: "🔴 Sim" if b else "✅ Não")
-            exib_of["alerta_uso_total"] = exib_of["alerta_uso_total"].map(lambda b: "🔴 Sim" if b else "✅ Não")
+            exib_of["alerta_uso_procedimento"] = exib_of["alerta_uso_procedimento"].map(lambda b: "🔴 Sim" if b else "✅ Não")
+            exib_of["alerta_uso_vida"] = exib_of["alerta_uso_vida"].map(lambda b: "🔴 Sim" if b else "✅ Não")
             exib_of["criterios_atingidos"] = exib_of["criterios_atingidos"].map(lambda v: f"{v}/3")
             exib_of["relevante"] = exib_of["relevante"].map(lambda b: "🚨 OFENSOR" if b else "—")
             st.dataframe(exib_of, hide_index=True, use_container_width=True)
@@ -796,9 +813,17 @@ elif st.session_state.pagina == "severidade":
                 st.divider()
                 st.markdown("#### 📝 Justificativa dos ofensores")
                 for _, row in relevantes.iterrows():
-                    st.markdown(f"**Prestador {int(row['CD_PRESTADOR'])}** — {row['UF']} · {row['CIDADE']} · Cluster: {row['CLUSTER']}")
+                    nome_prestador = row.get("NOME_PRESTADOR") or "—"
+                    cnpj_prestador = row.get("CNPJ_CPF_PRESTADOR") or "—"
+                    st.markdown(
+                        f"**Prestador {int(row['CD_PRESTADOR'])} — {nome_prestador}** "
+                        f"(CPF/CNPJ: {cnpj_prestador}) — {row['UF']} · {row['CIDADE']} · Cluster: {row['CLUSTER']}"
+                    )
                     st.markdown(f"> {row['justificativa']}")
-                    st.caption(f"Especialidade principal: {row['ESPECIALIDADE']} · Procedimentos: {int(row['qtd_procedimentos'])} · Uso médio: {fmt_float2(row['media_uso'])}")
+                    st.caption(
+                        f"Especialidade principal: {row['ESPECIALIDADE']} · Procedimentos: {int(row['qtd_procedimentos'])} · "
+                        f"Uso por procedimento: {fmt_float2(row['uso_por_procedimento'])} · Uso por vida: {fmt_float2(row['uso_por_vida'])}"
+                    )
                     st.markdown("")
         else:
             st.info("Nenhum ofensor encontrado com os filtros atuais.")
@@ -808,11 +833,12 @@ elif st.session_state.pagina == "severidade":
         if not desvios.empty:
             exib_desv = desvios.copy()
             exib_desv["qtd_procedimentos"] = exib_desv["qtd_procedimentos"].map(fmt_int)
-            exib_desv["qtd_procedimentos_esp"] = exib_desv["qtd_procedimentos_esp"].map(fmt_float2)
-            exib_desv["media_uso"] = exib_desv["media_uso"].map(fmt_float2)
-            exib_desv["media_uso_esp"] = exib_desv["media_uso_esp"].map(fmt_float2)
-            exib_desv["desvio_volume_pct"] = exib_desv["desvio_volume_pct"].map(lambda v: f"{v:+.1f}%")
-            exib_desv["desvio_uso_pct"] = exib_desv["desvio_uso_pct"].map(lambda v: f"{v:+.1f}%")
+            exib_desv["uso_por_procedimento"] = exib_desv["uso_por_procedimento"].map(fmt_float2)
+            exib_desv["uso_por_procedimento_esp"] = exib_desv["uso_por_procedimento_esp"].map(fmt_float2)
+            exib_desv["desvio_uso_procedimento_pct"] = exib_desv["desvio_uso_procedimento_pct"].map(lambda v: f"{v:+.1f}%")
+            exib_desv["uso_por_vida"] = exib_desv["uso_por_vida"].map(fmt_float2)
+            exib_desv["uso_por_vida_esp"] = exib_desv["uso_por_vida_esp"].map(fmt_float2)
+            exib_desv["desvio_uso_vida_pct"] = exib_desv["desvio_uso_vida_pct"].map(lambda v: f"{v:+.1f}%")
             st.dataframe(exib_desv, hide_index=True, use_container_width=True)
         else:
             st.info("Sem dados para calcular desvios.")
