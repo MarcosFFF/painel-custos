@@ -273,11 +273,6 @@ def carregar_base_severidade(pasta="."):
         & ~proc_normalizado.isin(ESPECIALIDADES_EXCLUIDAS)
     ].reset_index(drop=True)
     avisos = []
-    if linhas_desconsideradas > 0:
-        avisos.append(
-            f"{linhas_desconsideradas:,} linhas desconsideradas por terem mês, UF, região, "
-            "especialidade, prestador, procedimento ou cidade não identificados (nan)."
-        )
     if caminho_prestadores is None:
         avisos.append(
             "Relação de prestadores (nome/CPF-CNPJ) não encontrada na pasta — "
