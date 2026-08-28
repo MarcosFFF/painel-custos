@@ -52,14 +52,20 @@ h3 { font-size: 1.1rem !important; }
 [data-testid="stMetricLabel"] { font-size: 0.78rem !important; }
 [data-testid="stMetricDelta"] { font-size: 0.78rem !important; }
 [data-testid="stCaptionContainer"] { font-size: 0.75rem !important; }
-/* Tabelas: fonte menor */
-div[data-testid="stDataFrame"] * { font-size: 0.72rem !important; }
-/* Tabelas: centralizar colunas numéricas */
+/* Tabelas: fonte bem menor, pra caber sem barra de rolagem lateral */
+div[data-testid="stDataFrame"] * { font-size: 0.6rem !important; }
+/* Tabelas: colunas mais estreitas (menos espaço em branco por célula) */
 div[data-testid="stDataFrame"] [data-testid="stTableCellText"] {
     text-align: center !important;
+    padding: 0.1rem 0.25rem !important;
+    white-space: nowrap !important;
 }
 div[data-testid="stDataFrame"] [data-testid="stTableRowHeaderCell"] {
     text-align: left !important;
+    padding: 0.1rem 0.25rem !important;
+}
+div[data-testid="stDataFrame"] [data-testid="stHeaderCell"] {
+    padding: 0.1rem 0.25rem !important;
 }
 /* espaçamento mais compacto */
 div[data-testid="stVerticalBlock"] { gap: 0.35rem !important; }
