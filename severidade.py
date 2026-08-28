@@ -1,11 +1,12 @@
+
 """
 Módulo de Severidade — carrega CSVs, cruza com 1004_claude.xlsx, cluster_claude.xlsx
 e a relação de prestadores (código, nome, CPF/CNPJ), deriva Região a partir da UF,
 e fornece todos os cálculos da aba "Severidade".
-
+ 
 Observação: esta versão ignora valores em R$ (VL_PROCEDIMENTO / VL_FRANQUIA / VL_PAGO)
 em todos os rankings, índices e alertas. Tudo é calculado a partir de duas métricas de uso:
-
+ 
   - uso_por_procedimento = soma da qtde de uso ÷ qtde de procedimentos
   - uso_por_vida         = soma da qtde de uso ÷ qtde de vidas (usuários distintos)
 """
@@ -307,14 +308,14 @@ def _indice_severidade(r):
     """
     Índice de Severidade Relativa (ISR) — média de duas relatividades, cada
     uma cruzando dois dos três parâmetros de uso e comparada à média da base:
-
+ 
         Frequência  = qtd_procedimentos ÷ qtd_usuarios     (procedimentos por vida)
         Intensidade = quantidade_uso ÷ qtd_procedimentos    (uso por procedimento)
-
+ 
         R_frequência  = Frequência do grupo  ÷ Frequência média da base
         R_intensidade = Intensidade do grupo ÷ Intensidade média da base
         ISR = (R_frequência + R_intensidade) ÷ 2
-
+ 
     ISR = 1,00 é a média da base; acima de 1,00 é mais severo (uso mais
     concentrado em poucas vidas/procedimentos ou mais intenso por
     procedimento); abaixo de 1,00 é menos severo. Ao contrário de uma taxa
@@ -322,7 +323,7 @@ def _indice_severidade(r):
     não explode para grupos de baixo volume, porque cada relatividade só
     divide por uma grandeza de cada vez (não pelo produto das duas). Não
     considera valores em R$.
-
+ 
     Recebe um DataFrame com as colunas quantidade_uso, qtd_usuarios e
     qtd_procedimentos e devolve uma Series (indice_severidade) alinhada ao
     índice de r.
@@ -586,13 +587,13 @@ def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, t
         return None, "Dados insuficientes para comparação (necessário ≥ 2 meses)."
     meses_ord = sorted(df["MES"].dropna().unique())
     ultimo, penult = meses_ord[-1], meses_ord[-2]
-
+ 
     especialidades = _variacao_pct_uso(df, "ESPECIALIDADE", volume_minimo, top_especialidades)
     detalhes_especialidade = {
         esp: _variacao_pct_uso(df[df["ESPECIALIDADE"] == esp], "NOME_PROCEDIMENTO", volume_minimo, top_detalhe)
         for esp in especialidades["ESPECIALIDADE"]
     }
-
+ 
     ufs = _variacao_pct_uso(df, "UF", volume_minimo, top_ufs)
     detalhes_uf = {}
     for uf in ufs["UF"]:
@@ -604,7 +605,7 @@ def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, t
             )
             cidades["CLUSTER"] = cidades["CIDADE_PRESTADOR"].map(mapa_cluster)
         detalhes_uf[uf] = cidades
-
+ 
     prestadores = _variacao_pct_uso(df, "CD_PRESTADOR", volume_minimo, top_prestadores)
     info = _info_prestador(df)
     colunas_info = [c for c in ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER", "ESPECIALIDADE"] if c in info.columns]
@@ -613,7 +614,7 @@ def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, t
         cd: _variacao_pct_uso(df[df["CD_PRESTADOR"] == cd], "NOME_PROCEDIMENTO", volume_minimo, top_detalhe)
         for cd in prestadores["CD_PRESTADOR"]
     }
-
+ 
     resultado = {
         "ultimo": ultimo, "penultimo": penult,
         "especialidades": especialidades, "detalhes_especialidade": detalhes_especialidade,
@@ -644,7 +645,7 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
     ultimo, penult = meses_ord[-1], meses_ord[-2]
     chave = ["CD_PRESTADOR", "ESPECIALIDADE", "NOME_PROCEDIMENTO"]
     cols_info = [c for c in ["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE_PRESTADOR", "CLUSTER"] if c in df.columns]
-
+ 
     def _agg_mes(sub, sufixo):
         agregacoes = {
             f"qtd_{sufixo}": ("qtd_procedimentos", "sum"),
@@ -652,19 +653,19 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
         }
         r = sub.groupby(chave, dropna=False, observed=True).agg(**agregacoes).reset_index()
         return r
-
+ 
     atual = _agg_mes(df[df["MES"] == ultimo], "atual")
     anterior = _agg_mes(df[df["MES"] == penult], "anterior")
     comp = atual.merge(anterior, on=chave, how="inner")
     comp = comp[comp["CD_PRESTADOR"].notna() & comp["ESPECIALIDADE"].notna() & comp["NOME_PROCEDIMENTO"].notna()]
     if comp.empty:
         return comp, f"Nenhuma combinação prestador+procedimento em comum entre {ultimo} e {penult}."
-
+ 
     comp["delta_qtd"] = comp["qtd_atual"] - comp["qtd_anterior"]
     comp["delta_valor"] = comp["valor_atual"] - comp["valor_anterior"]
     comp["variacao_qtd_pct"] = np.where(comp["qtd_anterior"] > 0, comp["delta_qtd"] / comp["qtd_anterior"] * 100, np.nan)
     comp["variacao_valor_pct"] = np.where(comp["valor_anterior"] > 0, comp["delta_valor"] / comp["valor_anterior"] * 100, np.nan)
-
+ 
     comp = comp[
         (comp["qtd_atual"] > volume_minimo)
         & (comp["delta_valor"] > aumento_valor_minimo)
@@ -676,7 +677,7 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
         msg = (f"Nenhum prestador atendeu aos critérios ({ultimo} vs {penult}): qtde atual > {volume_minimo}, "
                f"aumento de valor > R$ {valor_min_fmt}, variação de qtde e de valor ≥ {pct_minimo:.0f}%.")
         return comp, msg
-
+ 
     info = _info_prestador(df)
     colunas_info = [c for c in ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"] if c in info.columns]
     comp = comp.merge(info[colunas_info], on="CD_PRESTADOR", how="left")
@@ -706,19 +707,19 @@ def identificar_desvios_solicitacao(df, agregado_nacional=None, volume_minimo=30
     ).reset_index()
     media_nacional = media_nacional[media_nacional["qtd_prestadores_nacional"] > 0]
     media_nacional["media_nacional"] = (media_nacional["soma_nacional"] / media_nacional["qtd_prestadores_nacional"]).round(2)
-
+ 
     por_prestador = df.groupby(["MES", "CD_PRESTADOR", "ESPECIALIDADE", "NOME_PROCEDIMENTO"], dropna=False, observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
     ).reset_index()
     por_prestador = por_prestador[por_prestador["NOME_PROCEDIMENTO"].notna() & por_prestador["CD_PRESTADOR"].notna()]
-
+ 
     comp = por_prestador.merge(
         media_nacional[["MES", "NOME_PROCEDIMENTO", "media_nacional", "qtd_prestadores_nacional"]],
         on=["MES", "NOME_PROCEDIMENTO"], how="left",
     )
     comp = comp[comp["media_nacional"] > 0]
     comp["desvio_pct"] = ((comp["qtd_procedimentos"] - comp["media_nacional"]) / comp["media_nacional"] * 100).round(1)
-
+ 
     comp = comp[
         (comp["qtd_procedimentos"] > volume_minimo)
         & (comp["desvio_pct"] >= desvio_minimo_pct)
@@ -729,7 +730,7 @@ def identificar_desvios_solicitacao(df, agregado_nacional=None, volume_minimo=30
            "filtros da tela — a lista de prestadores, sim, respeita os filtros ativos.")
     if comp.empty:
         return comp, msg
-
+ 
     info = _info_prestador(df)
     colunas_info = [c for c in ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"] if c in info.columns]
     comp = comp.merge(info[colunas_info], on="CD_PRESTADOR", how="left")
