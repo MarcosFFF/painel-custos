@@ -610,12 +610,12 @@ elif st.session_state.pagina == "severidade":
         else:
             st.plotly_chart(fig, use_container_width=True)
     with tab_rank:
-        st.caption(
-            "O **Índice de Severidade Relativa (ISR)** cruza os três parâmetros de uso — "
-            "quantidade de uso, vidas e procedimentos — pela média de duas relatividades: "
-            "**Frequência** (procedimentos por vida) e **Intensidade** (uso por procedimento), "
-            "cada uma comparada com a média da base filtrada. **1,00 = na média**, **2,00 = duas "
-            "vezes mais severo que a média**, **0,50 = metade**. A linha tracejada marca 1,00. "
+        st.info(
+            "O **Índice de Severidade Relativa (ISR)** é a média da **Frequência** (qtde de "
+            "procedimentos por vida) e **Intensidade** (uso por procedimento).\n\n"
+            "**Exemplo:**\n"
+            "- **1,00** = na média\n"
+            "- **2,00** = duas vezes mais severo que a média\n\n"
             "Não considera valores em R$."
         )
         rc1, rc2 = st.columns(2)
