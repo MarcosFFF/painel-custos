@@ -9,7 +9,7 @@ try:
     from severidade import (
         carregar_base_severidade, aplicar_filtros, evolucao_mensal,
         ranking_severidade, identificar_ofensores, calcular_desvios, montar_watchlist,
-        comparacao_mensal, resumo_comparativo,
+        comparacao_mensal, resumo_comparativo, alertas_prestador_procedimento,
     )
 except Exception as _erro_import_severidade:
     # O Streamlit Cloud redige a mensagem de erro padrão — mostramos o traceback
@@ -902,3 +902,36 @@ elif st.session_state.pagina == "severidade":
                     )
                 st.markdown("**Procedimentos que causaram o aumento:**")
                 _tabela_detalhe(resumo["detalhes_prestador"].get(cd_sel))
+        st.divider()
+        # ---------- Alerta: prestador + procedimento com aumento relevante de qtde e valor ----------
+        st.markdown("##### 🚨 Prestadores com aumento relevante de quantidade e valor")
+        st.caption(
+            "Critério (as 4 condições precisam valer juntas): qtde do procedimento no mês atual "
+            "> 50, aumento de valor pago > R$ 1.500,00 em relação ao mês anterior, e variação de "
+            "pelo menos 50% tanto na qtde quanto no valor. Usa números absolutos (qtde de guias e "
+            "R$ pago) — não a métrica de uso ponderada usada no restante do painel."
+        )
+        alertas, msg_alertas = alertas_prestador_procedimento(df_filtrado)
+        if alertas is None or alertas.empty:
+            st.info(msg_alertas)
+        else:
+            st.caption(msg_alertas)
+            mes_anterior_lbl = label_mes(alertas["MES_ANTERIOR"].iloc[0])
+            for cd_prestador, grupo in alertas.groupby("CD_PRESTADOR", sort=False):
+                r0 = grupo.iloc[0]
+                nome = r0.get("NOME_PRESTADOR") or f"Prestador {int(cd_prestador)}"
+                cabecalho = (
+                    f"{nome} — {r0.get('CIDADE') or '—'}/{r0.get('UF') or '—'} · "
+                    f"CPF/CNPJ: {r0.get('CNPJ_CPF_PRESTADOR') or '—'} · Cluster: {r0.get('CLUSTER') or '—'}"
+                )
+                with st.expander(cabecalho, expanded=False):
+                    for _, row in grupo.iterrows():
+                        st.markdown(
+                            f"**{nome}** ({row.get('CIDADE') or '—'}, CPF/CNPJ {row.get('CNPJ_CPF_PRESTADOR') or '—'}, "
+                            f"cluster {row.get('CLUSTER') or '—'}) teve aumento de **{row['variacao_qtd_pct']:+.0f}%** "
+                            f"na quantidade em relação a {mes_anterior_lbl}. Esse aumento aconteceu na especialidade "
+                            f"**{row['ESPECIALIDADE']}**, no procedimento **{row['NOME_PROCEDIMENTO']}**, que foi de "
+                            f"{fmt_int(row['qtd_anterior'])} para {fmt_int(row['qtd_atual'])} solicitações. "
+                            f"Em termos de valores, houve um aumento de **{fmt_brl(row['delta_valor'])}**, "
+                            f"que é **{row['variacao_valor_pct']:+.0f}%**."
+                        )
