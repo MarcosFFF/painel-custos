@@ -10,6 +10,7 @@ try:
         carregar_base_severidade, aplicar_filtros, evolucao_mensal,
         ranking_severidade, identificar_ofensores, calcular_desvios, montar_watchlist,
         comparacao_mensal, resumo_comparativo, alertas_prestador_procedimento,
+        identificar_desvios_solicitacao,
     )
 except Exception as _erro_import_severidade:
     # O Streamlit Cloud redige a mensagem de erro padrão — mostramos o traceback
@@ -535,6 +536,14 @@ elif st.session_state.pagina == "severidade":
         with fc1:
             f_mes = st.multiselect("Mês", options=sorted(agregado["MES"].dropna().unique(), reverse=True))
             f_uf = st.multiselect("UF", options=sorted(agregado["UF"].dropna().unique()))
+            # Cidade filtrada pela(s) UF(s) selecionada(s) acima — sem UF selecionada, mostra
+            # todas as cidades. O campo já vem com busca por digitação (padrão do multiselect).
+            opcoes_cidade = sorted(
+                (agregado[agregado["UF"].isin(f_uf)] if f_uf else agregado)["CIDADE_PRESTADOR"].dropna().unique()
+            )
+            if "f_cidade" in st.session_state:
+                st.session_state["f_cidade"] = [c for c in st.session_state["f_cidade"] if c in opcoes_cidade]
+            f_cidade = st.multiselect("Cidade", options=opcoes_cidade, key="f_cidade")
         with fc2:
             f_regiao = st.multiselect("Região", options=sorted(agregado["REGIAO"].dropna().unique()))
             f_especialidade = st.multiselect("Especialidade", options=sorted(agregado["ESPECIALIDADE"].dropna().unique()))
@@ -549,6 +558,7 @@ elif st.session_state.pagina == "severidade":
         agregado,
         meses=f_mes or None, ufs=f_uf or None, regioes=f_regiao or None,
         especialidades=f_especialidade or None, planos=f_plano or None, clusters=f_cluster or None,
+        cidades=f_cidade or None,
     )
     if df_filtrado.empty:
         st.info("Nenhum dado para esses filtros.")
@@ -562,8 +572,8 @@ elif st.session_state.pagina == "severidade":
     m3.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
     m4.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
     st.divider()
-    tab_rank, tab_evolucao, tab_watch, tab_ofensores, tab_resumo = st.tabs(
-        ["Ranking de Severidade", "Evolução mensal", "Atenção", "Ofensores", "Resumo"]
+    tab_rank, tab_evolucao, tab_watch, tab_ofensores, tab_desvios, tab_resumo = st.tabs(
+        ["Ranking de Severidade", "Evolução mensal", "Atenção", "Ofensores", "Desvios de Solicitações", "Resumo"]
     )
     # ---------- RANKING DE SEVERIDADE (ISR — só gráficos, sem tabelas) ----------
     JANELA_5_BARRAS = 300  # altura fixa (px) que mostra ~5 barras; o resto rola dentro do quadro
@@ -809,6 +819,54 @@ elif st.session_state.pagina == "severidade":
             st.dataframe(comp_relevante, hide_index=True, use_container_width=True)
             with st.expander(f"Ver também as {len(comp_ignorado)} variações abaixo do volume mínimo"):
                 st.dataframe(comp_ignorado, hide_index=True, use_container_width=True)
+    # ---------- DESVIOS DE SOLICITAÇÕES (qtde do prestador vs. média nacional) ----------
+    with tab_desvios:
+        st.markdown("#### 📐 Desvios de Solicitações")
+        st.caption(
+            "Compara a quantidade de solicitações de cada prestador, por procedimento e por mês, "
+            "com a média nacional de solicitações por prestador para aquele mesmo procedimento "
+            "naquele mesmo mês (soma nacional ÷ nº de prestadores que fizeram o procedimento)."
+        )
+        with st.expander("📖 Critérios considerados", expanded=True):
+            st.markdown(
+                "Um prestador só entra na lista quando **as duas condições** abaixo são verdadeiras "
+                "ao mesmo tempo:\n"
+                "- **Volume**: mais de **30 procedimentos no mês**, para aquele procedimento específico.\n"
+                "- **Desvio**: quantidade **pelo menos 50% acima** da média nacional de solicitações "
+                "por prestador para aquele procedimento, naquele mês.\n\n"
+                "**Exemplo:** 1.000 solicitações de um procedimento, feitas por 100 prestadores "
+                "diferentes → média nacional = 10 por prestador. Um prestador que solicitou 250 "
+                "está bem acima da média — entra na lista.\n\n"
+                "A média nacional é sempre calculada sobre a base nacional completa (sem os filtros "
+                "da tela) — só a lista de prestadores respeita os filtros ativos (UF, especialidade, "
+                "cidade etc.), pra facilitar a exploração."
+            )
+        desvios_sol, msg_desvios_sol = identificar_desvios_solicitacao(df_filtrado, agregado_nacional=agregado)
+        if desvios_sol.empty:
+            st.info(msg_desvios_sol)
+        else:
+            st.caption(f"{len(desvios_sol)} prestador(es) com desvio de solicitações identificados.")
+            exib_desv_sol = desvios_sol.copy()
+            exib_desv_sol["MES"] = exib_desv_sol["MES"].map(label_mes)
+            for c in ["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"]:
+                if c not in exib_desv_sol.columns:
+                    exib_desv_sol[c] = "—"
+                exib_desv_sol[c] = exib_desv_sol[c].fillna("—")
+            exib_desv_sol["qtd_procedimentos"] = exib_desv_sol["qtd_procedimentos"].map(fmt_int)
+            exib_desv_sol["media_nacional"] = exib_desv_sol["media_nacional"].map(fmt_float2)
+            exib_desv_sol["desvio_pct"] = exib_desv_sol["desvio_pct"].map(lambda v: f"+{v:.1f}%")
+            colunas_ordem = [
+                "MES", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER",
+                "ESPECIALIDADE", "NOME_PROCEDIMENTO", "media_nacional", "qtd_procedimentos", "desvio_pct",
+            ]
+            colunas_ordem = [c for c in colunas_ordem if c in exib_desv_sol.columns]
+            exib_desv_sol = exib_desv_sol[colunas_ordem].rename(columns={
+                "MES": "Mês", "NOME_PRESTADOR": "Prestador", "CNPJ_CPF_PRESTADOR": "CPF/CNPJ",
+                "ESPECIALIDADE": "Especialidade", "NOME_PROCEDIMENTO": "Procedimento",
+                "media_nacional": "Média nacional", "qtd_procedimentos": "Qtde do prestador",
+                "desvio_pct": "Desvio",
+            })
+            st.dataframe(exib_desv_sol, hide_index=True, use_container_width=True)
     # ---------- RESUMO (mês vs. mês anterior, por variação % de uso) ----------
     with tab_resumo:
         st.markdown("#### 📌 Resumo do mês vs. mês anterior")
