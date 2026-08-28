@@ -2,8 +2,10 @@
 Módulo de Severidade — carrega CSVs, cruza com 1004_claude.xlsx, cluster_claude.xlsx
 e a relação de prestadores (código, nome, CPF/CNPJ), deriva Região a partir da UF,
 e fornece todos os cálculos da aba "Severidade".
+
 Observação: esta versão ignora valores em R$ (VL_PROCEDIMENTO / VL_FRANQUIA / VL_PAGO)
 em todos os rankings, índices e alertas. Tudo é calculado a partir de duas métricas de uso:
+
   - uso_por_procedimento = soma da qtde de uso ÷ qtde de procedimentos
   - uso_por_vida         = soma da qtde de uso ÷ qtde de vidas (usuários distintos)
 """
@@ -13,7 +15,6 @@ import unicodedata
 import numpy as np
 import pandas as pd
 import streamlit as st
-
 UF_PARA_REGIAO = {
     "AC": "Norte", "AP": "Norte", "AM": "Norte", "PA": "Norte", "RO": "Norte", "RR": "Norte", "TO": "Norte",
     "AL": "Nordeste", "BA": "Nordeste", "CE": "Nordeste", "MA": "Nordeste", "PB": "Nordeste",
@@ -22,17 +23,20 @@ UF_PARA_REGIAO = {
     "ES": "Sudeste", "MG": "Sudeste", "RJ": "Sudeste", "SP": "Sudeste",
     "PR": "Sul", "RS": "Sul", "SC": "Sul",
 }
-
+# Colunas esperadas na relação de prestadores (ex.: BASE.csv), buscadas por nome
+# normalizado — o arquivo pode ter outras colunas (TIPO PRESTADOR, STATUS etc.),
+# só estas três são usadas.
 COLUNAS_PRESTADORES = ["CODIGO", "CREDENCIADO", "CNPJ_CPF"]
+# Especialidades completamente fora da análise de severidade (não representam
+# atendimento clínico de fato) — comparação por texto normalizado, então
+# funciona com ou sem acento/maiúsculas.
 ESPECIALIDADES_EXCLUIDAS = {"RESPONSABILIDADE TECNICA"}
-
 def normalizar_texto(v):
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return None
     texto = str(v).strip().upper()
     texto = unicodedata.normalize("NFKD", texto).encode("ASCII", "ignore").decode("ASCII")
     return texto
-
 def _corrigir_mojibake(texto):
     if texto is None:
         return texto
@@ -43,14 +47,12 @@ def _corrigir_mojibake(texto):
         return s.encode("latin1").decode("utf-8")
     except (UnicodeDecodeError, UnicodeEncodeError):
         return s
-
 COLUNAS_ESPERADAS = [
     "NU_GUIA", "DATA_SOL", "DATA_AUT", "DATA_ATEND", "CD_USUARIO", "CD_PLANO", "NR_PLANO",
     "ESPECIALIDADE", "CD_PROCEDIMENTO", "CD_TUSS", "NOME_PROCEDIMENTO",
     "VL_PROCEDIMENTO", "VL_FRANQUIA", "VL_PAGO", "STATUS_PROCED",
     "CD_PRESTADOR", "CIDADE_PRESTADOR", "UF", "EXECUCAO",
 ]
-
 def _parse_valor_monetario(v):
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return None
@@ -63,7 +65,6 @@ def _parse_valor_monetario(v):
         return float(s)
     except ValueError:
         return None
-
 def _casar_colunas(colunas_reais, colunas_esperadas):
     mapa_normalizado = {}
     for c in colunas_reais:
@@ -75,7 +76,6 @@ def _casar_colunas(colunas_reais, colunas_esperadas):
         if chave in mapa_normalizado:
             resultado[esperado] = mapa_normalizado[chave]
     return resultado
-
 def _ler_csv_parte(caminho, colunas_esperadas):
     df = None
     for enc in ["utf-8", "latin1"]:
@@ -105,13 +105,11 @@ def _ler_csv_parte(caminho, colunas_esperadas):
     df["UF"] = df["UF"].astype(str).str.strip().str.upper()
     df = df.drop_duplicates()
     return df
-
 def _chave_mes(caminho):
     nome = os.path.splitext(os.path.basename(caminho))[0]
     if "_parte_" in nome:
         nome = nome.split("_parte_")[0]
     return nome
-
 def _numero_parte(caminho):
     nome = os.path.basename(caminho)
     if "_parte_" in nome:
@@ -120,7 +118,6 @@ def _numero_parte(caminho):
         except ValueError:
             return 0
     return 0
-
 def _localizar_arquivo(pasta, prefixo):
     candidatos = glob.glob(os.path.join(pasta, f"{prefixo}*.xlsx"))
     if not candidatos:
@@ -128,7 +125,6 @@ def _localizar_arquivo(pasta, prefixo):
     if not candidatos:
         raise FileNotFoundError(f"Não encontrei '{prefixo}' (.xlsx) na pasta {pasta!r}.")
     return candidatos[0]
-
 def _ler_amostra_csv(caminho, nrows=3):
     for enc in ["utf-8", "latin1"]:
         try:
@@ -138,8 +134,12 @@ def _ler_amostra_csv(caminho, nrows=3):
         except Exception:
             return None
     return None
-
 def _localizar_csv_prestadores(pasta):
+    """
+    Procura, entre todos os .csv da pasta, um arquivo com as colunas de uma
+    relação de prestadores (código, nome/credenciado, CPF/CNPJ) — identificado
+    pelo cabeçalho, não pelo nome do arquivo (ex.: BASE.csv).
+    """
     exigidas = {normalizar_texto(c) for c in COLUNAS_PRESTADORES}
     candidatos = sorted(glob.glob(os.path.join(pasta, "*.csv")))
     for c in candidatos:
@@ -150,7 +150,6 @@ def _localizar_csv_prestadores(pasta):
         if exigidas.issubset(colunas_norm):
             return c
     return None
-
 def _ler_csv_prestadores(caminho):
     df = None
     for enc in ["utf-8", "latin1"]:
@@ -172,7 +171,6 @@ def _ler_csv_prestadores(caminho):
     df["CNPJ_CPF_PRESTADOR"] = df["CNPJ_CPF_PRESTADOR"].astype(str).str.strip()
     df = df.dropna(subset=["CD_PRESTADOR"]).drop_duplicates(subset="CD_PRESTADOR", keep="first")
     return df
-
 @st.cache_data(show_spinner="Carregando dados de severidade...")
 def carregar_base_severidade(pasta="."):
     candidatos = sorted(
@@ -220,6 +218,8 @@ def carregar_base_severidade(pasta="."):
     dados = dados.merge(cluster_bi, on="CHAVE_CIDADE_UF", how="left")
     dados["REGIAO"] = dados["UF"].map(UF_PARA_REGIAO)
     sem_regiao = dados["REGIAO"].isna().sum()
+    # Relação de prestadores (código, nome/credenciado, CPF/CNPJ) — opcional: se o
+    # arquivo ainda não estiver na pasta, seguimos só com o código do prestador.
     caminho_prestadores = _localizar_csv_prestadores(pasta)
     if caminho_prestadores:
         try:
@@ -236,19 +236,24 @@ def carregar_base_severidade(pasta="."):
         "CD_PROCEDIMENTO", "NOME_PROCEDIMENTO", "CD_PRESTADOR", "NOME_PRESTADOR",
         "CNPJ_CPF_PRESTADOR", "CIDADE_PRESTADOR",
     ]
+    # Nota: a análise de severidade (ISR, rankings, watchlist, ofensores) continua
+    # 100% baseada em uso e volume — não em R$. A coluna soma_valor (VL_PAGO) volta
+    # a existir só para o alerta de aumento de qtde+valor (prestadores críticos).
     agregado = dados.groupby(grupos, dropna=False, observed=True).agg(
         qtd_procedimentos=("NU_GUIA", "nunique"),
         qtd_usuarios=("CD_USUARIO", "nunique"),
         soma_uso=("QTD_USO", "sum"),
         soma_valor=("VL_PAGO", "sum"),
     ).reset_index()
-
+    # Descarta linhas cuja dimensão principal veio vazia/não identificada — tanto
+    # valor realmente ausente (NaN) quanto o texto literal "nan" digitado na
+    # fonte (existe na base) — essas linhas não entram em nenhum ranking, gráfico
+    # ou resumo, em vez de aparecer como uma categoria "nan".
     def _vazio_ou_nan_texto(v):
         if pd.isna(v):
             return True
         texto = normalizar_texto(v)
         return texto is None or texto in ("", "NAN")
-
     linhas_antes = len(agregado)
     colunas_chave = ["MES", "UF", "REGIAO", "ESPECIALIDADE", "CD_PRESTADOR", "NOME_PROCEDIMENTO", "CIDADE_PRESTADOR"]
     mascara_valida = pd.Series(True, index=agregado.index)
@@ -256,6 +261,10 @@ def carregar_base_severidade(pasta="."):
         mascara_valida &= ~agregado[col].apply(_vazio_ou_nan_texto)
     agregado = agregado[mascara_valida].reset_index(drop=True)
     linhas_desconsideradas = linhas_antes - len(agregado)
+    # Remove tudo que for "Responsabilidade Técnica" — tanto quando é a
+    # ESPECIALIDADE da linha quanto quando é o NOME_PROCEDIMENTO (existe um
+    # procedimento com esse nome, que não é um atendimento clínico de fato) —
+    # comparação por texto normalizado, então funciona com ou sem acento/maiúsculas.
     linhas_antes_excl = len(agregado)
     esp_normalizada = agregado["ESPECIALIDADE"].apply(normalizar_texto)
     proc_normalizado = agregado["NOME_PROCEDIMENTO"].apply(normalizar_texto)
@@ -271,10 +280,6 @@ def carregar_base_severidade(pasta="."):
         )
     aviso = " | ".join(avisos) if avisos else None
     return agregado, aviso
-
-# ============================================================
-# 👉 FILTRO DE CIDADE: o parâmetro "cidades" foi adicionado
-# ============================================================
 def aplicar_filtros(agregado, meses=None, ufs=None, regioes=None, especialidades=None, planos=None, clusters=None, cidades=None):
     df = agregado
     if meses: df = df[df["MES"].isin(meses)]
@@ -285,8 +290,8 @@ def aplicar_filtros(agregado, meses=None, ufs=None, regioes=None, especialidades
     if clusters: df = df[df["CLUSTER"].isin(clusters)]
     if cidades: df = df[df["CIDADE_PRESTADOR"].isin(cidades)]
     return df
-
 def _info_prestador(df):
+    """Extrai Nome, CPF/CNPJ, UF, Cidade, Cluster e Especialidade mais frequente de cada prestador."""
     agregacoes = {
         "UF": ("UF", lambda x: x.mode().iloc[0] if not x.mode().empty else "—"),
         "CIDADE": ("CIDADE_PRESTADOR", lambda x: x.mode().iloc[0] if not x.mode().empty else "—"),
@@ -298,8 +303,30 @@ def _info_prestador(df):
     if "CNPJ_CPF_PRESTADOR" in df.columns:
         agregacoes["CNPJ_CPF_PRESTADOR"] = ("CNPJ_CPF_PRESTADOR", lambda x: x.mode().iloc[0] if not x.mode().empty else "—")
     return df.groupby("CD_PRESTADOR", observed=True).agg(**agregacoes).reset_index()
-
 def _indice_severidade(r):
+    """
+    Índice de Severidade Relativa (ISR) — média de duas relatividades, cada
+    uma cruzando dois dos três parâmetros de uso e comparada à média da base:
+
+        Frequência  = qtd_procedimentos ÷ qtd_usuarios     (procedimentos por vida)
+        Intensidade = quantidade_uso ÷ qtd_procedimentos    (uso por procedimento)
+
+        R_frequência  = Frequência do grupo  ÷ Frequência média da base
+        R_intensidade = Intensidade do grupo ÷ Intensidade média da base
+        ISR = (R_frequência + R_intensidade) ÷ 2
+
+    ISR = 1,00 é a média da base; acima de 1,00 é mais severo (uso mais
+    concentrado em poucas vidas/procedimentos ou mais intenso por
+    procedimento); abaixo de 1,00 é menos severo. Ao contrário de uma taxa
+    "por 100.000" fixa, esta versão se autoajusta à escala real dos dados —
+    não explode para grupos de baixo volume, porque cada relatividade só
+    divide por uma grandeza de cada vez (não pelo produto das duas). Não
+    considera valores em R$.
+
+    Recebe um DataFrame com as colunas quantidade_uso, qtd_usuarios e
+    qtd_procedimentos e devolve uma Series (indice_severidade) alinhada ao
+    índice de r.
+    """
     total_proc = r["qtd_procedimentos"].sum()
     total_usuarios = r["qtd_usuarios"].sum()
     total_uso = r["quantidade_uso"].sum()
@@ -317,7 +344,6 @@ def _indice_severidade(r):
         r_intens = intens_grupo / intens_media
     indice = (r_freq + r_intens) / 2
     return pd.Series(indice, index=r.index).round(2)
-
 def ranking_por(df, coluna, top_n=15):
     r = df.groupby(coluna, dropna=False, observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
@@ -328,7 +354,6 @@ def ranking_por(df, coluna, top_n=15):
     r["uso_por_procedimento"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     return r.sort_values("quantidade_uso", ascending=False).head(top_n)
-
 def evolucao_mensal(df):
     r = df.groupby("MES", observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
@@ -339,7 +364,6 @@ def evolucao_mensal(df):
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     r["indice_severidade"] = _indice_severidade(r)
     return r
-
 def ranking_severidade(df, coluna, top_n=15):
     grupo_cols = [coluna]
     if coluna == "CD_PRESTADOR":
@@ -356,8 +380,8 @@ def ranking_severidade(df, coluna, top_n=15):
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     r["indice_severidade"] = _indice_severidade(r)
     return r.sort_values("indice_severidade", ascending=False).head(top_n)
-
 def calcular_media_nacional(agregado, coluna_dimensao):
+    """Média de uso nacional (sem filtros) por dimensão."""
     r = agregado.groupby(coluna_dimensao, observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
         qtd_usuarios=("qtd_usuarios", "sum"),
@@ -366,8 +390,11 @@ def calcular_media_nacional(agregado, coluna_dimensao):
     r["uso_por_procedimento_nacional"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
     r["uso_por_vida_nacional"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     return r
-
 def montar_watchlist(df, top_n=20):
+    """
+    Watchlist com Nome, CPF/CNPJ, UF, Cidade e Cluster de cada prestador.
+    Pontuação 0-100 combinando uso por procedimento, uso por vida e volume.
+    """
     info = _info_prestador(df)
     por_prestador = df.groupby("CD_PRESTADOR", observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
@@ -379,6 +406,7 @@ def montar_watchlist(df, top_n=20):
     por_prestador = por_prestador.merge(info, on="CD_PRESTADOR", how="left")
     por_prestador["uso_por_procedimento"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_procedimentos"]).round(2)
     por_prestador["uso_por_vida"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_usuarios"]).round(2)
+    # Pontuação composta (0-100) — percentis de uso por procedimento, uso por vida e volume
     for c in ["uso_por_procedimento", "uso_por_vida", "qtd_procedimentos"]:
         por_prestador[f"pct_{c}"] = por_prestador[c].rank(pct=True).fillna(0)
     por_prestador["pontuacao"] = (
@@ -387,6 +415,7 @@ def montar_watchlist(df, top_n=20):
          + por_prestador["pct_qtd_procedimentos"] * 0.30) * 100
     ).round(0)
     por_prestador["indice_severidade"] = _indice_severidade(por_prestador)
+    # Tendência percentual (variação do volume do mês mais recente vs anterior, se houver)
     if "MES" in df.columns and df["MES"].nunique() > 1:
         meses_ord = sorted(df["MES"].unique())
         ultimo = meses_ord[-1]
@@ -405,8 +434,12 @@ def montar_watchlist(df, top_n=20):
             "indice_severidade", "tendencia_pct", "pontuacao"]
     cols = [c for c in cols if c in resultado.columns]
     return resultado[cols].reset_index(drop=True)
-
 def identificar_ofensores(df, percentil=0.95):
+    """
+    Identifica ofensores com justificativa textual, baseado só em uso e volume.
+    Um prestador é ofensor quando atende ≥ 2 de 3 critérios no top 5%:
+    volume de procedimentos, uso por procedimento, uso por vida.
+    """
     info = _info_prestador(df)
     por_prestador = df.groupby("CD_PRESTADOR", observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
@@ -453,8 +486,8 @@ def identificar_ofensores(df, percentil=0.95):
             "criterios_atingidos", "relevante", "justificativa"]
     cols = [c for c in cols if c in resultado.columns]
     return resultado[cols].reset_index(drop=True)
-
 def calcular_desvios(df):
+    """Desvios de cada prestador vs média da própria especialidade (uso por procedimento e por vida)."""
     info = _info_prestador(df)
     por_prestador = df.groupby(["CD_PRESTADOR", "ESPECIALIDADE"], observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
@@ -482,8 +515,8 @@ def calcular_desvios(df):
             "uso_por_vida", "uso_por_vida_esp", "desvio_uso_vida_pct"]
     cols = [c for c in cols if c in resultado.columns]
     return resultado[cols].reset_index(drop=True)
-
 def comparacao_mensal(df, coluna, volume_minimo=30):
+    """Compara o último mês vs o anterior por coluna (volume e uso), respeitando volume mínimo."""
     if "MES" not in df.columns or df["MES"].nunique() < 2:
         return pd.DataFrame(), "Dados insuficientes para comparação (necessário ≥ 2 meses)."
     meses_ord = sorted(df["MES"].unique())
@@ -513,8 +546,13 @@ def comparacao_mensal(df, coluna, volume_minimo=30):
     msg = (f"Comparando {ultimo} vs {penult} por {coluna}. "
            f"Relevante = volume atual ≥ {volume_minimo} procedimentos.")
     return comp, msg
-
 def _variacao_pct_uso(df, coluna, volume_minimo, top_n):
+    """
+    Variação % de uso (mês atual vs anterior) agrupada por `coluna`. Só entram
+    grupos com volume (qtd_procedimentos) ≥ volume_minimo em AMBOS os meses e
+    uso > 0 no mês anterior — evita que um grupo minúsculo mostre uma
+    variação % gigante e sem significado.
+    """
     meses_ord = sorted(df["MES"].dropna().unique())
     ultimo, penult = meses_ord[-1], meses_ord[-2]
     atual = df[df["MES"] == ultimo].groupby(coluna, dropna=False, observed=True).agg(
@@ -536,17 +574,25 @@ def _variacao_pct_uso(df, coluna, volume_minimo, top_n):
         (comp["soma_uso_atual"] - comp["soma_uso_anterior"]) / comp["soma_uso_anterior"] * 100
     ).round(1)
     return comp.sort_values("variacao_pct", ascending=False).head(top_n).reset_index(drop=True)
-
 def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, top_prestadores=20, top_detalhe=5):
+    """
+    Resumo do mês vs o anterior, baseado na variação % de USO (não em números
+    absolutos): 5 especialidades que mais subiram, os procedimentos que
+    causaram essa subida; 10 UFs que mais subiram, as cidades (com cluster)
+    que causaram essa subida; 20 prestadores que mais subiram, com
+    cidade/UF/cluster/especialidade e os procedimentos responsáveis.
+    """
     if "MES" not in df.columns or df["MES"].dropna().nunique() < 2:
         return None, "Dados insuficientes para comparação (necessário ≥ 2 meses)."
     meses_ord = sorted(df["MES"].dropna().unique())
     ultimo, penult = meses_ord[-1], meses_ord[-2]
+
     especialidades = _variacao_pct_uso(df, "ESPECIALIDADE", volume_minimo, top_especialidades)
     detalhes_especialidade = {
         esp: _variacao_pct_uso(df[df["ESPECIALIDADE"] == esp], "NOME_PROCEDIMENTO", volume_minimo, top_detalhe)
         for esp in especialidades["ESPECIALIDADE"]
     }
+
     ufs = _variacao_pct_uso(df, "UF", volume_minimo, top_ufs)
     detalhes_uf = {}
     for uf in ufs["UF"]:
@@ -558,6 +604,7 @@ def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, t
             )
             cidades["CLUSTER"] = cidades["CIDADE_PRESTADOR"].map(mapa_cluster)
         detalhes_uf[uf] = cidades
+
     prestadores = _variacao_pct_uso(df, "CD_PRESTADOR", volume_minimo, top_prestadores)
     info = _info_prestador(df)
     colunas_info = [c for c in ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER", "ESPECIALIDADE"] if c in info.columns]
@@ -566,6 +613,7 @@ def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, t
         cd: _variacao_pct_uso(df[df["CD_PRESTADOR"] == cd], "NOME_PROCEDIMENTO", volume_minimo, top_detalhe)
         for cd in prestadores["CD_PRESTADOR"]
     }
+
     resultado = {
         "ultimo": ultimo, "penultimo": penult,
         "especialidades": especialidades, "detalhes_especialidade": detalhes_especialidade,
@@ -575,8 +623,19 @@ def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, t
     msg = (f"Comparando {ultimo} vs {penult}, por variação % de uso. "
            f"Só entram grupos com volume ≥ {volume_minimo} procedimentos em ambos os meses.")
     return resultado, msg
-
 def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=1500.0, pct_minimo=50.0):
+    """
+    Alerta de prestador + procedimento com aumento relevante de qtde E de valor
+    (R$ pago), mês atual vs anterior — usa números absolutos (qtde de guias e
+    soma de VL_PAGO), não a métrica de uso ponderada usada no ISR/resumo por uso.
+    Uma combinação (prestador, especialidade, procedimento) só entra se TODAS as
+    condições abaixo forem verdadeiras:
+      - qtde do mês atual > volume_minimo (ex.: > 50 procedimentos)
+      - aumento absoluto em R$ (valor atual - valor anterior) > aumento_valor_minimo
+      - variação % da qtde  >= pct_minimo
+      - variação % do valor >= pct_minimo
+    Retorna (DataFrame, mensagem). DataFrame vazio se nada atender aos critérios.
+    """
     if "MES" not in df.columns or df["MES"].dropna().nunique() < 2:
         return pd.DataFrame(), "Dados insuficientes para comparação (necessário ≥ 2 meses)."
     if "soma_valor" not in df.columns:
@@ -600,10 +659,12 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
     comp = comp[comp["CD_PRESTADOR"].notna() & comp["ESPECIALIDADE"].notna() & comp["NOME_PROCEDIMENTO"].notna()]
     if comp.empty:
         return comp, f"Nenhuma combinação prestador+procedimento em comum entre {ultimo} e {penult}."
+
     comp["delta_qtd"] = comp["qtd_atual"] - comp["qtd_anterior"]
     comp["delta_valor"] = comp["valor_atual"] - comp["valor_anterior"]
     comp["variacao_qtd_pct"] = np.where(comp["qtd_anterior"] > 0, comp["delta_qtd"] / comp["qtd_anterior"] * 100, np.nan)
     comp["variacao_valor_pct"] = np.where(comp["valor_anterior"] > 0, comp["delta_valor"] / comp["valor_anterior"] * 100, np.nan)
+
     comp = comp[
         (comp["qtd_atual"] > volume_minimo)
         & (comp["delta_valor"] > aumento_valor_minimo)
@@ -615,6 +676,7 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
         msg = (f"Nenhum prestador atendeu aos critérios ({ultimo} vs {penult}): qtde atual > {volume_minimo}, "
                f"aumento de valor > R$ {valor_min_fmt}, variação de qtde e de valor ≥ {pct_minimo:.0f}%.")
         return comp, msg
+
     info = _info_prestador(df)
     colunas_info = [c for c in ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"] if c in info.columns]
     comp = comp.merge(info[colunas_info], on="CD_PRESTADOR", how="left")
@@ -624,12 +686,22 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
     msg = (f"{ultimo} vs {penult}. Critérios: qtde atual > {volume_minimo}, aumento de valor > "
            f"R$ {valor_min_fmt}, variação de qtde e de valor ≥ {pct_minimo:.0f}%.")
     return comp, msg
-
-# ============================================================
-# 👉 FUNÇÃO PARA A ABA "DESVIOS DE SOLICITAÇÕES"
-# Compara a qtde de cada prestador vs a média nacional
-# ============================================================
-def identificar_desvios_solicitacao(df, agregado_nacional=None, volume_minimo=30, desvio_minimo_pct=50.0):
+def identificar_desvios_solicitacao(df, agregado_nacional=None, volume_minimo=30, desvio_minimo_pct=50.0, procedimento=None):
+    """
+    Desvio de solicitações: para cada combinação (mês, procedimento), calcula a
+    média nacional de qtde de procedimentos por prestador — soma nacional da
+    qtde ÷ número de prestadores que fizeram aquele procedimento naquele mês,
+    SEMPRE sobre a base nacional completa (agregado_nacional), sem os filtros
+    da tela — e compara com a qtde de cada prestador (essa sim, dentro dos
+    filtros ativos, para permitir explorar por UF/especialidade/etc.).
+    Um prestador só entra na lista se AMBAS as condições forem verdadeiras:
+      - qtde do prestador no mês > volume_minimo (ex.: > 30 procedimentos/mês)
+      - desvio da média nacional >= desvio_minimo_pct (ex.: >= 50%)
+    Se `procedimento` for informado (nome exato de NOME_PROCEDIMENTO), a lista
+    de prestadores é restrita a esse procedimento — a média nacional usada na
+    comparação continua sendo a média nacional daquele mesmo procedimento.
+    Retorna (DataFrame, mensagem).
+    """
     base_nacional = agregado_nacional if agregado_nacional is not None else df
     media_nacional = base_nacional.groupby(["MES", "NOME_PROCEDIMENTO"], dropna=False, observed=True).agg(
         soma_nacional=("qtd_procedimentos", "sum"),
@@ -637,16 +709,22 @@ def identificar_desvios_solicitacao(df, agregado_nacional=None, volume_minimo=30
     ).reset_index()
     media_nacional = media_nacional[media_nacional["qtd_prestadores_nacional"] > 0]
     media_nacional["media_nacional"] = (media_nacional["soma_nacional"] / media_nacional["qtd_prestadores_nacional"]).round(2)
+
+    if procedimento:
+        df = df[df["NOME_PROCEDIMENTO"] == procedimento]
+
     por_prestador = df.groupby(["MES", "CD_PRESTADOR", "ESPECIALIDADE", "NOME_PROCEDIMENTO"], dropna=False, observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
     ).reset_index()
     por_prestador = por_prestador[por_prestador["NOME_PROCEDIMENTO"].notna() & por_prestador["CD_PRESTADOR"].notna()]
+
     comp = por_prestador.merge(
         media_nacional[["MES", "NOME_PROCEDIMENTO", "media_nacional", "qtd_prestadores_nacional"]],
         on=["MES", "NOME_PROCEDIMENTO"], how="left",
     )
     comp = comp[comp["media_nacional"] > 0]
     comp["desvio_pct"] = ((comp["qtd_procedimentos"] - comp["media_nacional"]) / comp["media_nacional"] * 100).round(1)
+
     comp = comp[
         (comp["qtd_procedimentos"] > volume_minimo)
         & (comp["desvio_pct"] >= desvio_minimo_pct)
@@ -655,8 +733,11 @@ def identificar_desvios_solicitacao(df, agregado_nacional=None, volume_minimo=30
            f"{desvio_minimo_pct:.0f}% acima da média nacional de qtde por prestador (mesmo "
            "procedimento, mesmo mês). A média nacional usa a base nacional completa, sem os "
            "filtros da tela — a lista de prestadores, sim, respeita os filtros ativos.")
+    if procedimento:
+        msg += f" Filtrado para o procedimento: {procedimento}."
     if comp.empty:
         return comp, msg
+
     info = _info_prestador(df)
     colunas_info = [c for c in ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"] if c in info.columns]
     comp = comp.merge(info[colunas_info], on="CD_PRESTADOR", how="left")
