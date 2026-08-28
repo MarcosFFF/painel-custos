@@ -5,28 +5,30 @@ from datetime import date, datetime
 from supabase import create_client, Client
 import plotly.express as px
 from projecao_sinistro import projetar_sinistro_mes_atual, projetar_dias_restantes
-
 try:
     from severidade import (
         carregar_base_severidade, aplicar_filtros, evolucao_mensal,
         ranking_severidade, identificar_ofensores, calcular_desvios, montar_watchlist,
         comparacao_mensal, resumo_comparativo, alertas_prestador_procedimento,
-        identificar_desvios_solicitacao,  # 👉 import da função da aba Desvios
+        identificar_desvios_solicitacao,
     )
 except Exception as _erro_import_severidade:
+    # O Streamlit Cloud redige a mensagem de erro padrão — mostramos o traceback
+    # completo aqui pra dar pra diagnosticar sem precisar entrar nos logs.
     st.error("Erro ao importar severidade.py — traceback completo abaixo:")
     st.exception(_erro_import_severidade)
     st.stop()
-
+# ============================================================
+# Painel de Gestão de Sinistro — versão Streamlit
+# ============================================================
+# ---------- logo ----------
 LOGO_PATH = None
 for ext in ("png", "jpg", "jpeg", "svg", "webp"):
     candidato = f"logo_pbi.{ext}"
     if os.path.exists(candidato):
         LOGO_PATH = candidato
         break
-
 st.set_page_config(page_title="Gestão de Sinistro - Odonto", page_icon=(LOGO_PATH or "📊"), layout="wide")
-
 st.markdown("""
 <style>
 button[kind="primary"] {
@@ -50,20 +52,40 @@ h3 { font-size: 1.1rem !important; }
 [data-testid="stMetricLabel"] { font-size: 0.78rem !important; }
 [data-testid="stMetricDelta"] { font-size: 0.78rem !important; }
 [data-testid="stCaptionContainer"] { font-size: 0.75rem !important; }
+/* Tabelas: fonte menor */
 div[data-testid="stDataFrame"] * { font-size: 0.72rem !important; }
-div[data-testid="stDataFrame"] [data-testid="stTableCellText"] { text-align: center !important; }
-div[data-testid="stDataFrame"] [data-testid="stTableRowHeaderCell"] { text-align: left !important; }
+/* Tabelas: centralizar colunas numéricas */
+div[data-testid="stDataFrame"] [data-testid="stTableCellText"] {
+    text-align: center !important;
+}
+div[data-testid="stDataFrame"] [data-testid="stTableRowHeaderCell"] {
+    text-align: left !important;
+}
+/* espaçamento mais compacto */
 div[data-testid="stVerticalBlock"] { gap: 0.35rem !important; }
 hr { margin: 0.4rem 0 !important; }
 div[data-testid="stMetric"] { padding: 0.15rem 0 !important; }
 div.element-container { margin-bottom: 0.1rem !important; }
-div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stWidgetLabel"] p { font-size: 0.7rem !important; }
+/* Fonte menor nos filtros da aba Severidade */
+div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stWidgetLabel"] p {
+    font-size: 0.7rem !important;
+}
 div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="select"] span,
-div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="select"] li { font-size: 0.72rem !important; }
-div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="tag"] span { font-size: 0.68rem !important; }
+div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="select"] li {
+    font-size: 0.72rem !important;
+}
+div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="tag"] span {
+    font-size: 0.68rem !important;
+}
 div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="slider"] span,
-div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="slider"] div { font-size: 0.72rem !important; }
-[data-testid="stTabs"] [data-baseweb="tab-list"] { gap: 4px !important; }
+div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="slider"] div {
+    font-size: 0.72rem !important;
+}
+/* Abas (st.tabs): visual de botão, com o mesmo azul dos botões primários —
+   substitui o vermelho/laranja padrão do Streamlit na aba selecionada */
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    gap: 4px !important;
+}
 [data-testid="stTabs"] [data-testid="stTab"] {
     background-color: #eef6fb !important;
     border: 1px solid #d6e8f2 !important;
@@ -71,7 +93,9 @@ div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="slider"] div { fo
     border-radius: 8px 8px 0 0 !important;
     padding: 0.4rem 0.9rem !important;
 }
-[data-testid="stTabs"] [data-testid="stTab"] p { color: #0d2b3e !important; }
+[data-testid="stTabs"] [data-testid="stTab"] p {
+    color: #0d2b3e !important;
+}
 [data-testid="stTabs"] [data-testid="stTab"][aria-selected="true"] {
     background-color: #87CEEB !important;
     border-color: #87CEEB !important;
@@ -80,24 +104,23 @@ div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="slider"] div { fo
     color: #0d2b3e !important;
     font-weight: 600 !important;
 }
-[data-testid="stTabs"] .react-aria-SelectionIndicator { background-color: #87CEEB !important; }
+[data-testid="stTabs"] .react-aria-SelectionIndicator {
+    background-color: #87CEEB !important;
+}
 </style>
 """, unsafe_allow_html=True)
-
 MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho",
          "Agosto","Setembro","Outubro","Novembro","Dezembro"]
 MESES_ABREV = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"]
 DOW_NOMES = ["seg","ter","qua","qui","sex","sáb","dom"]
 hoje = date.today()
 ANO_HOJE, MES_HOJE, DIA_HOJE = hoje.year, hoje.month, hoje.day
-
+# ---------- conexão com o Supabase ----------
 @st.cache_resource
 def get_client() -> Client:
     return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_ANON_KEY"])
-
 supabase = get_client()
 ADMIN_EMAIL = st.secrets["ADMIN_EMAIL"]
-
 def titulo_com_logo():
     if LOGO_PATH:
         col_logo, col_txt = st.columns([1, 6], vertical_alignment="center")
@@ -107,66 +130,55 @@ def titulo_com_logo():
             st.title("Painel de Gestão de Sinistro - Odonto")
     else:
         st.title("📊 Painel de Gestão de Sinistro - Odonto")
-
+# ---------- funções de calendário ----------
 def dias_no_mes(y, m):
     if m == 12:
         return (date(y + 1, 1, 1) - date(y, 12, 1)).days
     return (date(y, m + 1, 1) - date(y, m, 1)).days
-
 def eh_fim_de_semana(y, m, d):
     return date(y, m, d).weekday() >= 5
-
 def calendario(y, m):
     total = dias_no_mes(y, m)
     dn = sum(1 for d in range(1, total + 1) if eh_fim_de_semana(y, m, d))
     du = total - dn
     return total, du, dn
-
 def fmt_brl(v):
     if v is None:
         return "—"
     s = f"{v:,.2f}"
     s = s.replace(",", "§").replace(".", ",").replace("§", ".")
     return f"R$ {s}"
-
 def fmt_int(v):
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
     return f"{int(v):,}".replace(",", ".")
-
 def fmt_float2(v):
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
     s = f"{v:,.2f}"
     return s.replace(",", "§").replace(".", ",").replace("§", ".")
-
 def label_mes(key):
     y, m = key.split("-")
     return f"{MESES_ABREV[int(m) - 1]}/{y}"
-
 def mes_key(y, m):
     return f"{y:04d}-{m:02d}"
-
 def date_key(y, m, d):
     return f"{y:04d}-{m:02d}-{d:02d}"
-
 def valor_valido(v):
     return v is not None and not (isinstance(v, float) and pd.isna(v))
-
+# ---------- autenticação ----------
 def buscar_nome_usuario(email):
     try:
         res = supabase.table("perfis").select("nome").eq("email", email).maybe_single().execute()
         return res.data["nome"] if res.data else None
     except Exception:
         return None
-
 def fazer_login(email, senha):
     try:
         res = supabase.auth.sign_in_with_password({"email": email, "password": senha})
         return True, res.user.email, ""
     except Exception as e:
         return False, None, str(e)
-
 def fazer_logout():
     try:
         supabase.auth.sign_out()
@@ -174,7 +186,7 @@ def fazer_logout():
         pass
     for k in ["user_email", "role", "nome_usuario", "lancamentos", "historico_mensal"]:
         st.session_state.pop(k, None)
-
+# ---------- carregamento dos dados ----------
 def carregar_dados():
     diarios = supabase.table("lancamentos_diarios").select("data, valor").execute().data
     mensal = supabase.table("historico_mensal").select("mes_ano, projetado, real").execute().data
@@ -184,7 +196,6 @@ def carregar_dados():
     }
     st.session_state.lancamentos = lancamentos
     st.session_state.historico_mensal = historico_mensal
-
 def gravar_dia(key, valor):
     try:
         supabase.table("lancamentos_diarios").upsert({"data": key, "valor": float(valor)}).execute()
@@ -192,7 +203,6 @@ def gravar_dia(key, valor):
         return True, ""
     except Exception as e:
         return False, str(e)
-
 def gravar_real_mensal(key, valor):
     if key >= mes_key(ANO_HOJE, MES_HOJE):
         return False, "O mês atual não é editável aqui — o valor real vem dos lançamentos diários."
@@ -205,17 +215,15 @@ def gravar_real_mensal(key, valor):
         return True, ""
     except Exception as e:
         return False, str(e)
-
+# ---------- cálculos ----------
 def entradas_do_mes(y, m, total):
     return {
         d: st.session_state.lancamentos[date_key(y, m, d)]
         for d in range(1, total + 1)
         if date_key(y, m, d) in st.session_state.lancamentos
     }
-
 def acumulado_de(entradas):
     return sum(entradas.values())
-
 def acumulado_ate_dia(y, m, dia_limite):
     total_m = dias_no_mes(y, m)
     limite = min(dia_limite, total_m)
@@ -224,20 +232,16 @@ def acumulado_ate_dia(y, m, dia_limite):
         for d in range(1, limite + 1)
         if date_key(y, m, d) in st.session_state.lancamentos
     )
-
 def mes_anterior_de(y, m):
     return (y, m - 1) if m > 1 else (y - 1, 12)
-
 def dias_uteis_decorridos_de(y, m, total, entradas):
     return sum(1 for d, v in entradas.items() if not eh_fim_de_semana(y, m, d))
-
 # ============================================================
 # LOGIN
 # ============================================================
 if "user_email" not in st.session_state:
     st.session_state.user_email = None
     st.session_state.role = None
-
 if st.session_state.user_email is None:
     col_esq, col_meio, col_dir = st.columns([1, 2, 1])
     with col_meio:
@@ -263,12 +267,9 @@ if st.session_state.user_email is None:
                 else:
                     st.error(f"Login inválido: {erro}")
     st.stop()
-
 is_admin = st.session_state.role == "admin"
-
 if "lancamentos" not in st.session_state:
     carregar_dados()
-
 # ============================================================
 # CABEÇALHO
 # ============================================================
@@ -283,13 +284,11 @@ with col_sair:
         fazer_logout()
         st.rerun()
 st.divider()
-
 # ============================================================
-# NAVEGAÇÃO PRINCIPAL
+# NAVEGAÇÃO PRINCIPAL — Projeção × Severidade
 # ============================================================
 if "pagina" not in st.session_state:
     st.session_state.pagina = "projecao"
-
 nav1, nav2, nav_resto = st.columns([1, 1, 4])
 with nav1:
     if st.button("📈 Projeção", use_container_width=True,
@@ -302,7 +301,6 @@ with nav2:
         st.session_state.pagina = "severidade"
         st.rerun()
 st.divider()
-
 # ============================================================
 # PÁGINA: PROJEÇÃO
 # ============================================================
@@ -310,7 +308,6 @@ if st.session_state.pagina == "projecao":
     if "view_year" not in st.session_state:
         st.session_state.view_year = ANO_HOJE
         st.session_state.view_month = MES_HOJE
-
     eh_mes_atual_nav = (st.session_state.view_year == ANO_HOJE and st.session_state.view_month == MES_HOJE)
     c1, c2, c3 = st.columns([1, 4, 1])
     with c1:
@@ -329,7 +326,6 @@ if st.session_state.pagina == "projecao":
                 vm, vy = 1, vy + 1
             st.session_state.view_year, st.session_state.view_month = vy, vm
             st.rerun()
-
     c4, c5 = st.columns(2)
     with c4:
         if st.button("Ir para o mês atual", use_container_width=True, disabled=eh_mes_atual_nav):
@@ -339,7 +335,6 @@ if st.session_state.pagina == "projecao":
         if st.button("🔄 Atualizar dados", use_container_width=True):
             carregar_dados()
             st.rerun()
-
     view_year, view_month = st.session_state.view_year, st.session_state.view_month
     total, du_total, dn_total = calendario(view_year, view_month)
     entradas = entradas_do_mes(view_year, view_month, total)
@@ -348,7 +343,6 @@ if st.session_state.pagina == "projecao":
     mes_key_atual = mes_key(view_year, view_month)
     eh_mes_atual = (view_year == ANO_HOJE and view_month == MES_HOJE)
     dado_mensal_do_mes_visto = st.session_state.historico_mensal.get(mes_key_atual)
-
     if eh_mes_atual:
         resultado_sinistro = projetar_sinistro_mes_atual(
             st.session_state.lancamentos,
@@ -370,20 +364,17 @@ if st.session_state.pagina == "projecao":
         projecao = acumulado
         label_projetado = "Valor projetado (sem oficial)"
         nota = f"Sem Projetado oficial cadastrado para {label_mes(mes_key_atual)} — mostrando a soma dos lançamentos diários."
-
     m1, m2, m3 = st.columns(3)
     m1.metric(label_projetado, fmt_brl(projecao))
     m2.metric("Valor acumulado", fmt_brl(acumulado))
     m3.metric("Dias lançados", f"{len(entradas)} de {total}")
     st.caption(nota)
     st.divider()
-
     ind1, ind2, ind3 = st.columns(3)
     ind1.metric("Dias úteis decorridos / total", f"{decorridos} / {du_total}")
     ind2.metric("Total de dias de fins de semana no mês", dn_total)
     ind3.metric("Total de dias no mês", total)
     st.divider()
-
     st.subheader("Comparativos")
     ano_ant_mes, mes_ant_mes = mes_anterior_de(view_year, view_month)
     key_mes_anterior = mes_key(ano_ant_mes, mes_ant_mes)
@@ -396,12 +387,10 @@ if st.session_state.pagina == "projecao":
     acum_mesmo_mes_ano_anterior = acumulado_ate_dia(view_year - 1, view_month, DIA_HOJE)
     _, du_mes_anterior, _ = calendario(ano_ant_mes, mes_ant_mes)
     _, du_mesmo_mes_ano_anterior, _ = calendario(view_year - 1, view_month)
-
     def variacao_pct(atual, referencia):
         if atual is None or referencia is None or referencia == 0:
             return None
         return (atual - referencia) / referencia * 100
-
     col_comp1, col_comp2 = st.columns(2)
     with col_comp1:
         st.markdown(f"**{label_mes(key_mes_anterior)}** (mês anterior)")
@@ -425,12 +414,10 @@ if st.session_state.pagina == "projecao":
         st.metric(f"Valor acumulado até dia {DIA_HOJE:02d}", fmt_brl(acum_mesmo_mes_ano_anterior),
                    delta=(f"{delta_acum_aa:+.1f}%" if delta_acum_aa is not None else None),
                    delta_color="inverse")
-
     if projecao is None:
         st.warning("O % de variação do 'Valor projetado' não aparece porque a projeção do mês atual voltou vazia.")
     st.caption("Variação % em relação ao mês/ano corrente — vermelho = aumento, verde = redução.")
     st.divider()
-
     st.subheader("Lançamentos do mês")
     linhas = []
     for d in range(1, total + 1):
@@ -470,7 +457,6 @@ if st.session_state.pagina == "projecao":
                 else:
                     st.error(f"Erro ao salvar dia {d:02d}: {erro}")
     st.caption("0,00 é um lançamento válido (dia sem valor) e não afeta os demais dias.")
-
     if eh_mes_atual:
         with st.expander("📅 Projeção dia a dia (dias restantes do mês)"):
             resultado_dias = projetar_dias_restantes(
@@ -486,7 +472,6 @@ if st.session_state.pagina == "projecao":
             else:
                 st.caption("Sem dias restantes para projetar, ou dados insuficientes.")
     st.divider()
-
     with st.expander("📊 Histórico mensal · Projetado × Real"):
         linhas_mensal = []
         mes_corrente_label = None
@@ -527,7 +512,6 @@ if st.session_state.pagina == "projecao":
                     st.rerun()
                 else:
                     st.error(f"Erro ao salvar: {erro}")
-
 # ============================================================
 # PÁGINA: SEVERIDADE
 # ============================================================
@@ -539,32 +523,27 @@ elif st.session_state.pagina == "severidade":
         if st.button("🔄 Recarregar", use_container_width=True):
             carregar_base_severidade.clear()
             st.rerun()
-
     agregado, aviso_carga = carregar_base_severidade(".")
     if agregado is None:
         st.error(f"Não consegui carregar os dados de severidade: {aviso_carga}")
         st.stop()
     if aviso_carga:
         st.warning(aviso_carga)
-
-    # ============================================================
-    # FILTROS — incluindo o FILTRO DE CIDADE (👉 marcação 1)
-    # ============================================================
+    # ---------- filtros ----------
     with st.container(border=True):
         st.markdown("**Filtros**")
         fc1, fc2, fc3 = st.columns(3)
         with fc1:
             f_mes = st.multiselect("Mês", options=sorted(agregado["MES"].dropna().unique(), reverse=True))
             f_uf = st.multiselect("UF", options=sorted(agregado["UF"].dropna().unique()))
-
-            # 👉 FILTRO DE CIDADE — filtrado pela UF selecionada acima
+            # Cidade filtrada pela(s) UF(s) selecionada(s) acima — sem UF selecionada, mostra
+            # todas as cidades. O campo já vem com busca por digitação (padrão do multiselect).
             opcoes_cidade = sorted(
                 (agregado[agregado["UF"].isin(f_uf)] if f_uf else agregado)["CIDADE_PRESTADOR"].dropna().unique()
             )
             if "f_cidade" in st.session_state:
                 st.session_state["f_cidade"] = [c for c in st.session_state["f_cidade"] if c in opcoes_cidade]
             f_cidade = st.multiselect("Cidade", options=opcoes_cidade, key="f_cidade")
-
         with fc2:
             f_regiao = st.multiselect("Região", options=sorted(agregado["REGIAO"].dropna().unique()))
             f_especialidade = st.multiselect("Especialidade", options=sorted(agregado["ESPECIALIDADE"].dropna().unique()))
@@ -575,8 +554,6 @@ elif st.session_state.pagina == "severidade":
             "Volume mínimo de procedimentos para considerar uma variação relevante",
             min_value=1, max_value=200, value=30,
         )
-
-    # 👉 passa cidades=f_cidade para o filtro
     df_filtrado = aplicar_filtros(
         agregado,
         meses=f_mes or None, ufs=f_uf or None, regioes=f_regiao or None,
@@ -586,7 +563,6 @@ elif st.session_state.pagina == "severidade":
     if df_filtrado.empty:
         st.info("Nenhum dado para esses filtros.")
         st.stop()
-
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Procedimentos", fmt_int(df_filtrado["qtd_procedimentos"].sum()))
     m2.metric("Uso total", fmt_int(df_filtrado["soma_uso"].sum()))
@@ -596,19 +572,16 @@ elif st.session_state.pagina == "severidade":
     m3.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
     m4.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
     st.divider()
-
-    # ============================================================
-    # ABAS — incluindo "Desvios de Solicitações" (👉 marcação 2)
-    # ============================================================
     tab_rank, tab_evolucao, tab_watch, tab_ofensores, tab_desvios, tab_resumo = st.tabs(
         ["Ranking de Severidade", "Evolução mensal", "Atenção", "Ofensores", "Desvios de Solicitações", "Resumo"]
     )
-
-    JANELA_5_BARRAS = 300
-
+    # ---------- RANKING DE SEVERIDADE (ISR — só gráficos, sem tabelas) ----------
+    JANELA_5_BARRAS = 300  # altura fixa (px) que mostra ~5 barras; o resto rola dentro do quadro
     def _grafico_severidade(df_rank, coluna, titulo, altura=None, janela=None):
         df_plot = df_rank.sort_values("indice_severidade", ascending=True).reset_index(drop=True)
         if janela:
+            # altura total cresce com a quantidade de itens (barra do mesmo tamanho sempre),
+            # o quadro em volta é que fica fixo em `janela` e ganha rolagem quando sobra.
             altura_total = max(janela, 90 + len(df_plot) * 40)
         else:
             altura_total = altura or max(350, len(df_plot) * 35)
@@ -646,7 +619,6 @@ elif st.session_state.pagina == "severidade":
                 st.plotly_chart(fig, use_container_width=True)
         else:
             st.plotly_chart(fig, use_container_width=True)
-
     with tab_rank:
         st.info(
             "O **Índice de Severidade Relativa (ISR)** é a média da **Frequência** (qtde de "
@@ -675,7 +647,6 @@ elif st.session_state.pagina == "severidade":
             _grafico_severidade(rank_sev, dims[dim_escolhida], f"Severidade por {dim_escolhida}", altura=450)
         else:
             st.info("Sem dados para a dimensão selecionada.")
-
     with tab_evolucao:
         evolucao = evolucao_mensal(df_filtrado)
         fig_uso = px.line(
@@ -697,11 +668,12 @@ elif st.session_state.pagina == "severidade":
         fig_uso_total.update_traces(texttemplate="%{text:,.0f}", textposition="top center")
         fig_uso_total.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10))
         st.plotly_chart(fig_uso_total, use_container_width=True)
-
+    # ---------- ATENÇÃO (baseada apenas em uso e volume) ----------
     with tab_watch:
         st.markdown("#### Prestadores que merecem atenção")
         watchlist = montar_watchlist(df_filtrado)
         if not watchlist.empty:
+            # Preparar DataFrame para o gráfico — garantir tipos corretos
             wl_plot = watchlist.copy()
             for col in ["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"]:
                 if col not in wl_plot.columns:
@@ -728,6 +700,7 @@ elif st.session_state.pagina == "severidade":
             )
             fig_watch.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10), yaxis_type="category")
             st.plotly_chart(fig_watch, use_container_width=True)
+            # Tabela com info do prestador (sem o código, com nome)
             exib_watch = watchlist.drop(columns=["CD_PRESTADOR"], errors="ignore").copy()
             exib_watch["qtd_procedimentos"] = exib_watch["qtd_procedimentos"].map(fmt_int)
             exib_watch["qtd_usuarios"] = exib_watch["qtd_usuarios"].map(fmt_int)
@@ -740,7 +713,7 @@ elif st.session_state.pagina == "severidade":
             st.dataframe(exib_watch, hide_index=True, use_container_width=True)
         else:
             st.info("Sem dados para montar a watchlist.")
-
+    # ---------- OFENSORES (baseado só em volume e uso) ----------
     with tab_ofensores:
         st.markdown("#### 🚨 Prestadores ofensores")
         st.caption(
@@ -770,6 +743,7 @@ elif st.session_state.pagina == "severidade":
             )
         ofensores = identificar_ofensores(df_filtrado)
         if not ofensores.empty:
+            # Formatar tabela para exibição — já vem ordenada do mais para o menos severo (ISR)
             exib_of = ofensores.copy()
             exib_of["qtd_procedimentos"] = exib_of["qtd_procedimentos"].map(fmt_int)
             exib_of["qtd_usuarios"] = exib_of["qtd_usuarios"].map(fmt_int)
@@ -777,12 +751,14 @@ elif st.session_state.pagina == "severidade":
             exib_of["uso_por_procedimento"] = exib_of["uso_por_procedimento"].map(fmt_float2)
             exib_of["uso_por_vida"] = exib_of["uso_por_vida"].map(fmt_float2)
             exib_of["indice_severidade"] = exib_of["indice_severidade"].map(fmt_float2)
+            # Flags com cores
             exib_of["alerta_volume"] = exib_of["alerta_volume"].map(lambda b: "🔴 Sim" if b else "✅ Não")
             exib_of["alerta_uso_procedimento"] = exib_of["alerta_uso_procedimento"].map(lambda b: "🔴 Sim" if b else "✅ Não")
             exib_of["alerta_uso_vida"] = exib_of["alerta_uso_vida"].map(lambda b: "🔴 Sim" if b else "✅ Não")
             exib_of["criterios_atingidos"] = exib_of["criterios_atingidos"].map(lambda v: f"{v}/3")
             exib_of["relevante"] = exib_of["relevante"].map(lambda b: "🚨 OFENSOR" if b else "—")
             st.dataframe(exib_of, hide_index=True, use_container_width=True)
+            # Destaque para ofensores relevantes com justificativa — retrátil e pesquisável
             relevantes = ofensores[ofensores["relevante"]].copy()
             if not relevantes.empty:
                 st.divider()
@@ -843,10 +819,7 @@ elif st.session_state.pagina == "severidade":
             st.dataframe(comp_relevante, hide_index=True, use_container_width=True)
             with st.expander(f"Ver também as {len(comp_ignorado)} variações abaixo do volume mínimo"):
                 st.dataframe(comp_ignorado, hide_index=True, use_container_width=True)
-
-    # ============================================================
-    # 👉 ABA "DESVIOS DE SOLICITAÇÕES" (marcação 2)
-    # ============================================================
+    # ---------- DESVIOS DE SOLICITAÇÕES (qtde do prestador vs. média nacional) ----------
     with tab_desvios:
         st.markdown("#### 📐 Desvios de Solicitações")
         st.caption(
@@ -868,7 +841,16 @@ elif st.session_state.pagina == "severidade":
                 "da tela) — só a lista de prestadores respeita os filtros ativos (UF, especialidade, "
                 "cidade etc.), pra facilitar a exploração."
             )
-        desvios_sol, msg_desvios_sol = identificar_desvios_solicitacao(df_filtrado, agregado_nacional=agregado)
+        opcoes_procedimento_desvio = sorted(df_filtrado["NOME_PROCEDIMENTO"].dropna().unique())
+        procedimento_desvio = st.selectbox(
+            "Procedimento",
+            options=["(Todos os procedimentos)"] + opcoes_procedimento_desvio,
+            key="desvio_procedimento",
+        )
+        filtro_procedimento_desvio = None if procedimento_desvio == "(Todos os procedimentos)" else procedimento_desvio
+        desvios_sol, msg_desvios_sol = identificar_desvios_solicitacao(
+            df_filtrado, agregado_nacional=agregado, procedimento=filtro_procedimento_desvio
+        )
         if desvios_sol.empty:
             st.info(msg_desvios_sol)
         else:
@@ -894,7 +876,7 @@ elif st.session_state.pagina == "severidade":
                 "desvio_pct": "Desvio",
             })
             st.dataframe(exib_desv_sol, hide_index=True, use_container_width=True)
-
+    # ---------- RESUMO (mês vs. mês anterior, por variação % de uso) ----------
     with tab_resumo:
         st.markdown("#### 📌 Resumo do mês vs. mês anterior")
         st.caption(
@@ -924,6 +906,7 @@ elif st.session_state.pagina == "severidade":
                         det_show[c] = det_show[c].map(fmt_int)
                 st.dataframe(det_show, hide_index=True, use_container_width=True)
 
+            # ---------- Especialidades ----------
             st.markdown("##### 5 especialidades com maior aumento")
             especialidades = resumo["especialidades"]
             if especialidades.empty:
@@ -936,67 +919,70 @@ elif st.session_state.pagina == "severidade":
                         if det is not None and not det.empty:
                             st.markdown("**Procedimentos que causaram o aumento:**")
                             _tabela_detalhe(det)
-            st.divider()
-            if resumo is not None:
-                st.markdown("##### 10 UFs com maior aumento")
-                ufs = resumo["ufs"]
-                if ufs.empty:
-                    st.info("Nenhuma UF com volume suficiente nos dois meses para comparar.")
-                else:
-                    for _, row in ufs.iterrows():
-                        titulo = f"{row['UF']} · Variação de uso: {row['variacao_pct']:+.1f}%"
-                        with st.expander(titulo, expanded=False):
-                            det = resumo["detalhes_uf"].get(row["UF"])
-                            if det is not None and not det.empty:
-                                st.markdown("**Cidades (com cluster) que causaram o aumento:**")
-                                _tabela_detalhe(det, mapa_colunas={"CIDADE_PRESTADOR": "CIDADE"})
-            st.divider()
-            if resumo is not None:
-                prestadores = resumo["prestadores"]
-                if prestadores.empty:
-                    st.markdown("##### 20 prestadores com maior aumento")
-                    st.info("Nenhum prestador com volume suficiente nos dois meses para comparar.")
-                else:
-                    with st.expander("20 prestadores com maior aumento", expanded=False):
-                        for _, row in prestadores.iterrows():
-                            nome = row.get("NOME_PRESTADOR") or f"Prestador {int(row['CD_PRESTADOR'])}"
-                            st.markdown(
-                                f"- **{nome}** — CPF/CNPJ: {row.get('CNPJ_CPF_PRESTADOR') or '—'} · "
-                                f"{row.get('UF') or '—'} · {row.get('CIDADE') or '—'} · Cluster: {row.get('CLUSTER') or '—'} · "
-                                f"Especialidade principal: {row.get('ESPECIALIDADE') or '—'} · "
-                                f"Variação de uso: {row['variacao_pct']:+.1f}%"
-                            )
-            st.divider()
-            st.markdown("##### 🚨 Prestadores com aumento relevante de quantidade e valor")
-            st.caption(
-                "Critério (as 4 condições precisam valer juntas): qtde do procedimento no mês atual "
-                "> 50, aumento de valor pago > R$ 1.500,00 em relação ao mês anterior, e variação de "
-                "pelo menos 50% tanto na qtde quanto no valor. Usa números absolutos (qtde de guias e "
-                "R$ pago) — não a métrica de uso ponderada usada no restante do painel."
-            )
-            alertas, msg_alertas = alertas_prestador_procedimento(df_filtrado)
-            if alertas is None or alertas.empty:
-                st.info(msg_alertas)
+        st.divider()
+        if resumo is not None:
+            # ---------- UFs ----------
+            st.markdown("##### 10 UFs com maior aumento")
+            ufs = resumo["ufs"]
+            if ufs.empty:
+                st.info("Nenhuma UF com volume suficiente nos dois meses para comparar.")
             else:
-                st.caption(msg_alertas)
-                mes_anterior_lbl = label_mes(alertas["MES_ANTERIOR"].iloc[0])
-                mes_atual_lbl = label_mes(alertas["MES_ATUAL"].iloc[0])
-                for cd_prestador, grupo in alertas.groupby("CD_PRESTADOR", sort=False):
-                    r0 = grupo.iloc[0]
-                    nome = r0.get("NOME_PRESTADOR") or f"Prestador {int(cd_prestador)}"
-                    cabecalho = (
-                        f"{nome} — {r0.get('CIDADE') or '—'}/{r0.get('UF') or '—'} · "
-                        f"CPF/CNPJ: {r0.get('CNPJ_CPF_PRESTADOR') or '—'} · Cluster: {r0.get('CLUSTER') or '—'}"
-                    )
-                    with st.expander(cabecalho, expanded=False):
-                        for _, row in grupo.iterrows():
-                            st.markdown(
-                                f"**{nome}** ({row.get('CIDADE') or '—'}, CPF/CNPJ {row.get('CNPJ_CPF_PRESTADOR') or '—'}, "
-                                f"cluster {row.get('CLUSTER') or '—'}) teve aumento de **{row['variacao_qtd_pct']:+.0f}%** "
-                                f"na quantidade em relação a {mes_anterior_lbl}. Esse aumento aconteceu na especialidade "
-                                f"**{row['ESPECIALIDADE']}**, no procedimento **{row['NOME_PROCEDIMENTO']}**, que foi de "
-                                f"{fmt_int(row['qtd_anterior'])} para {fmt_int(row['qtd_atual'])} solicitações. "
-                                f"Em termos de valores, em {mes_anterior_lbl} foi {fmt_brl(row['valor_anterior'])} e em "
-                                f"{mes_atual_lbl} foi de {fmt_brl(row['valor_atual'])}, um aumento de "
-                                f"**{fmt_brl(row['delta_valor'])}**, que representa **{row['variacao_valor_pct']:+.0f}%**."
-                            )
+                for _, row in ufs.iterrows():
+                    titulo = f"{row['UF']} · Variação de uso: {row['variacao_pct']:+.1f}%"
+                    with st.expander(titulo, expanded=False):
+                        det = resumo["detalhes_uf"].get(row["UF"])
+                        if det is not None and not det.empty:
+                            st.markdown("**Cidades (com cluster) que causaram o aumento:**")
+                            _tabela_detalhe(det, mapa_colunas={"CIDADE_PRESTADOR": "CIDADE"})
+        st.divider()
+        if resumo is not None:
+            # ---------- Prestadores ----------
+            prestadores = resumo["prestadores"]
+            if prestadores.empty:
+                st.markdown("##### 20 prestadores com maior aumento")
+                st.info("Nenhum prestador com volume suficiente nos dois meses para comparar.")
+            else:
+                with st.expander("20 prestadores com maior aumento", expanded=False):
+                    for _, row in prestadores.iterrows():
+                        nome = row.get("NOME_PRESTADOR") or f"Prestador {int(row['CD_PRESTADOR'])}"
+                        st.markdown(
+                            f"- **{nome}** — CPF/CNPJ: {row.get('CNPJ_CPF_PRESTADOR') or '—'} · "
+                            f"{row.get('UF') or '—'} · {row.get('CIDADE') or '—'} · Cluster: {row.get('CLUSTER') or '—'} · "
+                            f"Especialidade principal: {row.get('ESPECIALIDADE') or '—'} · "
+                            f"Variação de uso: {row['variacao_pct']:+.1f}%"
+                        )
+        st.divider()
+        # ---------- Alerta: prestador + procedimento com aumento relevante de qtde e valor ----------
+        st.markdown("##### 🚨 Prestadores com aumento relevante de quantidade e valor")
+        st.caption(
+            "Critério (as 4 condições precisam valer juntas): qtde do procedimento no mês atual "
+            "> 50, aumento de valor pago > R$ 1.500,00 em relação ao mês anterior, e variação de "
+            "pelo menos 50% tanto na qtde quanto no valor. Usa números absolutos (qtde de guias e "
+            "R$ pago) — não a métrica de uso ponderada usada no restante do painel."
+        )
+        alertas, msg_alertas = alertas_prestador_procedimento(df_filtrado)
+        if alertas is None or alertas.empty:
+            st.info(msg_alertas)
+        else:
+            st.caption(msg_alertas)
+            mes_anterior_lbl = label_mes(alertas["MES_ANTERIOR"].iloc[0])
+            mes_atual_lbl = label_mes(alertas["MES_ATUAL"].iloc[0])
+            for cd_prestador, grupo in alertas.groupby("CD_PRESTADOR", sort=False):
+                r0 = grupo.iloc[0]
+                nome = r0.get("NOME_PRESTADOR") or f"Prestador {int(cd_prestador)}"
+                cabecalho = (
+                    f"{nome} — {r0.get('CIDADE') or '—'}/{r0.get('UF') or '—'} · "
+                    f"CPF/CNPJ: {r0.get('CNPJ_CPF_PRESTADOR') or '—'} · Cluster: {r0.get('CLUSTER') or '—'}"
+                )
+                with st.expander(cabecalho, expanded=False):
+                    for _, row in grupo.iterrows():
+                        st.markdown(
+                            f"**{nome}** ({row.get('CIDADE') or '—'}, CPF/CNPJ {row.get('CNPJ_CPF_PRESTADOR') or '—'}, "
+                            f"cluster {row.get('CLUSTER') or '—'}) teve aumento de **{row['variacao_qtd_pct']:+.0f}%** "
+                            f"na quantidade em relação a {mes_anterior_lbl}. Esse aumento aconteceu na especialidade "
+                            f"**{row['ESPECIALIDADE']}**, no procedimento **{row['NOME_PROCEDIMENTO']}**, que foi de "
+                            f"{fmt_int(row['qtd_anterior'])} para {fmt_int(row['qtd_atual'])} solicitações. "
+                            f"Em termos de valores, em {mes_anterior_lbl} foi {fmt_brl(row['valor_anterior'])} e em "
+                            f"{mes_atual_lbl} foi de {fmt_brl(row['valor_atual'])}, um aumento de "
+                            f"**{fmt_brl(row['delta_valor'])}**, que representa **{row['variacao_valor_pct']:+.0f}%**."
+                        )
