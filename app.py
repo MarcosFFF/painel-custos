@@ -814,9 +814,9 @@ elif st.session_state.pagina == "severidade":
         st.markdown("#### 📌 Resumo do mês vs. mês anterior")
         st.caption(
             "Compara o último mês com o anterior pela **variação % de uso** (não em números "
-            "absolutos). Clique num item abaixo para ver o que causou o aumento — o selecionado "
-            f"fica destacado em azul. Só entram grupos com volume ≥ {volume_minimo} procedimentos "
-            "em ambos os meses (ajustável no filtro acima)."
+            "absolutos). Clique num item abaixo para expandir e ver o que causou o aumento. "
+            f"Só entram grupos com volume ≥ {volume_minimo} procedimentos em ambos os meses "
+            "(ajustável no filtro acima)."
         )
         resumo, msg_resumo = resumo_comparativo(df_filtrado, volume_minimo=volume_minimo)
         if resumo is None:
@@ -824,28 +824,8 @@ elif st.session_state.pagina == "severidade":
         else:
             st.caption(msg_resumo)
 
-            def _grade_botoes(df_itens, coluna_label, coluna_key, session_key, por_linha=5):
-                if session_key not in st.session_state or st.session_state[session_key] not in df_itens[coluna_key].values:
-                    st.session_state[session_key] = df_itens[coluna_key].iloc[0]
-                for i in range(0, len(df_itens), por_linha):
-                    linha = df_itens.iloc[i:i + por_linha]
-                    cols = st.columns(len(linha))
-                    for col, (_, row) in zip(cols, linha.iterrows()):
-                        with col:
-                            rotulo = f"{row[coluna_label]} · {row['variacao_pct']:+.1f}%"
-                            selecionado = st.session_state[session_key] == row[coluna_key]
-                            if st.button(
-                                rotulo, key=f"btn_{session_key}_{row[coluna_key]}",
-                                type="primary" if selecionado else "secondary",
-                                use_container_width=True,
-                            ):
-                                st.session_state[session_key] = row[coluna_key]
-                                st.rerun()
-                return st.session_state[session_key]
-
-            def _tabela_detalhe(det, mapa_colunas=None, vazio_msg="Sem dados suficientes."):
+            def _tabela_detalhe(det, mapa_colunas=None):
                 if det is None or det.empty:
-                    st.info(vazio_msg)
                     return
                 det_show = det.copy()
                 if mapa_colunas:
@@ -865,9 +845,13 @@ elif st.session_state.pagina == "severidade":
             if especialidades.empty:
                 st.info("Nenhuma especialidade com volume suficiente nos dois meses para comparar.")
             else:
-                esp_sel = _grade_botoes(especialidades, "ESPECIALIDADE", "ESPECIALIDADE", "resumo_esp_sel")
-                st.markdown(f"**Procedimentos que causaram o aumento em {esp_sel}:**")
-                _tabela_detalhe(resumo["detalhes_especialidade"].get(esp_sel))
+                for _, row in especialidades.iterrows():
+                    titulo = f"{row['ESPECIALIDADE']} · Variação de uso: {row['variacao_pct']:+.1f}%"
+                    with st.expander(titulo, expanded=False):
+                        det = resumo["detalhes_especialidade"].get(row["ESPECIALIDADE"])
+                        if det is not None and not det.empty:
+                            st.markdown("**Procedimentos que causaram o aumento:**")
+                            _tabela_detalhe(det)
         st.divider()
         if resumo is not None:
             # ---------- UFs ----------
@@ -876,9 +860,13 @@ elif st.session_state.pagina == "severidade":
             if ufs.empty:
                 st.info("Nenhuma UF com volume suficiente nos dois meses para comparar.")
             else:
-                uf_sel = _grade_botoes(ufs, "UF", "UF", "resumo_uf_sel")
-                st.markdown(f"**Cidades (com cluster) que causaram o aumento em {uf_sel}:**")
-                _tabela_detalhe(resumo["detalhes_uf"].get(uf_sel), mapa_colunas={"CIDADE_PRESTADOR": "CIDADE"})
+                for _, row in ufs.iterrows():
+                    titulo = f"{row['UF']} · Variação de uso: {row['variacao_pct']:+.1f}%"
+                    with st.expander(titulo, expanded=False):
+                        det = resumo["detalhes_uf"].get(row["UF"])
+                        if det is not None and not det.empty:
+                            st.markdown("**Cidades (com cluster) que causaram o aumento:**")
+                            _tabela_detalhe(det, mapa_colunas={"CIDADE_PRESTADOR": "CIDADE"})
         st.divider()
         if resumo is not None:
             # ---------- Prestadores ----------
@@ -887,21 +875,19 @@ elif st.session_state.pagina == "severidade":
             if prestadores.empty:
                 st.info("Nenhum prestador com volume suficiente nos dois meses para comparar.")
             else:
-                prest_labels = prestadores.copy()
-                prest_labels["_label"] = prest_labels.apply(
-                    lambda r: (r.get("NOME_PRESTADOR") or f"Prestador {int(r['CD_PRESTADOR'])}")[:22], axis=1
-                )
-                cd_sel = _grade_botoes(prest_labels, "_label", "CD_PRESTADOR", "resumo_prest_sel")
-                linha_sel = prestadores[prestadores["CD_PRESTADOR"] == cd_sel]
-                if not linha_sel.empty:
-                    r = linha_sel.iloc[0]
-                    st.markdown(
-                        f"**{r.get('NOME_PRESTADOR') or '—'}** — CPF/CNPJ: {r.get('CNPJ_CPF_PRESTADOR') or '—'} · "
-                        f"{r.get('UF') or '—'} · {r.get('CIDADE') or '—'} · Cluster: {r.get('CLUSTER') or '—'} · "
-                        f"Especialidade principal: {r.get('ESPECIALIDADE') or '—'} · Variação: {r['variacao_pct']:+.1f}%"
+                for _, row in prestadores.iterrows():
+                    nome = row.get("NOME_PRESTADOR") or f"Prestador {int(row['CD_PRESTADOR'])}"
+                    titulo = (
+                        f"{nome} — CPF/CNPJ: {row.get('CNPJ_CPF_PRESTADOR') or '—'} · "
+                        f"{row.get('UF') or '—'} · {row.get('CIDADE') or '—'} · Cluster: {row.get('CLUSTER') or '—'} · "
+                        f"Especialidade principal: {row.get('ESPECIALIDADE') or '—'} · "
+                        f"Variação de uso: {row['variacao_pct']:+.1f}%"
                     )
-                st.markdown("**Procedimentos que causaram o aumento:**")
-                _tabela_detalhe(resumo["detalhes_prestador"].get(cd_sel))
+                    with st.expander(titulo, expanded=False):
+                        det = resumo["detalhes_prestador"].get(row["CD_PRESTADOR"])
+                        if det is not None and not det.empty:
+                            st.markdown("**Procedimentos que causaram o aumento:**")
+                            _tabela_detalhe(det)
         st.divider()
         # ---------- Alerta: prestador + procedimento com aumento relevante de qtde e valor ----------
         st.markdown("##### 🚨 Prestadores com aumento relevante de quantidade e valor")
