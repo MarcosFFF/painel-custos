@@ -280,7 +280,7 @@ def carregar_base_severidade(pasta="."):
         )
     aviso = " | ".join(avisos) if avisos else None
     return agregado, aviso
-def aplicar_filtros(agregado, meses=None, ufs=None, regioes=None, especialidades=None, planos=None, clusters=None):
+def aplicar_filtros(agregado, meses=None, ufs=None, regioes=None, especialidades=None, planos=None, clusters=None, cidades=None):
     df = agregado
     if meses: df = df[df["MES"].isin(meses)]
     if ufs: df = df[df["UF"].isin(ufs)]
@@ -288,6 +288,7 @@ def aplicar_filtros(agregado, meses=None, ufs=None, regioes=None, especialidades
     if especialidades: df = df[df["ESPECIALIDADE"].isin(especialidades)]
     if planos: df = df[df["NR_PLANO"].isin(planos)]
     if clusters: df = df[df["CLUSTER"].isin(clusters)]
+    if cidades: df = df[df["CIDADE_PRESTADOR"].isin(cidades)]
     return df
 def _info_prestador(df):
     """Extrai Nome, CPF/CNPJ, UF, Cidade, Cluster e Especialidade mais frequente de cada prestador."""
@@ -684,4 +685,53 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
     comp = comp.sort_values(["CD_PRESTADOR", "variacao_valor_pct"], ascending=[True, False]).reset_index(drop=True)
     msg = (f"{ultimo} vs {penult}. Critérios: qtde atual > {volume_minimo}, aumento de valor > "
            f"R$ {valor_min_fmt}, variação de qtde e de valor ≥ {pct_minimo:.0f}%.")
+    return comp, msg
+def identificar_desvios_solicitacao(df, agregado_nacional=None, volume_minimo=30, desvio_minimo_pct=50.0):
+    """
+    Desvio de solicitações: para cada combinação (mês, procedimento), calcula a
+    média nacional de qtde de procedimentos por prestador — soma nacional da
+    qtde ÷ número de prestadores que fizeram aquele procedimento naquele mês,
+    SEMPRE sobre a base nacional completa (agregado_nacional), sem os filtros
+    da tela — e compara com a qtde de cada prestador (essa sim, dentro dos
+    filtros ativos, para permitir explorar por UF/especialidade/etc.).
+    Um prestador só entra na lista se AMBAS as condições forem verdadeiras:
+      - qtde do prestador no mês > volume_minimo (ex.: > 30 procedimentos/mês)
+      - desvio da média nacional >= desvio_minimo_pct (ex.: >= 50%)
+    Retorna (DataFrame, mensagem).
+    """
+    base_nacional = agregado_nacional if agregado_nacional is not None else df
+    media_nacional = base_nacional.groupby(["MES", "NOME_PROCEDIMENTO"], dropna=False, observed=True).agg(
+        soma_nacional=("qtd_procedimentos", "sum"),
+        qtd_prestadores_nacional=("CD_PRESTADOR", "nunique"),
+    ).reset_index()
+    media_nacional = media_nacional[media_nacional["qtd_prestadores_nacional"] > 0]
+    media_nacional["media_nacional"] = (media_nacional["soma_nacional"] / media_nacional["qtd_prestadores_nacional"]).round(2)
+
+    por_prestador = df.groupby(["MES", "CD_PRESTADOR", "ESPECIALIDADE", "NOME_PROCEDIMENTO"], dropna=False, observed=True).agg(
+        qtd_procedimentos=("qtd_procedimentos", "sum"),
+    ).reset_index()
+    por_prestador = por_prestador[por_prestador["NOME_PROCEDIMENTO"].notna() & por_prestador["CD_PRESTADOR"].notna()]
+
+    comp = por_prestador.merge(
+        media_nacional[["MES", "NOME_PROCEDIMENTO", "media_nacional", "qtd_prestadores_nacional"]],
+        on=["MES", "NOME_PROCEDIMENTO"], how="left",
+    )
+    comp = comp[comp["media_nacional"] > 0]
+    comp["desvio_pct"] = ((comp["qtd_procedimentos"] - comp["media_nacional"]) / comp["media_nacional"] * 100).round(1)
+
+    comp = comp[
+        (comp["qtd_procedimentos"] > volume_minimo)
+        & (comp["desvio_pct"] >= desvio_minimo_pct)
+    ]
+    msg = (f"Critérios: qtde do prestador > {volume_minimo} procedimentos/mês E desvio ≥ "
+           f"{desvio_minimo_pct:.0f}% acima da média nacional de qtde por prestador (mesmo "
+           "procedimento, mesmo mês). A média nacional usa a base nacional completa, sem os "
+           "filtros da tela — a lista de prestadores, sim, respeita os filtros ativos.")
+    if comp.empty:
+        return comp, msg
+
+    info = _info_prestador(df)
+    colunas_info = [c for c in ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"] if c in info.columns]
+    comp = comp.merge(info[colunas_info], on="CD_PRESTADOR", how="left")
+    comp = comp.sort_values("desvio_pct", ascending=False).reset_index(drop=True)
     return comp, msg
