@@ -245,12 +245,21 @@ def carregar_base_severidade(pasta="."):
         soma_uso=("QTD_USO", "sum"),
         soma_valor=("VL_PAGO", "sum"),
     ).reset_index()
-    # Descarta linhas cuja dimensão principal veio vazia/não identificada (nan) —
-    # essas linhas não entram em nenhum ranking, gráfico ou resumo, em vez de
-    # aparecer como uma categoria "nan".
+    # Descarta linhas cuja dimensão principal veio vazia/não identificada — tanto
+    # valor realmente ausente (NaN) quanto o texto literal "nan" digitado na
+    # fonte (existe na base) — essas linhas não entram em nenhum ranking, gráfico
+    # ou resumo, em vez de aparecer como uma categoria "nan".
+    def _vazio_ou_nan_texto(v):
+        if pd.isna(v):
+            return True
+        texto = normalizar_texto(v)
+        return texto is None or texto in ("", "NAN")
     linhas_antes = len(agregado)
     colunas_chave = ["MES", "UF", "REGIAO", "ESPECIALIDADE", "CD_PRESTADOR", "NOME_PROCEDIMENTO", "CIDADE_PRESTADOR"]
-    agregado = agregado.dropna(subset=colunas_chave).reset_index(drop=True)
+    mascara_valida = pd.Series(True, index=agregado.index)
+    for col in colunas_chave:
+        mascara_valida &= ~agregado[col].apply(_vazio_ou_nan_texto)
+    agregado = agregado[mascara_valida].reset_index(drop=True)
     linhas_desconsideradas = linhas_antes - len(agregado)
     # Remove tudo que for "Responsabilidade Técnica" — tanto quando é a
     # ESPECIALIDADE da linha quanto quando é o NOME_PROCEDIMENTO (existe um
