@@ -881,7 +881,7 @@ elif st.session_state.pagina == "severidade":
             st.info(msg_resumo)
         else:
             st.caption(msg_resumo)
-
+ 
             def _tabela_detalhe(det, mapa_colunas=None):
                 if det is None or det.empty:
                     return
@@ -896,7 +896,7 @@ elif st.session_state.pagina == "severidade":
                     if c in det_show.columns:
                         det_show[c] = det_show[c].map(fmt_int)
                 st.dataframe(det_show, hide_index=True, use_container_width=True)
-
+ 
             # ---------- Especialidades ----------
             st.markdown("##### 5 especialidades com maior aumento")
             especialidades = resumo["especialidades"]
