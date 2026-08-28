@@ -236,12 +236,14 @@ def carregar_base_severidade(pasta="."):
         "CD_PROCEDIMENTO", "NOME_PROCEDIMENTO", "CD_PRESTADOR", "NOME_PRESTADOR",
         "CNPJ_CPF_PRESTADOR", "CIDADE_PRESTADOR",
     ]
-    # Nota: valores em R$ (VL_PROCEDIMENTO/VL_FRANQUIA/VL_PAGO) não entram mais no
-    # agregado — a análise de severidade passa a ser 100% baseada em uso e volume.
+    # Nota: a análise de severidade (ISR, rankings, watchlist, ofensores) continua
+    # 100% baseada em uso e volume — não em R$. A coluna soma_valor (VL_PAGO) volta
+    # a existir só para o alerta de aumento de qtde+valor (prestadores críticos).
     agregado = dados.groupby(grupos, dropna=False, observed=True).agg(
         qtd_procedimentos=("NU_GUIA", "nunique"),
         qtd_usuarios=("CD_USUARIO", "nunique"),
         soma_uso=("QTD_USO", "sum"),
+        soma_valor=("VL_PAGO", "sum"),
     ).reset_index()
     # Descarta linhas cuja dimensão principal veio vazia/não identificada (nan) —
     # essas linhas não entram em nenhum ranking, gráfico ou resumo, em vez de
@@ -616,3 +618,66 @@ def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, t
     msg = (f"Comparando {ultimo} vs {penult}, por variação % de uso. "
            f"Só entram grupos com volume ≥ {volume_minimo} procedimentos em ambos os meses.")
     return resultado, msg
+def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=1500.0, pct_minimo=50.0):
+    """
+    Alerta de prestador + procedimento com aumento relevante de qtde E de valor
+    (R$ pago), mês atual vs anterior — usa números absolutos (qtde de guias e
+    soma de VL_PAGO), não a métrica de uso ponderada usada no ISR/resumo por uso.
+    Uma combinação (prestador, especialidade, procedimento) só entra se TODAS as
+    condições abaixo forem verdadeiras:
+      - qtde do mês atual > volume_minimo (ex.: > 50 procedimentos)
+      - aumento absoluto em R$ (valor atual - valor anterior) > aumento_valor_minimo
+      - variação % da qtde  >= pct_minimo
+      - variação % do valor >= pct_minimo
+    Retorna (DataFrame, mensagem). DataFrame vazio se nada atender aos critérios.
+    """
+    if "MES" not in df.columns or df["MES"].dropna().nunique() < 2:
+        return pd.DataFrame(), "Dados insuficientes para comparação (necessário ≥ 2 meses)."
+    if "soma_valor" not in df.columns:
+        return pd.DataFrame(), "Base sem valores em R$ (soma_valor) — recarregue os dados."
+    meses_ord = sorted(df["MES"].dropna().unique())
+    ultimo, penult = meses_ord[-1], meses_ord[-2]
+    chave = ["CD_PRESTADOR", "ESPECIALIDADE", "NOME_PROCEDIMENTO"]
+    cols_info = [c for c in ["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE_PRESTADOR", "CLUSTER"] if c in df.columns]
+
+    def _agg_mes(sub, sufixo):
+        agregacoes = {
+            f"qtd_{sufixo}": ("qtd_procedimentos", "sum"),
+            f"valor_{sufixo}": ("soma_valor", "sum"),
+        }
+        r = sub.groupby(chave, dropna=False, observed=True).agg(**agregacoes).reset_index()
+        return r
+
+    atual = _agg_mes(df[df["MES"] == ultimo], "atual")
+    anterior = _agg_mes(df[df["MES"] == penult], "anterior")
+    comp = atual.merge(anterior, on=chave, how="inner")
+    comp = comp[comp["CD_PRESTADOR"].notna() & comp["ESPECIALIDADE"].notna() & comp["NOME_PROCEDIMENTO"].notna()]
+    if comp.empty:
+        return comp, f"Nenhuma combinação prestador+procedimento em comum entre {ultimo} e {penult}."
+
+    comp["delta_qtd"] = comp["qtd_atual"] - comp["qtd_anterior"]
+    comp["delta_valor"] = comp["valor_atual"] - comp["valor_anterior"]
+    comp["variacao_qtd_pct"] = np.where(comp["qtd_anterior"] > 0, comp["delta_qtd"] / comp["qtd_anterior"] * 100, np.nan)
+    comp["variacao_valor_pct"] = np.where(comp["valor_anterior"] > 0, comp["delta_valor"] / comp["valor_anterior"] * 100, np.nan)
+
+    comp = comp[
+        (comp["qtd_atual"] > volume_minimo)
+        & (comp["delta_valor"] > aumento_valor_minimo)
+        & (comp["variacao_qtd_pct"] >= pct_minimo)
+        & (comp["variacao_valor_pct"] >= pct_minimo)
+    ]
+    valor_min_fmt = f"{aumento_valor_minimo:,.2f}".replace(",", "§").replace(".", ",").replace("§", ".")
+    if comp.empty:
+        msg = (f"Nenhum prestador atendeu aos critérios ({ultimo} vs {penult}): qtde atual > {volume_minimo}, "
+               f"aumento de valor > R$ {valor_min_fmt}, variação de qtde e de valor ≥ {pct_minimo:.0f}%.")
+        return comp, msg
+
+    info = _info_prestador(df)
+    colunas_info = [c for c in ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"] if c in info.columns]
+    comp = comp.merge(info[colunas_info], on="CD_PRESTADOR", how="left")
+    comp["MES_ATUAL"] = ultimo
+    comp["MES_ANTERIOR"] = penult
+    comp = comp.sort_values(["CD_PRESTADOR", "variacao_valor_pct"], ascending=[True, False]).reset_index(drop=True)
+    msg = (f"{ultimo} vs {penult}. Critérios: qtde atual > {volume_minimo}, aumento de valor > "
+           f"R$ {valor_min_fmt}, variação de qtde e de valor ≥ {pct_minimo:.0f}%.")
+    return comp, msg
