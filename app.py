@@ -870,24 +870,20 @@ elif st.session_state.pagina == "severidade":
         st.divider()
         if resumo is not None:
             # ---------- Prestadores ----------
-            st.markdown("##### 20 prestadores com maior aumento")
             prestadores = resumo["prestadores"]
             if prestadores.empty:
+                st.markdown("##### 20 prestadores com maior aumento")
                 st.info("Nenhum prestador com volume suficiente nos dois meses para comparar.")
             else:
-                for _, row in prestadores.iterrows():
-                    nome = row.get("NOME_PRESTADOR") or f"Prestador {int(row['CD_PRESTADOR'])}"
-                    titulo = (
-                        f"{nome} — CPF/CNPJ: {row.get('CNPJ_CPF_PRESTADOR') or '—'} · "
-                        f"{row.get('UF') or '—'} · {row.get('CIDADE') or '—'} · Cluster: {row.get('CLUSTER') or '—'} · "
-                        f"Especialidade principal: {row.get('ESPECIALIDADE') or '—'} · "
-                        f"Variação de uso: {row['variacao_pct']:+.1f}%"
-                    )
-                    with st.expander(titulo, expanded=False):
-                        det = resumo["detalhes_prestador"].get(row["CD_PRESTADOR"])
-                        if det is not None and not det.empty:
-                            st.markdown("**Procedimentos que causaram o aumento:**")
-                            _tabela_detalhe(det)
+                with st.expander("20 prestadores com maior aumento", expanded=False):
+                    for _, row in prestadores.iterrows():
+                        nome = row.get("NOME_PRESTADOR") or f"Prestador {int(row['CD_PRESTADOR'])}"
+                        st.markdown(
+                            f"- **{nome}** — CPF/CNPJ: {row.get('CNPJ_CPF_PRESTADOR') or '—'} · "
+                            f"{row.get('UF') or '—'} · {row.get('CIDADE') or '—'} · Cluster: {row.get('CLUSTER') or '—'} · "
+                            f"Especialidade principal: {row.get('ESPECIALIDADE') or '—'} · "
+                            f"Variação de uso: {row['variacao_pct']:+.1f}%"
+                        )
         st.divider()
         # ---------- Alerta: prestador + procedimento com aumento relevante de qtde e valor ----------
         st.markdown("##### 🚨 Prestadores com aumento relevante de quantidade e valor")
@@ -903,6 +899,7 @@ elif st.session_state.pagina == "severidade":
         else:
             st.caption(msg_alertas)
             mes_anterior_lbl = label_mes(alertas["MES_ANTERIOR"].iloc[0])
+            mes_atual_lbl = label_mes(alertas["MES_ATUAL"].iloc[0])
             for cd_prestador, grupo in alertas.groupby("CD_PRESTADOR", sort=False):
                 r0 = grupo.iloc[0]
                 nome = r0.get("NOME_PRESTADOR") or f"Prestador {int(cd_prestador)}"
@@ -918,6 +915,7 @@ elif st.session_state.pagina == "severidade":
                             f"na quantidade em relação a {mes_anterior_lbl}. Esse aumento aconteceu na especialidade "
                             f"**{row['ESPECIALIDADE']}**, no procedimento **{row['NOME_PROCEDIMENTO']}**, que foi de "
                             f"{fmt_int(row['qtd_anterior'])} para {fmt_int(row['qtd_atual'])} solicitações. "
-                            f"Em termos de valores, houve um aumento de **{fmt_brl(row['delta_valor'])}**, "
-                            f"que é **{row['variacao_valor_pct']:+.0f}%**."
+                            f"Em termos de valores, em {mes_anterior_lbl} foi {fmt_brl(row['valor_anterior'])} e em "
+                            f"{mes_atual_lbl} foi de {fmt_brl(row['valor_atual'])}, um aumento de "
+                            f"**{fmt_brl(row['delta_valor'])}**, que representa **{row['variacao_valor_pct']:+.0f}%**."
                         )
