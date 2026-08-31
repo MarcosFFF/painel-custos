@@ -524,26 +524,25 @@ if st.session_state.pagina == "projecao":
 # PÁGINA: SEVERIDADE
 # ============================================================
 elif st.session_state.pagina == "severidade":
-    col_titulo_sev, col_atualizar_sev = st.columns([5, 1])
-    with col_titulo_sev:
-        st.subheader("🕵️ Severidade")
-    with col_atualizar_sev:
-        if st.button("🔄 Recarregar", use_container_width=True):
-            carregar_base_severidade.clear()
-            st.rerun()
-    agregado, base_usuarios, aviso_carga = carregar_base_severidade(".")
-    try:
-        agregado, base_usuarios, aviso_carga = carregar_base_severidade(".")
-    except Exception as e:
-        import traceback
-        st.error(f"Erro ao carregar base de severidade: {type(e).__name__}: {e}")
-        st.code(traceback.format_exc())
-        st.stop()
-    if agregado is None:
-        st.error(f"Não consegui carregar os dados de severidade: {aviso_carga}")
-        st.stop()
-    if aviso_carga:
-        st.warning(aviso_carga)
+        col_titulo_sev, col_atualizar_sev = st.columns([5, 1])
+        with col_titulo_sev:
+            st.subheader("🕵️ Severidade")
+        with col_atualizar_sev:
+            if st.button("🔄 Recarregar", use_container_width=True):
+                carregar_base_severidade.clear()
+                st.rerun()
+        try:
+            agregado, base_usuarios, aviso_carga = carregar_base_severidade(".")
+        except Exception as e:
+            import traceback
+            st.error(f"Erro ao carregar base de severidade: {type(e).__name__}: {e}")
+            st.code(traceback.format_exc())
+            st.stop()
+        if agregado is None:
+            st.error(f"Não consegui carregar os dados de severidade: {aviso_carga}")
+            st.stop()
+        if aviso_carga:
+            st.warning(aviso_carga)
     # ---------- filtros ----------
     with st.container(border=True):
         st.markdown("**Filtros**")
