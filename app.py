@@ -532,6 +532,13 @@ elif st.session_state.pagina == "severidade":
             carregar_base_severidade.clear()
             st.rerun()
     agregado, base_usuarios, aviso_carga = carregar_base_severidade(".")
+    try:
+        agregado, base_usuarios, aviso_carga = carregar_base_severidade(".")
+    except Exception as e:
+        import traceback
+        st.error(f"Erro ao carregar base de severidade: {type(e).__name__}: {e}")
+        st.code(traceback.format_exc())
+        st.stop()
     if agregado is None:
         st.error(f"Não consegui carregar os dados de severidade: {aviso_carga}")
         st.stop()
