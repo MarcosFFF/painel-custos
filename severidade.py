@@ -372,6 +372,7 @@ def evolucao_mensal(df):
     ).reset_index().sort_values("MES")
     r["uso_por_procedimento"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
+    r["procedimento_por_vida"] = (r["qtd_procedimentos"] / r["qtd_usuarios"]).round(3)
     r["indice_severidade"] = _indice_severidade(r)
     return r
 @st.cache_data(show_spinner=False)
