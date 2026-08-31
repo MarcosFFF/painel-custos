@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
 import os
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from datetime import date, datetime
 from supabase import create_client, Client
 import plotly.express as px
@@ -223,6 +226,49 @@ def gravar_real_mensal(key, valor):
         return True, ""
     except Exception as e:
         return False, str(e)
+def enviar_email_projecao(view_year, view_month, label_projetado, projecao, acumulado,
+                           decorridos, du_total, dias_lancados, total_dias, nota_projecao,
+                           comparativos):
+    try:
+        remetente = st.secrets["EMAIL_REMETENTE"]
+        senha = st.secrets["EMAIL_SENHA_APP"]
+        destinatarios = [e.strip() for e in st.secrets["EMAIL_DESTINATARIO"].split(",") if e.strip()]
+        smtp_host = st.secrets.get("EMAIL_SMTP_HOST", "smtp.gmail.com")
+        smtp_port = int(st.secrets.get("EMAIL_SMTP_PORT", 587))
+    except KeyError as e:
+        return False, f"Faltou configurar o segredo {e} em Settings → Secrets do Streamlit Cloud."
+    if not destinatarios:
+        return False, "EMAIL_DESTINATARIO está vazio nos Secrets."
+    titulo_mes = label_mes(mes_key(view_year, view_month))
+    linhas = [
+        f"Projeção de Sinistro — {titulo_mes}",
+        "",
+        f"{label_projetado}: {fmt_brl(projecao)}",
+        f"Valor acumulado: {fmt_brl(acumulado)}",
+        f"Dias lançados: {dias_lancados} de {total_dias}",
+        f"Dias úteis decorridos / total: {decorridos} / {du_total}",
+    ]
+    if nota_projecao:
+        linhas.append(f"Obs.: {nota_projecao}")
+    if comparativos:
+        linhas.append("")
+        linhas.append("Comparativos:")
+        for titulo_comp, proj_comp, acum_comp in comparativos:
+            linhas.append(f"- {titulo_comp} — Projetado: {fmt_brl(proj_comp)} | Acumulado: {fmt_brl(acum_comp)}")
+    corpo = "\n".join(linhas)
+    msg = MIMEMultipart()
+    msg["From"] = remetente
+    msg["To"] = ", ".join(destinatarios)
+    msg["Subject"] = f"Projeção de Sinistro - {titulo_mes}"
+    msg.attach(MIMEText(corpo, "plain", "utf-8"))
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as servidor:
+            servidor.starttls()
+            servidor.login(remetente, senha)
+            servidor.sendmail(remetente, destinatarios, msg.as_string())
+        return True, ""
+    except Exception as e:
+        return False, str(e)
 # ---------- cálculos ----------
 def entradas_do_mes(y, m, total):
     return {
@@ -334,7 +380,7 @@ if st.session_state.pagina == "projecao":
                 vm, vy = 1, vy + 1
             st.session_state.view_year, st.session_state.view_month = vy, vm
             st.rerun()
-    c4, c5 = st.columns(2)
+    c4, c5, c6 = st.columns(3)
     with c4:
         if st.button("Ir para o mês atual", use_container_width=True, disabled=eh_mes_atual_nav):
             st.session_state.view_year, st.session_state.view_month = ANO_HOJE, MES_HOJE
@@ -343,6 +389,9 @@ if st.session_state.pagina == "projecao":
         if st.button("🔄 Atualizar dados", use_container_width=True):
             carregar_dados()
             st.rerun()
+    with c6:
+        if st.button("📧 Enviar e-mail", use_container_width=True):
+            st.session_state["_enviar_email_pendente"] = True
     view_year, view_month = st.session_state.view_year, st.session_state.view_month
     total, du_total, dn_total = calendario(view_year, view_month)
     entradas = entradas_do_mes(view_year, view_month, total)
@@ -425,6 +474,22 @@ if st.session_state.pagina == "projecao":
     if projecao is None:
         st.warning("O % de variação do 'Valor projetado' não aparece porque a projeção do mês atual voltou vazia.")
     st.caption("Variação % em relação ao mês/ano corrente — vermelho = aumento, verde = redução.")
+    if st.session_state.get("_enviar_email_pendente"):
+        st.session_state["_enviar_email_pendente"] = False
+        with st.spinner("Enviando e-mail..."):
+            comparativos = [
+                (f"{label_mes(key_mes_anterior)} (mês anterior)", proj_mes_anterior, acum_mes_anterior),
+                (f"{label_mes(key_mesmo_mes_ano_anterior)} (mesmo mês, ano anterior)",
+                 proj_mesmo_mes_ano_anterior, acum_mesmo_mes_ano_anterior),
+            ]
+            ok_email, erro_email = enviar_email_projecao(
+                view_year, view_month, label_projetado, projecao, acumulado,
+                decorridos, du_total, len(entradas), total, nota, comparativos,
+            )
+        if ok_email:
+            st.success("E-mail enviado com sucesso!")
+        else:
+            st.error(f"Erro ao enviar e-mail: {erro_email}")
     st.divider()
     st.subheader("Lançamentos do mês")
     linhas = []
