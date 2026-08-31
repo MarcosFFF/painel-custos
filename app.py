@@ -531,7 +531,7 @@ elif st.session_state.pagina == "severidade":
         if st.button("🔄 Recarregar", use_container_width=True):
             carregar_base_severidade.clear()
             st.rerun()
-    agregado, aviso_carga = carregar_base_severidade(".")
+    agregado, base_usuarios, aviso_carga = carregar_base_severidade(".")
     if agregado is None:
         st.error(f"Não consegui carregar os dados de severidade: {aviso_carga}")
         st.stop()
@@ -568,17 +568,24 @@ elif st.session_state.pagina == "severidade":
         especialidades=f_especialidade or None, planos=f_plano or None, clusters=f_cluster or None,
         cidades=f_cidade or None,
     )
+    usuarios_filtrado = aplicar_filtros(
+        base_usuarios,
+        meses=f_mes or None, ufs=f_uf or None, regioes=f_regiao or None,
+        especialidades=f_especialidade or None, planos=f_plano or None, clusters=f_cluster or None,
+        cidades=f_cidade or None,
+    )
     if df_filtrado.empty:
         st.info("Nenhum dado para esses filtros.")
         st.stop()
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Procedimentos", fmt_int(df_filtrado["qtd_procedimentos"].sum()))
     m2.metric("Uso total", fmt_int(df_filtrado["soma_uso"].sum()))
     _uso_total = df_filtrado["soma_uso"].sum()
     _qtd_total = df_filtrado["qtd_procedimentos"].sum()
-    _usuarios_total = df_filtrado["qtd_usuarios"].sum()
-    m3.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
-    m4.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
+    _usuarios_total = usuarios_filtrado["CD_USUARIO"].nunique()
+    m3.metric("Qtde de vidas", fmt_int(_usuarios_total))
+    m4.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
+    m5.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
     st.divider()
     tab_rank, tab_evolucao, tab_watch, tab_ofensores, tab_desvios, tab_resumo = st.tabs(
         ["Ranking de Severidade", "Evolução mensal", "Atenção", "Ofensores", "Desvios de Solicitações", "Resumo"]
@@ -595,7 +602,7 @@ elif st.session_state.pagina == "severidade":
             altura_total = altura or max(350, len(df_plot) * 35)
         fig = px.bar(
             df_plot, x="indice_severidade", y=coluna, orientation="h",
-            custom_data=[coluna, "indice_severidade", "uso_por_procedimento", "uso_por_vida"],
+            custom_data=[coluna, "indice_severidade", "uso_por_procedimento", "uso_por_vida", "qtd_usuarios"],
             title=titulo,
             color="indice_severidade",
             color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
@@ -609,7 +616,8 @@ elif st.session_state.pagina == "severidade":
                 "<b>%{customdata[0]}</b><br>"
                 "ISR: %{customdata[1]:,.2f}<br>"
                 "Uso por procedimento: %{customdata[2]:.2f}<br>"
-                "Uso por vida: %{customdata[3]:.2f}"
+                "Uso por vida: %{customdata[3]:.2f}<br>"
+                "Qtde de vidas: %{customdata[4]:,.0f}"
                 "<extra></extra>"
             ),
             cliponaxis=False,
@@ -638,11 +646,11 @@ elif st.session_state.pagina == "severidade":
         )
         rc1, rc2 = st.columns(2)
         with rc1:
-            _grafico_severidade(ranking_severidade(df_filtrado, "ESPECIALIDADE", top_n=40), "ESPECIALIDADE", "Por especialidade", janela=JANELA_5_BARRAS)
-            _grafico_severidade(ranking_severidade(df_filtrado, "UF", top_n=30), "UF", "Por UF", janela=JANELA_5_BARRAS)
+            _grafico_severidade(ranking_severidade(df_filtrado, "ESPECIALIDADE", top_n=40, usuarios=usuarios_filtrado), "ESPECIALIDADE", "Por especialidade", janela=JANELA_5_BARRAS)
+            _grafico_severidade(ranking_severidade(df_filtrado, "UF", top_n=30, usuarios=usuarios_filtrado), "UF", "Por UF", janela=JANELA_5_BARRAS)
         with rc2:
-            _grafico_severidade(ranking_severidade(df_filtrado, "NOME_PROCEDIMENTO", top_n=50), "NOME_PROCEDIMENTO", "Por procedimento", janela=JANELA_5_BARRAS)
-            _grafico_severidade(ranking_severidade(df_filtrado, "REGIAO"), "REGIAO", "Por região", janela=JANELA_5_BARRAS)
+            _grafico_severidade(ranking_severidade(df_filtrado, "NOME_PROCEDIMENTO", top_n=50, usuarios=usuarios_filtrado), "NOME_PROCEDIMENTO", "Por procedimento", janela=JANELA_5_BARRAS)
+            _grafico_severidade(ranking_severidade(df_filtrado, "REGIAO", usuarios=usuarios_filtrado), "REGIAO", "Por região", janela=JANELA_5_BARRAS)
         st.divider()
         st.markdown("#### Severidade por outras dimensões")
         dims = {
@@ -650,13 +658,13 @@ elif st.session_state.pagina == "severidade":
             "Procedimento": "NOME_PROCEDIMENTO", "Cluster": "CLUSTER",
         }
         dim_escolhida = st.selectbox("Dimensão", list(dims.keys()))
-        rank_sev = ranking_severidade(df_filtrado, dims[dim_escolhida])
+        rank_sev = ranking_severidade(df_filtrado, dims[dim_escolhida], usuarios=usuarios_filtrado)
         if not rank_sev.empty:
             _grafico_severidade(rank_sev, dims[dim_escolhida], f"Severidade por {dim_escolhida}", altura=450)
         else:
             st.info("Sem dados para a dimensão selecionada.")
     with tab_evolucao:
-        evolucao = evolucao_mensal(df_filtrado)
+        evolucao = evolucao_mensal(df_filtrado, usuarios_filtrado)
         # Uso por procedimento e uso por vida ficam na mesma escala (esquerda);
         # procedimento por vida (frequência) tem escala bem menor (perto de 1),
         # por isso vai num eixo secundário à direita — senão ficaria achatada.
@@ -697,7 +705,7 @@ elif st.session_state.pagina == "severidade":
     # ---------- ATENÇÃO (baseada apenas em uso e volume) ----------
     with tab_watch:
         st.markdown("#### Prestadores que merecem atenção")
-        watchlist = montar_watchlist(df_filtrado)
+        watchlist = montar_watchlist(df_filtrado, usuarios=usuarios_filtrado)
         if not watchlist.empty:
             # Preparar DataFrame para o gráfico — garantir tipos corretos
             wl_plot = watchlist.copy()
@@ -767,7 +775,7 @@ elif st.session_state.pagina == "severidade":
                 "- 📝 **justificativa** = texto explicando **exatamente quais critérios** "
                 "foram acionados e quais os valores/limiares correspondentes."
             )
-        ofensores = identificar_ofensores(df_filtrado)
+        ofensores = identificar_ofensores(df_filtrado, usuarios=usuarios_filtrado)
         if not ofensores.empty:
             # Formatar tabela para exibição — já vem ordenada do mais para o menos severo (ISR)
             exib_of = ofensores.copy()
@@ -821,7 +829,7 @@ elif st.session_state.pagina == "severidade":
             st.info("Nenhum ofensor encontrado com os filtros atuais.")
         st.divider()
         st.markdown("**Desvios** (prestador vs. média da própria especialidade)")
-        desvios = calcular_desvios(df_filtrado)
+        desvios = calcular_desvios(df_filtrado, usuarios=usuarios_filtrado)
         if not desvios.empty:
             exib_desv = desvios.copy()
             exib_desv["qtd_procedimentos"] = exib_desv["qtd_procedimentos"].map(fmt_int)
@@ -836,7 +844,7 @@ elif st.session_state.pagina == "severidade":
             st.info("Sem dados para calcular desvios.")
         st.divider()
         st.markdown("**Comparação com o mês anterior** (respeitando o volume mínimo)")
-        comp, msg_comp = comparacao_mensal(df_filtrado, "NOME_PROCEDIMENTO", volume_minimo=volume_minimo)
+        comp, msg_comp = comparacao_mensal(df_filtrado, "NOME_PROCEDIMENTO", volume_minimo=volume_minimo, usuarios=usuarios_filtrado)
         st.caption(msg_comp)
         if not comp.empty:
             comp_relevante = comp[comp["relevante"]].drop(columns=["relevante"])
@@ -911,7 +919,7 @@ elif st.session_state.pagina == "severidade":
             f"Só entram grupos com volume ≥ {volume_minimo} procedimentos em ambos os meses "
             "(ajustável no filtro acima)."
         )
-        resumo, msg_resumo = resumo_comparativo(df_filtrado, volume_minimo=volume_minimo)
+        resumo, msg_resumo = resumo_comparativo(df_filtrado, volume_minimo=volume_minimo, usuarios=usuarios_filtrado)
         if resumo is None:
             st.info(msg_resumo)
         else:
@@ -1025,7 +1033,7 @@ elif st.session_state.pagina == "severidade":
             "pelo menos 50% tanto na qtde quanto no valor. Usa números absolutos (qtde de guias e "
             "R$ pago) — não a métrica de uso ponderada usada no restante do painel."
         )
-        alertas, msg_alertas = alertas_prestador_procedimento(df_filtrado)
+        alertas, msg_alertas = alertas_prestador_procedimento(df_filtrado, usuarios=usuarios_filtrado)
         if alertas is None or alertas.empty:
             st.info(msg_alertas)
         else:
