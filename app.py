@@ -4,6 +4,8 @@ import os
 from datetime import date, datetime
 from supabase import create_client, Client
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from projecao_sinistro import projetar_sinistro_mes_atual, projetar_dias_restantes
 try:
     from severidade import (
@@ -655,13 +657,31 @@ elif st.session_state.pagina == "severidade":
             st.info("Sem dados para a dimensão selecionada.")
     with tab_evolucao:
         evolucao = evolucao_mensal(df_filtrado)
-        fig_uso = px.line(
-            evolucao, x="MES", y=["uso_por_procedimento", "uso_por_vida"],
-            markers=True, title="Uso - Qtde e Média de uso",
+        # Uso por procedimento e uso por vida ficam na mesma escala (esquerda);
+        # procedimento por vida (frequência) tem escala bem menor (perto de 1),
+        # por isso vai num eixo secundário à direita — senão ficaria achatada.
+        fig_uso = make_subplots(specs=[[{"secondary_y": True}]])
+        fig_uso.add_trace(
+            go.Scatter(x=evolucao["MES"], y=evolucao["uso_por_procedimento"], mode="lines+markers",
+                       name="Uso por procedimento", line=dict(color="#1f6fb2")),
+            secondary_y=False,
         )
-        _nomes_series = {"uso_por_procedimento": "Qtde", "uso_por_vida": "Média de uso"}
-        fig_uso.for_each_trace(lambda t: t.update(name=_nomes_series.get(t.name, t.name), legendgroup=_nomes_series.get(t.name, t.name)))
-        fig_uso.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10), legend_title_text="")
+        fig_uso.add_trace(
+            go.Scatter(x=evolucao["MES"], y=evolucao["uso_por_vida"], mode="lines+markers",
+                       name="Uso por vida", line=dict(color="#87CEEB")),
+            secondary_y=False,
+        )
+        fig_uso.add_trace(
+            go.Scatter(x=evolucao["MES"], y=evolucao["procedimento_por_vida"], mode="lines+markers",
+                       name="Procedimento por vida", line=dict(color="#e07b39", dash="dot")),
+            secondary_y=True,
+        )
+        fig_uso.update_layout(
+            title="Uso por procedimento, uso por vida e procedimento por vida",
+            height=350, margin=dict(l=10, r=10, t=40, b=10), legend_title_text="",
+        )
+        fig_uso.update_yaxes(title_text="Uso (por procedimento / por vida)", secondary_y=False)
+        fig_uso.update_yaxes(title_text="Procedimento por vida", secondary_y=True)
         st.plotly_chart(fig_uso, use_container_width=True)
         fig_isr = px.line(
             evolucao, x="MES", y="indice_severidade", markers=True, text="indice_severidade", title="ISR por mês",
