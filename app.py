@@ -897,19 +897,56 @@ elif st.session_state.pagina == "severidade":
         else:
             st.caption(msg_resumo)
 
-            def _tabela_detalhe(det, mapa_colunas=None):
+            def _fmt_pct(v):
+                return f"{v:+.1f}%" if pd.notna(v) else "—"
+
+            def _linha_resumo(row):
+                """Grade de 1 linha com o resumo (uso e vidas) do item expandido — especialidade ou UF."""
+                dados = {
+                    "Soma uso atual": [fmt_int(row.get("soma_uso_atual"))],
+                    "Soma uso anterior": [fmt_int(row.get("soma_uso_anterior"))],
+                    "Variação uso": [_fmt_pct(row.get("variacao_pct"))],
+                    "Qtde de vidas atual": [fmt_int(row.get("qtd_usuarios_atual"))],
+                    "Qtde de vidas anterior": [fmt_int(row.get("qtd_usuarios_anterior"))],
+                    "Variação de vidas": [_fmt_pct(row.get("variacao_vidas_pct"))],
+                }
+                st.dataframe(pd.DataFrame(dados), hide_index=True, use_container_width=True)
+
+            def _tabela_detalhe(det, coluna_chave, label_chave, extra_cols=None):
+                """
+                Grade de detalhe (procedimentos dentro de uma especialidade, cidades dentro
+                de uma UF etc.). extra_cols: lista de (coluna, rótulo) inseridas logo após
+                a coluna-chave (ex.: Cluster ao lado de Cidade).
+                """
                 if det is None or det.empty:
                     return
-                det_show = det.copy()
-                if mapa_colunas:
-                    det_show = det_show.rename(columns=mapa_colunas)
-                det_show["variacao_pct"] = det_show["variacao_pct"].map(lambda v: f"{v:+.1f}%")
-                for c in ["qtd_procedimentos_atual", "qtd_procedimentos_anterior"]:
+                colunas_ordem = [coluna_chave]
+                renome = {coluna_chave: label_chave}
+                if extra_cols:
+                    for col, label in extra_cols:
+                        colunas_ordem.append(col)
+                        renome[col] = label
+                colunas_ordem += [
+                    "soma_uso_atual", "soma_uso_anterior", "variacao_pct",
+                    "qtd_usuarios_atual", "qtd_usuarios_anterior", "variacao_vidas_pct",
+                ]
+                renome.update({
+                    "soma_uso_atual": "Soma uso atual",
+                    "soma_uso_anterior": "Soma uso anterior",
+                    "variacao_pct": "Variação uso",
+                    "qtd_usuarios_atual": "Qtde de vidas atual",
+                    "qtd_usuarios_anterior": "Qtde de vidas anterior",
+                    "variacao_vidas_pct": "Variação de vidas",
+                })
+                colunas_ordem = [c for c in colunas_ordem if c in det.columns]
+                det_show = det[colunas_ordem].copy()
+                det_show["variacao_pct"] = det_show["variacao_pct"].map(_fmt_pct)
+                if "variacao_vidas_pct" in det_show.columns:
+                    det_show["variacao_vidas_pct"] = det_show["variacao_vidas_pct"].map(_fmt_pct)
+                for c in ["soma_uso_atual", "soma_uso_anterior", "qtd_usuarios_atual", "qtd_usuarios_anterior"]:
                     if c in det_show.columns:
                         det_show[c] = det_show[c].map(fmt_int)
-                for c in ["soma_uso_atual", "soma_uso_anterior"]:
-                    if c in det_show.columns:
-                        det_show[c] = det_show[c].map(fmt_int)
+                det_show = det_show.rename(columns=renome)
                 st.dataframe(det_show, hide_index=True, use_container_width=True)
 
             # ---------- Especialidades ----------
@@ -921,10 +958,11 @@ elif st.session_state.pagina == "severidade":
                 for _, row in especialidades.iterrows():
                     titulo = f"{row['ESPECIALIDADE']} · Variação de uso: {row['variacao_pct']:+.1f}%"
                     with st.expander(titulo, expanded=False):
+                        _linha_resumo(row)
                         det = resumo["detalhes_especialidade"].get(row["ESPECIALIDADE"])
                         if det is not None and not det.empty:
                             st.markdown("**Procedimentos que causaram o aumento:**")
-                            _tabela_detalhe(det)
+                            _tabela_detalhe(det, "NOME_PROCEDIMENTO", "Procedimento")
         st.divider()
         if resumo is not None:
             # ---------- UFs ----------
@@ -936,10 +974,11 @@ elif st.session_state.pagina == "severidade":
                 for _, row in ufs.iterrows():
                     titulo = f"{row['UF']} · Variação de uso: {row['variacao_pct']:+.1f}%"
                     with st.expander(titulo, expanded=False):
+                        _linha_resumo(row)
                         det = resumo["detalhes_uf"].get(row["UF"])
                         if det is not None and not det.empty:
                             st.markdown("**Cidades (com cluster) que causaram o aumento:**")
-                            _tabela_detalhe(det, mapa_colunas={"CIDADE_PRESTADOR": "CIDADE"})
+                            _tabela_detalhe(det, "CIDADE_PRESTADOR", "Cidade", extra_cols=[("CLUSTER", "Cluster")])
         st.divider()
         if resumo is not None:
             # ---------- Prestadores ----------
@@ -982,7 +1021,7 @@ elif st.session_state.pagina == "severidade":
                 )
                 with st.expander(cabecalho, expanded=False):
                     for _, row in grupo.iterrows():
-                        st.markdown(
+                        texto = (
                             f"**{nome}** ({row.get('CIDADE') or '—'}, CPF/CNPJ {row.get('CNPJ_CPF_PRESTADOR') or '—'}, "
                             f"cluster {row.get('CLUSTER') or '—'}) teve aumento de **{row['variacao_qtd_pct']:+.0f}%** "
                             f"na quantidade em relação a {mes_anterior_lbl}. Esse aumento aconteceu na especialidade "
@@ -992,3 +1031,15 @@ elif st.session_state.pagina == "severidade":
                             f"{mes_atual_lbl} foi de {fmt_brl(row['valor_atual'])}, um aumento de "
                             f"**{fmt_brl(row['delta_valor'])}**, que representa **{row['variacao_valor_pct']:+.0f}%**."
                         )
+                        if pd.notna(row.get("variacao_usuarios_pct")):
+                            texto += (
+                                f" Em termos de vidas, em {mes_anterior_lbl} foram {fmt_int(row['usuarios_anterior'])} "
+                                f"e em {mes_atual_lbl} foram {fmt_int(row['usuarios_atual'])}, uma variação de "
+                                f"**{row['variacao_usuarios_pct']:+.0f}%**."
+                            )
+                        else:
+                            texto += (
+                                f" Em termos de vidas, em {mes_anterior_lbl} foram {fmt_int(row['usuarios_anterior'])} "
+                                f"e em {mes_atual_lbl} foram {fmt_int(row['usuarios_atual'])}."
+                            )
+                        st.markdown(texto)
