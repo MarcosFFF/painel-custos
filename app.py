@@ -241,7 +241,7 @@ def enviar_email_projecao(view_year, view_month, label_projetado, projecao, acum
         return False, "EMAIL_DESTINATARIO está vazio nos Secrets."
     titulo_mes = label_mes(mes_key(view_year, view_month))
     linhas = [
-        f"Projeção de Sinistro — {titulo_mes}",
+        f"<strong>Projeção de Sinistro — {titulo_mes}</strong>",
         "",
         f"{label_projetado}: {fmt_brl(projecao)}",
         f"Valor acumulado: {fmt_brl(acumulado)}",
@@ -252,15 +252,19 @@ def enviar_email_projecao(view_year, view_month, label_projetado, projecao, acum
         linhas.append(f"Obs.: {nota_projecao}")
     if comparativos:
         linhas.append("")
-        linhas.append("Comparativos:")
+        linhas.append("<strong>Comparativos:</strong>")
         for titulo_comp, proj_comp, acum_comp in comparativos:
             linhas.append(f"- {titulo_comp} — Projetado: {fmt_brl(proj_comp)} | Acumulado: {fmt_brl(acum_comp)}")
-    corpo = "\n".join(linhas)
+    corpo_html = "<br>\n".join(linhas)
+    corpo_html = (
+        '<div style="font-family:Arial,Helvetica,sans-serif; font-size:14px; color:#1a1a1a;">'
+        f"{corpo_html}</div>"
+    )
     msg = MIMEMultipart()
     msg["From"] = remetente
     msg["To"] = ", ".join(destinatarios)
     msg["Subject"] = f"Projeção de Sinistro - {titulo_mes}"
-    msg.attach(MIMEText(corpo, "plain", "utf-8"))
+    msg.attach(MIMEText(corpo_html, "html", "utf-8"))
     try:
         with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as servidor:
             servidor.starttls()
