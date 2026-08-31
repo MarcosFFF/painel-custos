@@ -228,7 +228,7 @@ def gravar_real_mensal(key, valor):
         return False, str(e)
 def enviar_email_projecao(view_year, view_month, label_projetado, projecao, acumulado,
                            decorridos, du_total, dias_lancados, total_dias, nota_projecao,
-                           comparativos):
+                           variacoes_projetado):
     try:
         remetente = st.secrets["EMAIL_REMETENTE"]
         senha = st.secrets["EMAIL_SENHA_APP"]
@@ -244,17 +244,17 @@ def enviar_email_projecao(view_year, view_month, label_projetado, projecao, acum
         f"<strong>Projeção de Sinistro — {titulo_mes}</strong>",
         "",
         f"{label_projetado}: {fmt_brl(projecao)}",
-        f"Valor acumulado: {fmt_brl(acumulado)}",
-        f"Dias lançados: {dias_lancados} de {total_dias}",
-        f"Dias úteis decorridos / total: {decorridos} / {du_total}",
     ]
+    for label_periodo, delta_pct, valor_ref in (variacoes_projetado or []):
+        if delta_pct is None or valor_ref is None:
+            continue
+        direcao = "maior" if delta_pct >= 0 else "menor"
+        linhas.append(f"{abs(delta_pct):.1f}% {direcao} que {label_periodo} - {fmt_brl(valor_ref)}")
+    linhas.append(f"Valor acumulado: {fmt_brl(acumulado)}")
+    linhas.append(f"Dias lançados: {dias_lancados} de {total_dias}")
+    linhas.append(f"Dias úteis decorridos / total: {decorridos} / {du_total}")
     if nota_projecao:
         linhas.append(f"Obs.: {nota_projecao}")
-    if comparativos:
-        linhas.append("")
-        linhas.append("<strong>Comparativos:</strong>")
-        for titulo_comp, proj_comp, acum_comp in comparativos:
-            linhas.append(f"- {titulo_comp} — Projetado: {fmt_brl(proj_comp)} | Acumulado: {fmt_brl(acum_comp)}")
     corpo_html = "<br>\n".join(linhas)
     corpo_html = (
         '<div style="font-family:Arial,Helvetica,sans-serif; font-size:14px; color:#1a1a1a;">'
@@ -481,14 +481,13 @@ if st.session_state.pagina == "projecao":
     if st.session_state.get("_enviar_email_pendente"):
         st.session_state["_enviar_email_pendente"] = False
         with st.spinner("Enviando e-mail..."):
-            comparativos = [
-                (f"{label_mes(key_mes_anterior)} (mês anterior)", proj_mes_anterior, acum_mes_anterior),
-                (f"{label_mes(key_mesmo_mes_ano_anterior)} (mesmo mês, ano anterior)",
-                 proj_mesmo_mes_ano_anterior, acum_mesmo_mes_ano_anterior),
+            variacoes_projetado = [
+                (f"{MESES[mes_ant_mes - 1]}/{ano_ant_mes}", delta_proj, proj_mes_anterior),
+                (f"{MESES[view_month - 1]} de {view_year - 1}", delta_proj_aa, proj_mesmo_mes_ano_anterior),
             ]
             ok_email, erro_email = enviar_email_projecao(
                 view_year, view_month, label_projetado, projecao, acumulado,
-                decorridos, du_total, len(entradas), total, nota, comparativos,
+                decorridos, du_total, len(entradas), total, nota, variacoes_projetado,
             )
         if ok_email:
             st.success("E-mail enviado com sucesso!")
