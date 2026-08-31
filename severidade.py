@@ -178,7 +178,7 @@ def carregar_base_severidade(pasta="."):
         + glob.glob(os.path.join(pasta, "*4016R_parte_*.csv"))
     )
     if not candidatos:
-        return None, "Nenhum arquivo .csv encontrado."
+        return None, None, "Nenhum arquivo .csv encontrado."
     grupos_arquivo = {}
     for c in candidatos:
         grupos_arquivo.setdefault(_chave_mes(c), []).append(c)
@@ -190,7 +190,7 @@ def carregar_base_severidade(pasta="."):
             try:
                 df = _ler_csv_parte(arq, COLUNAS_ESPERADAS)
             except Exception as e:
-                return None, f"Erro ao ler {os.path.basename(arq)}: {e}"
+                return None, None, f"Erro ao ler {os.path.basename(arq)}: {e}"
             df["ARQUIVO_ORIGEM"] = chave_grupo
             partes.append(df)
     dados = pd.concat(partes, ignore_index=True)
@@ -279,6 +279,36 @@ def carregar_base_severidade(pasta="."):
                 "NOME_PROCEDIMENTO", "CIDADE_PRESTADOR", "NOME_PRESTADOR"]:
         if col in agregado.columns:
             agregado[col] = agregado[col].astype("category")
+    # ---------- Base para "vidas" (pacientes distintos), sem contagem dupla ----------
+    # `agregado` acima é bem granular (por prestador, procedimento, plano, cidade
+    # etc.) — se somássemos a coluna qtd_usuarios (nunique de CD_USUARIO dentro de
+    # cada grupo bem fino) para chegar num nível mais alto (por mês, por
+    # especialidade, por UF...), um paciente que passou por mais de um
+    # procedimento/prestador/especialidade no mês seria contado mais de uma vez,
+    # inflando a quantidade de vidas. Por isso mantemos, à parte, uma linha por
+    # combinação única de dimensão + CD_USUARIO (sem duplicar guias do mesmo
+    # paciente na mesma combinação) — a partir dela dá pra calcular
+    # nunique(CD_USUARIO) corretamente, não importa em qual nível se agrupe.
+    colunas_usuarios = [
+        "MES", "UF", "REGIAO", "ESPECIALIDADE", "CD_PLANO", "NR_PLANO", "CLUSTER",
+        "NOME_PROCEDIMENTO", "CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR",
+        "CIDADE_PRESTADOR", "CD_USUARIO",
+    ]
+    base_usuarios = dados[colunas_usuarios].drop_duplicates().reset_index(drop=True)
+    mascara_valida_usu = pd.Series(True, index=base_usuarios.index)
+    for col in colunas_chave:
+        mascara_valida_usu &= ~base_usuarios[col].apply(_vazio_ou_nan_texto)
+    base_usuarios = base_usuarios[mascara_valida_usu].reset_index(drop=True)
+    esp_normalizada_usu = base_usuarios["ESPECIALIDADE"].apply(normalizar_texto)
+    proc_normalizado_usu = base_usuarios["NOME_PROCEDIMENTO"].apply(normalizar_texto)
+    base_usuarios = base_usuarios[
+        ~esp_normalizada_usu.isin(ESPECIALIDADES_EXCLUIDAS)
+        & ~proc_normalizado_usu.isin(ESPECIALIDADES_EXCLUIDAS)
+    ].reset_index(drop=True)
+    for col in ["MES", "UF", "REGIAO", "ESPECIALIDADE", "NR_PLANO", "CLUSTER",
+                "NOME_PROCEDIMENTO", "CIDADE_PRESTADOR", "NOME_PRESTADOR"]:
+        if col in base_usuarios.columns:
+            base_usuarios[col] = base_usuarios[col].astype("category")
     avisos = []
     if caminho_prestadores is None:
         avisos.append(
@@ -286,7 +316,21 @@ def carregar_base_severidade(pasta="."):
             "mostrando apenas o código do prestador."
         )
     aviso = " | ".join(avisos) if avisos else None
-    return agregado, aviso
+    return agregado, base_usuarios, aviso
+def vidas_por(base_usuarios, colunas):
+    """
+    Quantidade de vidas (pacientes distintos) de verdade — nunique(CD_USUARIO) —
+    agrupada por `colunas` (uma coluna ou lista de colunas), calculada a partir da
+    base_usuarios (uma linha por combinação única de dimensão + paciente). Ao
+    contrário de somar uma coluna qtd_usuarios já agregada em nível mais fino,
+    isso não conta o mesmo paciente mais de uma vez quando ele aparece em mais de
+    um subgrupo (ex.: mais de um procedimento/prestador no mesmo mês).
+    """
+    colunas_lista = colunas if isinstance(colunas, list) else [colunas]
+    if base_usuarios is None or base_usuarios.empty:
+        return pd.DataFrame(columns=colunas_lista + ["qtd_usuarios"])
+    r = base_usuarios.groupby(colunas_lista, dropna=False, observed=True)["CD_USUARIO"].nunique()
+    return r.rename("qtd_usuarios").reset_index()
 def aplicar_filtros(agregado, meses=None, ufs=None, regioes=None, especialidades=None, planos=None, clusters=None, cidades=None):
     df = agregado
     if meses: df = df[df["MES"].isin(meses)]
@@ -353,30 +397,38 @@ def _indice_severidade(r):
     indice = (r_freq + r_intens) / 2
     return pd.Series(indice, index=r.index).round(2)
 @st.cache_data(show_spinner=False)
-def ranking_por(df, coluna, top_n=15):
+def ranking_por(df, coluna, top_n=15, usuarios=None):
     r = df.groupby(coluna, dropna=False, observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
-        qtd_usuarios=("qtd_usuarios", "sum"),
         quantidade_uso=("soma_uso", "sum"),
     ).reset_index()
     r = r[r[coluna].notna()]
+    if usuarios is not None:
+        r = r.merge(vidas_por(usuarios, coluna), on=coluna, how="left")
+        r["qtd_usuarios"] = r["qtd_usuarios"].fillna(0)
+    else:
+        r["qtd_usuarios"] = np.nan
     r["uso_por_procedimento"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     return r.sort_values("quantidade_uso", ascending=False).head(top_n)
 @st.cache_data(show_spinner=False)
-def evolucao_mensal(df):
+def evolucao_mensal(df, usuarios=None):
     r = df.groupby("MES", observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
-        qtd_usuarios=("qtd_usuarios", "sum"),
         quantidade_uso=("soma_uso", "sum"),
     ).reset_index().sort_values("MES")
+    if usuarios is not None:
+        r = r.merge(vidas_por(usuarios, "MES"), on="MES", how="left")
+        r["qtd_usuarios"] = r["qtd_usuarios"].fillna(0)
+    else:
+        r["qtd_usuarios"] = np.nan
     r["uso_por_procedimento"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     r["procedimento_por_vida"] = (r["qtd_procedimentos"] / r["qtd_usuarios"]).round(3)
     r["indice_severidade"] = _indice_severidade(r)
     return r
 @st.cache_data(show_spinner=False)
-def ranking_severidade(df, coluna, top_n=15):
+def ranking_severidade(df, coluna, top_n=15, usuarios=None):
     grupo_cols = [coluna]
     if coluna == "CD_PRESTADOR":
         for extra in ["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR"]:
@@ -384,27 +436,35 @@ def ranking_severidade(df, coluna, top_n=15):
                 grupo_cols.append(extra)
     r = df.groupby(grupo_cols, dropna=False, observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
-        qtd_usuarios=("qtd_usuarios", "sum"),
         quantidade_uso=("soma_uso", "sum"),
     ).reset_index()
     r = r[r[coluna].notna()]
+    if usuarios is not None:
+        r = r.merge(vidas_por(usuarios, coluna), on=coluna, how="left")
+        r["qtd_usuarios"] = r["qtd_usuarios"].fillna(0)
+    else:
+        r["qtd_usuarios"] = np.nan
     r["uso_por_procedimento"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     r["indice_severidade"] = _indice_severidade(r)
     return r.sort_values("indice_severidade", ascending=False).head(top_n)
 @st.cache_data(show_spinner=False)
-def calcular_media_nacional(agregado, coluna_dimensao):
+def calcular_media_nacional(agregado, coluna_dimensao, usuarios=None):
     """Média de uso nacional (sem filtros) por dimensão."""
     r = agregado.groupby(coluna_dimensao, observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
-        qtd_usuarios=("qtd_usuarios", "sum"),
         quantidade_uso=("soma_uso", "sum"),
     ).reset_index()
+    if usuarios is not None:
+        r = r.merge(vidas_por(usuarios, coluna_dimensao), on=coluna_dimensao, how="left")
+        r["qtd_usuarios"] = r["qtd_usuarios"].fillna(0)
+    else:
+        r["qtd_usuarios"] = np.nan
     r["uso_por_procedimento_nacional"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
     r["uso_por_vida_nacional"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     return r
 @st.cache_data(show_spinner=False)
-def montar_watchlist(df, top_n=20):
+def montar_watchlist(df, top_n=20, usuarios=None):
     """
     Watchlist com Nome, CPF/CNPJ, UF, Cidade e Cluster de cada prestador.
     Pontuação 0-100 combinando uso por procedimento, uso por vida e volume.
@@ -412,11 +472,15 @@ def montar_watchlist(df, top_n=20):
     info = _info_prestador(df)
     por_prestador = df.groupby("CD_PRESTADOR", observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
-        qtd_usuarios=("qtd_usuarios", "sum"),
         quantidade_uso=("soma_uso", "sum"),
     ).reset_index()
     if por_prestador.empty:
         return pd.DataFrame()
+    if usuarios is not None:
+        por_prestador = por_prestador.merge(vidas_por(usuarios, "CD_PRESTADOR"), on="CD_PRESTADOR", how="left")
+        por_prestador["qtd_usuarios"] = por_prestador["qtd_usuarios"].fillna(0)
+    else:
+        por_prestador["qtd_usuarios"] = np.nan
     por_prestador = por_prestador.merge(info, on="CD_PRESTADOR", how="left")
     por_prestador["uso_por_procedimento"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_procedimentos"]).round(2)
     por_prestador["uso_por_vida"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_usuarios"]).round(2)
@@ -449,7 +513,7 @@ def montar_watchlist(df, top_n=20):
     cols = [c for c in cols if c in resultado.columns]
     return resultado[cols].reset_index(drop=True)
 @st.cache_data(show_spinner=False)
-def identificar_ofensores(df, percentil=0.95):
+def identificar_ofensores(df, percentil=0.95, usuarios=None):
     """
     Identifica ofensores com justificativa textual, baseado só em uso e volume.
     Um prestador é ofensor quando atende ≥ 2 de 3 critérios no top 5%:
@@ -458,9 +522,13 @@ def identificar_ofensores(df, percentil=0.95):
     info = _info_prestador(df)
     por_prestador = df.groupby("CD_PRESTADOR", observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
-        qtd_usuarios=("qtd_usuarios", "sum"),
         quantidade_uso=("soma_uso", "sum"),
     ).reset_index()
+    if usuarios is not None:
+        por_prestador = por_prestador.merge(vidas_por(usuarios, "CD_PRESTADOR"), on="CD_PRESTADOR", how="left")
+        por_prestador["qtd_usuarios"] = por_prestador["qtd_usuarios"].fillna(0)
+    else:
+        por_prestador["qtd_usuarios"] = np.nan
     por_prestador = por_prestador.merge(info, on="CD_PRESTADOR", how="left")
     por_prestador["uso_por_procedimento"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_procedimentos"]).round(2)
     por_prestador["uso_por_vida"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_usuarios"]).round(2)
@@ -502,16 +570,22 @@ def identificar_ofensores(df, percentil=0.95):
     cols = [c for c in cols if c in resultado.columns]
     return resultado[cols].reset_index(drop=True)
 @st.cache_data(show_spinner=False)
-def calcular_desvios(df):
+def calcular_desvios(df, usuarios=None):
     """Desvios de cada prestador vs média da própria especialidade (uso por procedimento e por vida)."""
     info = _info_prestador(df)
     por_prestador = df.groupby(["CD_PRESTADOR", "ESPECIALIDADE"], observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
-        qtd_usuarios=("qtd_usuarios", "sum"),
         quantidade_uso=("soma_uso", "sum"),
     ).reset_index()
     if por_prestador.empty:
         return por_prestador
+    if usuarios is not None:
+        por_prestador = por_prestador.merge(
+            vidas_por(usuarios, ["CD_PRESTADOR", "ESPECIALIDADE"]), on=["CD_PRESTADOR", "ESPECIALIDADE"], how="left"
+        )
+        por_prestador["qtd_usuarios"] = por_prestador["qtd_usuarios"].fillna(0)
+    else:
+        por_prestador["qtd_usuarios"] = np.nan
     por_prestador["uso_por_procedimento"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_procedimentos"]).round(2)
     por_prestador["uso_por_vida"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_usuarios"]).round(2)
     media_esp = por_prestador.groupby("ESPECIALIDADE")[["uso_por_procedimento", "uso_por_vida"]].mean()
@@ -532,7 +606,7 @@ def calcular_desvios(df):
     cols = [c for c in cols if c in resultado.columns]
     return resultado[cols].reset_index(drop=True)
 @st.cache_data(show_spinner=False)
-def comparacao_mensal(df, coluna, volume_minimo=30):
+def comparacao_mensal(df, coluna, volume_minimo=30, usuarios=None):
     """Compara o último mês vs o anterior por coluna (volume e uso), respeitando volume mínimo."""
     if "MES" not in df.columns or df["MES"].nunique() < 2:
         return pd.DataFrame(), "Dados insuficientes para comparação (necessário ≥ 2 meses)."
@@ -543,14 +617,20 @@ def comparacao_mensal(df, coluna, volume_minimo=30):
     df_pen = df[df["MES"] == penult]
     agg_ult = df_ult.groupby(coluna, observed=True).agg(
         qtd_atual=("qtd_procedimentos", "sum"),
-        usuarios_atual=("qtd_usuarios", "sum"),
         uso_atual=("soma_uso", "sum"),
     )
     agg_pen = df_pen.groupby(coluna, observed=True).agg(
         qtd_anterior=("qtd_procedimentos", "sum"),
-        usuarios_anterior=("qtd_usuarios", "sum"),
         uso_anterior=("soma_uso", "sum"),
     )
+    if usuarios is not None:
+        vidas_ult = vidas_por(usuarios[usuarios["MES"] == ultimo], coluna).set_index(coluna)["qtd_usuarios"].rename("usuarios_atual")
+        vidas_pen = vidas_por(usuarios[usuarios["MES"] == penult], coluna).set_index(coluna)["qtd_usuarios"].rename("usuarios_anterior")
+        agg_ult = agg_ult.join(vidas_ult, how="left")
+        agg_pen = agg_pen.join(vidas_pen, how="left")
+    else:
+        agg_ult["usuarios_atual"] = np.nan
+        agg_pen["usuarios_anterior"] = np.nan
     comp = agg_ult.join(agg_pen, how="outer").fillna(0)
     comp["delta_qtd"] = comp["qtd_atual"] - comp["qtd_anterior"]
     comp["variacao_pct"] = np.where(
@@ -563,29 +643,37 @@ def comparacao_mensal(df, coluna, volume_minimo=30):
     msg = (f"Comparando {ultimo} vs {penult} por {coluna}. "
            f"Relevante = volume atual ≥ {volume_minimo} procedimentos.")
     return comp, msg
-def _variacao_pct_uso(df, coluna, volume_minimo, top_n):
+def _variacao_pct_uso(df, coluna, volume_minimo, top_n, usuarios=None):
     """
     Variação % de uso (mês atual vs anterior) agrupada por `coluna`. Só entram
     grupos com volume (qtd_procedimentos) ≥ volume_minimo em AMBOS os meses e
     uso > 0 no mês anterior — evita que um grupo minúsculo mostre uma
     variação % gigante e sem significado.
 
-    Também traz qtd_usuarios_atual/anterior (soma de vidas — códigos de
-    usuário distintos por combinação, respeitando os filtros ativos) e a
-    variação % dessa quantidade de vidas.
+    Também traz qtd_usuarios_atual/anterior (vidas — pacientes distintos de
+    verdade, calculados a partir de `usuarios`, sem contar o mesmo paciente
+    mais de uma vez) e a variação % dessa quantidade de vidas.
     """
     meses_ord = sorted(df["MES"].dropna().unique())
     ultimo, penult = meses_ord[-1], meses_ord[-2]
     atual = df[df["MES"] == ultimo].groupby(coluna, dropna=False, observed=True).agg(
         qtd_procedimentos_atual=("qtd_procedimentos", "sum"),
         soma_uso_atual=("soma_uso", "sum"),
-        qtd_usuarios_atual=("qtd_usuarios", "sum"),
     ).reset_index()
     anterior = df[df["MES"] == penult].groupby(coluna, dropna=False, observed=True).agg(
         qtd_procedimentos_anterior=("qtd_procedimentos", "sum"),
         soma_uso_anterior=("soma_uso", "sum"),
-        qtd_usuarios_anterior=("qtd_usuarios", "sum"),
     ).reset_index()
+    if usuarios is not None:
+        vidas_atual = vidas_por(usuarios[usuarios["MES"] == ultimo], coluna).rename(columns={"qtd_usuarios": "qtd_usuarios_atual"})
+        vidas_anterior = vidas_por(usuarios[usuarios["MES"] == penult], coluna).rename(columns={"qtd_usuarios": "qtd_usuarios_anterior"})
+        atual = atual.merge(vidas_atual, on=coluna, how="left")
+        anterior = anterior.merge(vidas_anterior, on=coluna, how="left")
+        atual["qtd_usuarios_atual"] = atual["qtd_usuarios_atual"].fillna(0)
+        anterior["qtd_usuarios_anterior"] = anterior["qtd_usuarios_anterior"].fillna(0)
+    else:
+        atual["qtd_usuarios_atual"] = np.nan
+        anterior["qtd_usuarios_anterior"] = np.nan
     comp = atual.merge(anterior, on=coluna, how="inner")
     comp = comp[comp[coluna].notna()]
     comp = comp[
@@ -604,7 +692,7 @@ def _variacao_pct_uso(df, coluna, volume_minimo, top_n):
     comp["variacao_vidas_pct"] = comp["variacao_vidas_pct"].round(1)
     return comp.sort_values("variacao_pct", ascending=False).head(top_n).reset_index(drop=True)
 @st.cache_data(show_spinner=False)
-def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, top_prestadores=20, top_detalhe=5):
+def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, top_prestadores=20, top_detalhe=5, usuarios=None):
     """
     Resumo do mês vs o anterior, baseado na variação % de USO (não em números
     absolutos): 5 especialidades que mais subiram, os procedimentos que
@@ -617,17 +705,21 @@ def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, t
     meses_ord = sorted(df["MES"].dropna().unique())
     ultimo, penult = meses_ord[-1], meses_ord[-2]
 
-    especialidades = _variacao_pct_uso(df, "ESPECIALIDADE", volume_minimo, top_especialidades)
+    especialidades = _variacao_pct_uso(df, "ESPECIALIDADE", volume_minimo, top_especialidades, usuarios=usuarios)
     detalhes_especialidade = {
-        esp: _variacao_pct_uso(df[df["ESPECIALIDADE"] == esp], "NOME_PROCEDIMENTO", volume_minimo, top_detalhe)
+        esp: _variacao_pct_uso(
+            df[df["ESPECIALIDADE"] == esp], "NOME_PROCEDIMENTO", volume_minimo, top_detalhe,
+            usuarios=usuarios[usuarios["ESPECIALIDADE"] == esp] if usuarios is not None else None,
+        )
         for esp in especialidades["ESPECIALIDADE"]
     }
 
-    ufs = _variacao_pct_uso(df, "UF", volume_minimo, top_ufs)
+    ufs = _variacao_pct_uso(df, "UF", volume_minimo, top_ufs, usuarios=usuarios)
     detalhes_uf = {}
     for uf in ufs["UF"]:
         sub = df[df["UF"] == uf]
-        cidades = _variacao_pct_uso(sub, "CIDADE_PRESTADOR", volume_minimo, top_detalhe)
+        sub_usuarios = usuarios[usuarios["UF"] == uf] if usuarios is not None else None
+        cidades = _variacao_pct_uso(sub, "CIDADE_PRESTADOR", volume_minimo, top_detalhe, usuarios=sub_usuarios)
         if not cidades.empty and "CLUSTER" in sub.columns:
             mapa_cluster = sub.groupby("CIDADE_PRESTADOR", observed=True)["CLUSTER"].agg(
                 lambda x: x.mode().iloc[0] if not x.mode().empty else "—"
@@ -635,12 +727,15 @@ def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, t
             cidades["CLUSTER"] = cidades["CIDADE_PRESTADOR"].map(mapa_cluster)
         detalhes_uf[uf] = cidades
 
-    prestadores = _variacao_pct_uso(df, "CD_PRESTADOR", volume_minimo, top_prestadores)
+    prestadores = _variacao_pct_uso(df, "CD_PRESTADOR", volume_minimo, top_prestadores, usuarios=usuarios)
     info = _info_prestador(df)
     colunas_info = [c for c in ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER", "ESPECIALIDADE"] if c in info.columns]
     prestadores = prestadores.merge(info[colunas_info], on="CD_PRESTADOR", how="left")
     detalhes_prestador = {
-        cd: _variacao_pct_uso(df[df["CD_PRESTADOR"] == cd], "NOME_PROCEDIMENTO", volume_minimo, top_detalhe)
+        cd: _variacao_pct_uso(
+            df[df["CD_PRESTADOR"] == cd], "NOME_PROCEDIMENTO", volume_minimo, top_detalhe,
+            usuarios=usuarios[usuarios["CD_PRESTADOR"] == cd] if usuarios is not None else None,
+        )
         for cd in prestadores["CD_PRESTADOR"]
     }
 
@@ -654,7 +749,7 @@ def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, t
            f"Só entram grupos com volume ≥ {volume_minimo} procedimentos em ambos os meses.")
     return resultado, msg
 @st.cache_data(show_spinner=False)
-def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=1500.0, pct_minimo=50.0):
+def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=1500.0, pct_minimo=50.0, usuarios=None):
     """
     Alerta de prestador + procedimento com aumento relevante de qtde E de valor
     (R$ pago), mês atual vs anterior — usa números absolutos (qtde de guias e
@@ -676,17 +771,22 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
     chave = ["CD_PRESTADOR", "ESPECIALIDADE", "NOME_PROCEDIMENTO"]
     cols_info = [c for c in ["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE_PRESTADOR", "CLUSTER"] if c in df.columns]
 
-    def _agg_mes(sub, sufixo):
+    def _agg_mes(sub, sufixo, mes):
         agregacoes = {
             f"qtd_{sufixo}": ("qtd_procedimentos", "sum"),
             f"valor_{sufixo}": ("soma_valor", "sum"),
-            f"usuarios_{sufixo}": ("qtd_usuarios", "sum"),
         }
         r = sub.groupby(chave, dropna=False, observed=True).agg(**agregacoes).reset_index()
+        if usuarios is not None:
+            vidas = vidas_por(usuarios[usuarios["MES"] == mes], chave).rename(columns={"qtd_usuarios": f"usuarios_{sufixo}"})
+            r = r.merge(vidas, on=chave, how="left")
+            r[f"usuarios_{sufixo}"] = r[f"usuarios_{sufixo}"].fillna(0)
+        else:
+            r[f"usuarios_{sufixo}"] = np.nan
         return r
 
-    atual = _agg_mes(df[df["MES"] == ultimo], "atual")
-    anterior = _agg_mes(df[df["MES"] == penult], "anterior")
+    atual = _agg_mes(df[df["MES"] == ultimo], "atual", ultimo)
+    anterior = _agg_mes(df[df["MES"] == penult], "anterior", penult)
     comp = atual.merge(anterior, on=chave, how="inner")
     comp = comp[comp["CD_PRESTADOR"].notna() & comp["ESPECIALIDADE"].notna() & comp["NOME_PROCEDIMENTO"].notna()]
     if comp.empty:
