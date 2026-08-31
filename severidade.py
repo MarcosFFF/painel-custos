@@ -552,16 +552,22 @@ def _variacao_pct_uso(df, coluna, volume_minimo, top_n):
     grupos com volume (qtd_procedimentos) ≥ volume_minimo em AMBOS os meses e
     uso > 0 no mês anterior — evita que um grupo minúsculo mostre uma
     variação % gigante e sem significado.
+
+    Também traz qtd_usuarios_atual/anterior (soma de vidas — códigos de
+    usuário distintos por combinação, respeitando os filtros ativos) e a
+    variação % dessa quantidade de vidas.
     """
     meses_ord = sorted(df["MES"].dropna().unique())
     ultimo, penult = meses_ord[-1], meses_ord[-2]
     atual = df[df["MES"] == ultimo].groupby(coluna, dropna=False, observed=True).agg(
         qtd_procedimentos_atual=("qtd_procedimentos", "sum"),
         soma_uso_atual=("soma_uso", "sum"),
+        qtd_usuarios_atual=("qtd_usuarios", "sum"),
     ).reset_index()
     anterior = df[df["MES"] == penult].groupby(coluna, dropna=False, observed=True).agg(
         qtd_procedimentos_anterior=("qtd_procedimentos", "sum"),
         soma_uso_anterior=("soma_uso", "sum"),
+        qtd_usuarios_anterior=("qtd_usuarios", "sum"),
     ).reset_index()
     comp = atual.merge(anterior, on=coluna, how="inner")
     comp = comp[comp[coluna].notna()]
@@ -573,6 +579,12 @@ def _variacao_pct_uso(df, coluna, volume_minimo, top_n):
     comp["variacao_pct"] = (
         (comp["soma_uso_atual"] - comp["soma_uso_anterior"]) / comp["soma_uso_anterior"] * 100
     ).round(1)
+    comp["variacao_vidas_pct"] = np.where(
+        comp["qtd_usuarios_anterior"] > 0,
+        (comp["qtd_usuarios_atual"] - comp["qtd_usuarios_anterior"]) / comp["qtd_usuarios_anterior"] * 100,
+        np.nan,
+    )
+    comp["variacao_vidas_pct"] = comp["variacao_vidas_pct"].round(1)
     return comp.sort_values("variacao_pct", ascending=False).head(top_n).reset_index(drop=True)
 def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, top_prestadores=20, top_detalhe=5):
     """
@@ -649,6 +661,7 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
         agregacoes = {
             f"qtd_{sufixo}": ("qtd_procedimentos", "sum"),
             f"valor_{sufixo}": ("soma_valor", "sum"),
+            f"usuarios_{sufixo}": ("qtd_usuarios", "sum"),
         }
         r = sub.groupby(chave, dropna=False, observed=True).agg(**agregacoes).reset_index()
         return r
@@ -664,6 +677,9 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
     comp["delta_valor"] = comp["valor_atual"] - comp["valor_anterior"]
     comp["variacao_qtd_pct"] = np.where(comp["qtd_anterior"] > 0, comp["delta_qtd"] / comp["qtd_anterior"] * 100, np.nan)
     comp["variacao_valor_pct"] = np.where(comp["valor_anterior"] > 0, comp["delta_valor"] / comp["valor_anterior"] * 100, np.nan)
+    comp["variacao_usuarios_pct"] = np.where(
+        comp["usuarios_anterior"] > 0, (comp["usuarios_atual"] - comp["usuarios_anterior"]) / comp["usuarios_anterior"] * 100, np.nan
+    )
 
     comp = comp[
         (comp["qtd_atual"] > volume_minimo)
