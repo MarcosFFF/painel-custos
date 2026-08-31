@@ -272,6 +272,13 @@ def carregar_base_severidade(pasta="."):
         ~esp_normalizada.isin(ESPECIALIDADES_EXCLUIDAS)
         & ~proc_normalizado.isin(ESPECIALIDADES_EXCLUIDAS)
     ].reset_index(drop=True)
+    # Colunas usadas nos filtros da tela e em quase todo groupby — como
+    # 'category', tanto os filtros (.isin) quanto os agrupamentos ficam bem
+    # mais rápidos, principalmente com muitas linhas.
+    for col in ["MES", "UF", "REGIAO", "ESPECIALIDADE", "NR_PLANO", "CLUSTER",
+                "NOME_PROCEDIMENTO", "CIDADE_PRESTADOR", "NOME_PRESTADOR"]:
+        if col in agregado.columns:
+            agregado[col] = agregado[col].astype("category")
     avisos = []
     if caminho_prestadores is None:
         avisos.append(
@@ -290,6 +297,7 @@ def aplicar_filtros(agregado, meses=None, ufs=None, regioes=None, especialidades
     if clusters: df = df[df["CLUSTER"].isin(clusters)]
     if cidades: df = df[df["CIDADE_PRESTADOR"].isin(cidades)]
     return df
+@st.cache_data(show_spinner=False)
 def _info_prestador(df):
     """Extrai Nome, CPF/CNPJ, UF, Cidade, Cluster e Especialidade mais frequente de cada prestador."""
     agregacoes = {
@@ -344,6 +352,7 @@ def _indice_severidade(r):
         r_intens = intens_grupo / intens_media
     indice = (r_freq + r_intens) / 2
     return pd.Series(indice, index=r.index).round(2)
+@st.cache_data(show_spinner=False)
 def ranking_por(df, coluna, top_n=15):
     r = df.groupby(coluna, dropna=False, observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
@@ -354,6 +363,7 @@ def ranking_por(df, coluna, top_n=15):
     r["uso_por_procedimento"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     return r.sort_values("quantidade_uso", ascending=False).head(top_n)
+@st.cache_data(show_spinner=False)
 def evolucao_mensal(df):
     r = df.groupby("MES", observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
@@ -364,6 +374,7 @@ def evolucao_mensal(df):
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     r["indice_severidade"] = _indice_severidade(r)
     return r
+@st.cache_data(show_spinner=False)
 def ranking_severidade(df, coluna, top_n=15):
     grupo_cols = [coluna]
     if coluna == "CD_PRESTADOR":
@@ -380,6 +391,7 @@ def ranking_severidade(df, coluna, top_n=15):
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     r["indice_severidade"] = _indice_severidade(r)
     return r.sort_values("indice_severidade", ascending=False).head(top_n)
+@st.cache_data(show_spinner=False)
 def calcular_media_nacional(agregado, coluna_dimensao):
     """Média de uso nacional (sem filtros) por dimensão."""
     r = agregado.groupby(coluna_dimensao, observed=True).agg(
@@ -390,6 +402,7 @@ def calcular_media_nacional(agregado, coluna_dimensao):
     r["uso_por_procedimento_nacional"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
     r["uso_por_vida_nacional"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     return r
+@st.cache_data(show_spinner=False)
 def montar_watchlist(df, top_n=20):
     """
     Watchlist com Nome, CPF/CNPJ, UF, Cidade e Cluster de cada prestador.
@@ -434,6 +447,7 @@ def montar_watchlist(df, top_n=20):
             "indice_severidade", "tendencia_pct", "pontuacao"]
     cols = [c for c in cols if c in resultado.columns]
     return resultado[cols].reset_index(drop=True)
+@st.cache_data(show_spinner=False)
 def identificar_ofensores(df, percentil=0.95):
     """
     Identifica ofensores com justificativa textual, baseado só em uso e volume.
@@ -486,6 +500,7 @@ def identificar_ofensores(df, percentil=0.95):
             "criterios_atingidos", "relevante", "justificativa"]
     cols = [c for c in cols if c in resultado.columns]
     return resultado[cols].reset_index(drop=True)
+@st.cache_data(show_spinner=False)
 def calcular_desvios(df):
     """Desvios de cada prestador vs média da própria especialidade (uso por procedimento e por vida)."""
     info = _info_prestador(df)
@@ -515,6 +530,7 @@ def calcular_desvios(df):
             "uso_por_vida", "uso_por_vida_esp", "desvio_uso_vida_pct"]
     cols = [c for c in cols if c in resultado.columns]
     return resultado[cols].reset_index(drop=True)
+@st.cache_data(show_spinner=False)
 def comparacao_mensal(df, coluna, volume_minimo=30):
     """Compara o último mês vs o anterior por coluna (volume e uso), respeitando volume mínimo."""
     if "MES" not in df.columns or df["MES"].nunique() < 2:
@@ -586,6 +602,7 @@ def _variacao_pct_uso(df, coluna, volume_minimo, top_n):
     )
     comp["variacao_vidas_pct"] = comp["variacao_vidas_pct"].round(1)
     return comp.sort_values("variacao_pct", ascending=False).head(top_n).reset_index(drop=True)
+@st.cache_data(show_spinner=False)
 def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, top_prestadores=20, top_detalhe=5):
     """
     Resumo do mês vs o anterior, baseado na variação % de USO (não em números
@@ -635,6 +652,7 @@ def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, t
     msg = (f"Comparando {ultimo} vs {penult}, por variação % de uso. "
            f"Só entram grupos com volume ≥ {volume_minimo} procedimentos em ambos os meses.")
     return resultado, msg
+@st.cache_data(show_spinner=False)
 def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=1500.0, pct_minimo=50.0):
     """
     Alerta de prestador + procedimento com aumento relevante de qtde E de valor
@@ -702,6 +720,7 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
     msg = (f"{ultimo} vs {penult}. Critérios: qtde atual > {volume_minimo}, aumento de valor > "
            f"R$ {valor_min_fmt}, variação de qtde e de valor ≥ {pct_minimo:.0f}%.")
     return comp, msg
+@st.cache_data(show_spinner=False)
 def identificar_desvios_solicitacao(df, agregado_nacional=None, volume_minimo=30, desvio_minimo_pct=50.0, procedimento=None):
     """
     Desvio de solicitações: para cada combinação (mês, procedimento), calcula a
