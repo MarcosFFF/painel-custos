@@ -168,6 +168,14 @@ def fmt_float2(v):
         return "—"
     s = f"{v:,.2f}"
     return s.replace(",", "§").replace(".", ",").replace("§", ".")
+def fmt_fase(v):
+    # FASE não tem mais uma referência fixa tipo "1,00 = média" — os valores variam bem
+    # mais em escala entre grupos (de 0,0001 a vários inteiros), então usa mais casas
+    # decimais que o fmt_float2 pra não arredondar grupos pequenos pra "0,00".
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "—"
+    s = f"{v:,.4f}"
+    return s.replace(",", "§").replace(".", ",").replace("§", ".")
 def label_mes(key):
     y, m = key.split("-")
     return f"{MESES_ABREV[int(m) - 1]}/{y}"
@@ -664,10 +672,10 @@ elif st.session_state.pagina == "severidade":
     tab_rank, tab_evolucao, tab_watch, tab_ofensores, tab_desvios, tab_resumo = st.tabs(
         ["Ranking de Severidade", "Evolução mensal", "Atenção", "Ofensores", "Desvios de Solicitações", "Resumo"]
     )
-    # ---------- RANKING DE SEVERIDADE (ISR — só gráficos, sem tabelas) ----------
+    # ---------- RANKING DE SEVERIDADE (FASE — só gráficos, sem tabelas) ----------
     JANELA_5_BARRAS = 300  # altura fixa (px) que mostra ~5 barras; o resto rola dentro do quadro
     def _grafico_severidade(df_rank, coluna, titulo, altura=None, janela=None):
-        df_plot = df_rank.sort_values("indice_severidade", ascending=True).reset_index(drop=True)
+        df_plot = df_rank.sort_values("fase", ascending=True).reset_index(drop=True)
         if janela:
             # altura total cresce com a quantidade de itens (barra do mesmo tamanho sempre),
             # o quadro em volta é que fica fixo em `janela` e ganha rolagem quando sobra.
@@ -675,20 +683,19 @@ elif st.session_state.pagina == "severidade":
         else:
             altura_total = altura or max(350, len(df_plot) * 35)
         fig = px.bar(
-            df_plot, x="indice_severidade", y=coluna, orientation="h",
-            custom_data=[coluna, "indice_severidade", "uso_por_procedimento", "uso_por_vida", "qtd_usuarios"],
+            df_plot, x="fase", y=coluna, orientation="h",
+            custom_data=[coluna, "fase", "uso_por_procedimento", "uso_por_vida", "qtd_usuarios"],
             title=titulo,
-            color="indice_severidade",
+            color="fase",
             color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
-            color_continuous_midpoint=1.0,
         )
         fig.update_traces(
-            texttemplate="%{x:,.2f}",
+            texttemplate="%{x:,.4f}",
             textposition="outside",
             textfont=dict(size=10),
             hovertemplate=(
                 "<b>%{customdata[0]}</b><br>"
-                "ISR: %{customdata[1]:,.2f}<br>"
+                "FASE: %{customdata[1]:,.4f}<br>"
                 "Uso por procedimento: %{customdata[2]:.2f}<br>"
                 "Uso por vida: %{customdata[3]:.2f}<br>"
                 "Qtde de vidas: %{customdata[4]:,.0f}"
@@ -702,7 +709,6 @@ elif st.session_state.pagina == "severidade":
             yaxis_type="category",
             coloraxis_showscale=False,
         )
-        fig.add_vline(x=1.0, line_dash="dash", line_color="gray")
         fig.update_yaxes(tickfont=dict(size=10))
         if janela:
             with st.container(height=janela):
@@ -711,11 +717,16 @@ elif st.session_state.pagina == "severidade":
             st.plotly_chart(fig, use_container_width=True)
     with tab_rank:
         st.info(
-            "O **Índice de Severidade Relativa (ISR)** é a média da **Frequência** (qtde de "
-            "procedimentos por vida) e **Intensidade** (uso por procedimento).\n\n"
-            "**Exemplo:**\n"
-            "- **1,00** = na média\n"
-            "- **2,00** = duas vezes mais severo que a média\n\n"
+            "O **FASE (Fator de Severidade)** é o produto de três indicadores do grupo "
+            "(especialidade, UF, procedimento, região ou prestador):\n\n"
+            "- **Frequência** = procedimentos ÷ vidas\n"
+            "- **Incidência** = procedimentos ÷ uso\n"
+            "- **Peso do grupo** = (procedimentos do grupo ÷ procedimentos totais da base) × 100\n\n"
+            "**FASE = Frequência × Incidência × Peso do grupo**\n\n"
+            "Não existe um valor fixo de referência (não é mais '1,00 = média') — o número só "
+            "faz sentido comparando um grupo com o outro no mesmo ranking: quanto maior o FASE, "
+            "mais severo. Grupos de volume muito baixo têm o Peso do grupo pequeno, o que já os "
+            "afasta do topo do ranking mesmo que a frequência/incidência bruta deles seja alta. "
             "Não considera valores em R$."
         )
         rc1, rc2 = st.columns(2)
@@ -766,11 +777,10 @@ elif st.session_state.pagina == "severidade":
         fig_uso.update_yaxes(title_text="Procedimento por vida", secondary_y=True)
         st.plotly_chart(fig_uso, use_container_width=True)
         fig_isr = px.line(
-            evolucao, x="MES", y="indice_severidade", markers=True, text="indice_severidade", title="ISR por mês",
+            evolucao, x="MES", y="fase", markers=True, text="fase", title="FASE por mês",
         )
-        fig_isr.update_traces(texttemplate="%{text:,.2f}", textposition="top center")
-        fig_isr.add_hline(y=1.0, line_dash="dash", line_color="gray")
-        fig_isr.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10), yaxis_title="ISR")
+        fig_isr.update_traces(texttemplate="%{text:,.4f}", textposition="top center")
+        fig_isr.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10), yaxis_title="FASE")
         st.plotly_chart(fig_isr, use_container_width=True)
         fig_uso_total = px.line(evolucao, x="MES", y="quantidade_uso", markers=True, text="quantidade_uso", title="Uso total por mês")
         fig_uso_total.update_traces(texttemplate="%{text:,.0f}", textposition="top center")
@@ -815,7 +825,7 @@ elif st.session_state.pagina == "severidade":
             exib_watch["quantidade_uso"] = exib_watch["quantidade_uso"].map(fmt_int)
             exib_watch["uso_por_procedimento"] = exib_watch["uso_por_procedimento"].map(fmt_float2)
             exib_watch["uso_por_vida"] = exib_watch["uso_por_vida"].map(fmt_float2)
-            exib_watch["indice_severidade"] = exib_watch["indice_severidade"].map(fmt_float2)
+            exib_watch["fase"] = exib_watch["fase"].map(fmt_fase)
             exib_watch["tendencia_pct"] = exib_watch["tendencia_pct"].map(lambda v: f"{v:+.1f}%")
             exib_watch["pontuacao"] = exib_watch["pontuacao"].map(lambda v: f"{v:.0f}")
             st.dataframe(exib_watch, hide_index=True, use_container_width=True)
@@ -851,14 +861,14 @@ elif st.session_state.pagina == "severidade":
             )
         ofensores = identificar_ofensores(df_filtrado, usuarios=usuarios_filtrado)
         if not ofensores.empty:
-            # Formatar tabela para exibição — já vem ordenada do mais para o menos severo (ISR)
+            # Formatar tabela para exibição — já vem ordenada do mais para o menos severo (FASE)
             exib_of = ofensores.copy()
             exib_of["qtd_procedimentos"] = exib_of["qtd_procedimentos"].map(fmt_int)
             exib_of["qtd_usuarios"] = exib_of["qtd_usuarios"].map(fmt_int)
             exib_of["quantidade_uso"] = exib_of["quantidade_uso"].map(fmt_int)
             exib_of["uso_por_procedimento"] = exib_of["uso_por_procedimento"].map(fmt_float2)
             exib_of["uso_por_vida"] = exib_of["uso_por_vida"].map(fmt_float2)
-            exib_of["indice_severidade"] = exib_of["indice_severidade"].map(fmt_float2)
+            exib_of["fase"] = exib_of["fase"].map(fmt_fase)
             # Flags com cores
             exib_of["alerta_volume"] = exib_of["alerta_volume"].map(lambda b: "🔴 Sim" if b else "✅ Não")
             exib_of["alerta_uso_procedimento"] = exib_of["alerta_uso_procedimento"].map(lambda b: "🔴 Sim" if b else "✅ Não")
@@ -889,7 +899,7 @@ elif st.session_state.pagina == "severidade":
                 for _, row in relevantes_filtrados.iterrows():
                     nome_prestador = row.get("NOME_PRESTADOR") or "—"
                     cnpj_prestador = row.get("CNPJ_CPF_PRESTADOR") or "—"
-                    titulo_exp = f"Prestador {int(row['CD_PRESTADOR'])} — {nome_prestador} · ISR {row['indice_severidade']:.2f}"
+                    titulo_exp = f"Prestador {int(row['CD_PRESTADOR'])} — {nome_prestador} · FASE {row['fase']:.4f}"
                     with st.expander(titulo_exp):
                         st.markdown(
                             f"CPF/CNPJ: {cnpj_prestador} — {row['UF']} · {row['CIDADE']} · Cluster: {row['CLUSTER']}"
