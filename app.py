@@ -1132,10 +1132,12 @@ elif st.session_state.pagina == "severidade":
         # ---------- Alerta: prestador + procedimento com aumento relevante de qtde e valor ----------
         st.markdown("##### 🚨 Prestadores com aumento relevante de quantidade e valor")
         st.caption(
-            "Critério (as 4 condições precisam valer juntas): qtde do procedimento no mês atual "
-            "> 50, aumento de valor pago > R$ 1.500,00 em relação ao mês anterior, e variação de "
-            "pelo menos 50% tanto na qtde quanto no valor. Usa números absolutos (qtde de guias e "
-            "R$ pago) — não a métrica de uso ponderada usada no restante do painel."
+            "Critério (as 5 condições precisam valer juntas): qtde do procedimento no mês atual "
+            "> 50, aumento de valor pago > R$ 1.500,00 em relação ao mês anterior, variação de "
+            "pelo menos 50% tanto na qtde quanto no valor, e variação do FASE de pelo menos 50% "
+            "entre os dois meses. Qtde e valor usam números absolutos (qtde de guias e R$ pago) — "
+            "o FASE é calculado no mesmo recorte (prestador + especialidade + procedimento), um "
+            "valor por mês."
         )
         alertas, msg_alertas = alertas_prestador_procedimento(df_filtrado, usuarios=usuarios_filtrado)
         if alertas is None or alertas.empty:
@@ -1173,5 +1175,11 @@ elif st.session_state.pagina == "severidade":
                             texto += (
                                 f" Em termos de vidas, em {mes_anterior_lbl} foram {fmt_int(row['usuarios_anterior'])} "
                                 f"e em {mes_atual_lbl} foram {fmt_int(row['usuarios_atual'])}."
+                            )
+                        if pd.notna(row.get("fase_anterior")) and pd.notna(row.get("fase_atual")):
+                            texto += (
+                                f" O FASE em {mes_anterior_lbl} foi {fmt_fase(row['fase_anterior'])} e em "
+                                f"{mes_atual_lbl} foi {fmt_fase(row['fase_atual'])}, com variação de "
+                                f"**{row['variacao_fase_pct']:+.0f}%**."
                             )
                         st.markdown(texto)
