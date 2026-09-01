@@ -798,18 +798,17 @@ elif st.session_state.pagina == "severidade":
                     wl_plot[col] = "—"
                 wl_plot[col] = wl_plot[col].fillna("—").astype(str)
             fig_watch = px.bar(
-                wl_plot.sort_values("pontuacao", ascending=True), x="pontuacao",
+                wl_plot.sort_values("fase", ascending=True), x="fase",
                 y="NOME_PRESTADOR", orientation="h",
-                text="pontuacao", title="Prestadores que merecem atenção",
+                text="fase", title="Prestadores que merecem atenção",
                 custom_data=["CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"],
             )
             fig_watch.update_traces(
-                texttemplate="%{text:.0f}",
+                texttemplate="%{text:,.4f}",
                 textposition="outside",
                 hovertemplate=(
                     "<b>%{y}</b><br>"
-                    "CPF/CNPJ: %{customdata[0]}<br>"
-                    "Pontuação: %{x:.0f}<br>"
+                    "FASE: %{x:,.4f}<br>"
                     "UF: %{customdata[1]}<br>"
                     "Cidade: %{customdata[2]}<br>"
                     "Cluster: %{customdata[3]}"
@@ -826,8 +825,17 @@ elif st.session_state.pagina == "severidade":
             exib_watch["uso_por_procedimento"] = exib_watch["uso_por_procedimento"].map(fmt_float2)
             exib_watch["uso_por_vida"] = exib_watch["uso_por_vida"].map(fmt_float2)
             exib_watch["fase"] = exib_watch["fase"].map(fmt_fase)
-            exib_watch["tendencia_pct"] = exib_watch["tendencia_pct"].map(lambda v: f"{v:+.1f}%")
-            exib_watch["pontuacao"] = exib_watch["pontuacao"].map(lambda v: f"{v:.0f}")
+            exib_watch["evolucao_pct"] = exib_watch["evolucao_pct"].map(lambda v: f"{v:+.1f}%")
+            # Nomes de coluna mais curtos, só nessa grade, pra ficar mais fácil de visualizar
+            exib_watch = exib_watch.rename(columns={
+                "qtd_procedimentos": "qtd_proced",
+                "qtd_usuarios": "qtd_usu",
+                "quantidade_uso": "qtde_USO",
+                "uso_por_procedimento": "USO/proced",
+                "uso_por_vida": "USO/vidas",
+                "fase": "FASE",
+                "evolucao_pct": "Evolução",
+            })
             st.dataframe(exib_watch, hide_index=True, use_container_width=True)
         else:
             st.info("Sem dados para montar a watchlist.")
