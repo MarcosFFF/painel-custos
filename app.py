@@ -832,35 +832,39 @@ elif st.session_state.pagina == "severidade":
             relevantes = ofensores[ofensores["relevante"]].copy()
             if not relevantes.empty:
                 st.divider()
-                st.markdown("#### 📝 Justificativa dos ofensores")
-                busca_ofensor = st.text_input(
-                    "🔎 Buscar prestador (nome, código, CPF/CNPJ ou especialidade)", key="busca_ofensor"
-                )
-                if busca_ofensor.strip():
-                    termo = busca_ofensor.strip().upper()
-                    def _bate_busca(row):
-                        campos = [
-                            str(row.get("CD_PRESTADOR", "")), str(row.get("NOME_PRESTADOR", "")),
-                            str(row.get("CNPJ_CPF_PRESTADOR", "")), str(row.get("ESPECIALIDADE", "")),
-                        ]
-                        return any(termo in campo.upper() for campo in campos)
-                    relevantes_filtrados = relevantes[relevantes.apply(_bate_busca, axis=1)]
-                else:
-                    relevantes_filtrados = relevantes
-                st.caption(f"{len(relevantes_filtrados)} de {len(relevantes)} ofensores exibidos.")
-                for _, row in relevantes_filtrados.iterrows():
-                    nome_prestador = row.get("NOME_PRESTADOR") or "—"
-                    cnpj_prestador = row.get("CNPJ_CPF_PRESTADOR") or "—"
-                    titulo_exp = f"Prestador {int(row['CD_PRESTADOR'])} — {nome_prestador} · FASE {row['fase']:.4f}"
-                    with st.expander(titulo_exp):
-                        st.markdown(
-                            f"CPF/CNPJ: {cnpj_prestador} — {row['UF']} · {row['CIDADE']} · Cluster: {row['CLUSTER']}"
-                        )
-                        st.markdown(f"> {row['justificativa']}")
-                        st.caption(
-                            f"Especialidade principal: {row['ESPECIALIDADE']} · Procedimentos: {int(row['qtd_procedimentos'])} · "
-                            f"Uso por procedimento: {fmt_float2(row['uso_por_procedimento'])} · Uso por vida: {fmt_float2(row['uso_por_vida'])}"
-                        )
+                # A lista inteira fica retrátil (expander). Streamlit não permite expander
+                # dentro de expander, então cada ofensor vira um container com borda em vez
+                # de um expander individual.
+                with st.expander(f"📝 Justificativa dos ofensores ({len(relevantes)})", expanded=False):
+                    busca_ofensor = st.text_input(
+                        "🔎 Buscar prestador (nome, código, CPF/CNPJ ou especialidade)", key="busca_ofensor"
+                    )
+                    if busca_ofensor.strip():
+                        termo = busca_ofensor.strip().upper()
+                        def _bate_busca(row):
+                            campos = [
+                                str(row.get("CD_PRESTADOR", "")), str(row.get("NOME_PRESTADOR", "")),
+                                str(row.get("CNPJ_CPF_PRESTADOR", "")), str(row.get("ESPECIALIDADE", "")),
+                            ]
+                            return any(termo in campo.upper() for campo in campos)
+                        relevantes_filtrados = relevantes[relevantes.apply(_bate_busca, axis=1)]
+                    else:
+                        relevantes_filtrados = relevantes
+                    st.caption(f"{len(relevantes_filtrados)} de {len(relevantes)} ofensores exibidos.")
+                    for _, row in relevantes_filtrados.iterrows():
+                        nome_prestador = row.get("NOME_PRESTADOR") or "—"
+                        cnpj_prestador = row.get("CNPJ_CPF_PRESTADOR") or "—"
+                        titulo_exp = f"Prestador {int(row['CD_PRESTADOR'])} — {nome_prestador} · FASE {row['fase']:.4f}"
+                        with st.container(border=True):
+                            st.markdown(f"**{titulo_exp}**")
+                            st.markdown(
+                                f"CPF/CNPJ: {cnpj_prestador} — {row['UF']} · {row['CIDADE']} · Cluster: {row['CLUSTER']}"
+                            )
+                            st.markdown(f"> {row['justificativa']}")
+                            st.caption(
+                                f"Especialidade principal: {row['ESPECIALIDADE']} · Procedimentos: {int(row['qtd_procedimentos'])} · "
+                                f"Uso por procedimento: {fmt_float2(row['uso_por_procedimento'])} · Uso por vida: {fmt_float2(row['uso_por_vida'])}"
+                            )
         else:
             st.info("Nenhum ofensor encontrado com os filtros atuais.")
         st.divider()
