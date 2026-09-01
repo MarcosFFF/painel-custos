@@ -669,8 +669,8 @@ elif st.session_state.pagina == "severidade":
     m4.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
     m5.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
     st.divider()
-    tab_rank, tab_evolucao, tab_watch, tab_ofensores, tab_desvios, tab_resumo = st.tabs(
-        ["Ranking de Severidade", "Evolução mensal", "Atenção", "Ofensores", "Desvios de Solicitações", "Resumo"]
+    tab_rank, tab_evolucao, tab_ofensores, tab_desvios, tab_resumo = st.tabs(
+        ["Ranking de Severidade", "Evolução mensal", "Ofensores", "Desvios de Solicitações", "Resumo"]
     )
     # ---------- RANKING DE SEVERIDADE (FASE — só gráficos, sem tabelas) ----------
     JANELA_5_BARRAS = 300  # altura fixa (px) que mostra ~5 barras; o resto rola dentro do quadro
@@ -786,95 +786,21 @@ elif st.session_state.pagina == "severidade":
         fig_uso_total.update_traces(texttemplate="%{text:,.0f}", textposition="top center")
         fig_uso_total.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10))
         st.plotly_chart(fig_uso_total, use_container_width=True)
-    # ---------- ATENÇÃO (baseada apenas em uso e volume) ----------
-    with tab_watch:
-        st.markdown("#### Prestadores que merecem atenção")
-        watchlist = montar_watchlist(df_filtrado, usuarios=usuarios_filtrado)
-        if not watchlist.empty:
-            # Preparar DataFrame para o gráfico — garantir tipos corretos
-            wl_plot = watchlist.copy()
-            for col in ["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"]:
-                if col not in wl_plot.columns:
-                    wl_plot[col] = "—"
-                wl_plot[col] = wl_plot[col].fillna("—").astype(str)
-            # Rótulo do eixo Y — dois prestadores (CD_PRESTADOR diferentes, ex.: unidades/CNPJs
-            # distintos da mesma rede) podem ter o mesmo NOME_PRESTADOR. Usar só o nome faria o
-            # Plotly empilhar as barras deles na mesma categoria (barra mais comprida que
-            # qualquer um dos dois valores individuais). Desambigua com o CNPJ/CPF só quando
-            # o nome se repete.
-            wl_plot["rotulo_grafico"] = wl_plot["NOME_PRESTADOR"]
-            duplicados = wl_plot["NOME_PRESTADOR"].duplicated(keep=False)
-            if duplicados.any():
-                wl_plot.loc[duplicados, "rotulo_grafico"] = (
-                    wl_plot.loc[duplicados, "NOME_PRESTADOR"]
-                    + " (CNPJ/CPF " + wl_plot.loc[duplicados, "CNPJ_CPF_PRESTADOR"] + ")"
-                )
-            fig_watch = px.bar(
-                wl_plot.sort_values("fase", ascending=True), x="fase",
-                y="rotulo_grafico", orientation="h",
-                text="fase", title="Prestadores que merecem atenção",
-                custom_data=["CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"],
-            )
-            fig_watch.update_traces(
-                texttemplate="%{text:,.4f}",
-                textposition="outside",
-                hovertemplate=(
-                    "<b>%{y}</b><br>"
-                    "FASE: %{x:,.4f}<br>"
-                    "UF: %{customdata[1]}<br>"
-                    "Cidade: %{customdata[2]}<br>"
-                    "Cluster: %{customdata[3]}"
-                    "<extra></extra>"
-                ),
-            )
-            fig_watch.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10), yaxis_type="category")
-            st.plotly_chart(fig_watch, use_container_width=True)
-            # Tabela com info do prestador (sem o código, com nome)
-            exib_watch = watchlist.drop(columns=["CD_PRESTADOR"], errors="ignore").copy()
-            exib_watch["qtd_procedimentos"] = exib_watch["qtd_procedimentos"].map(fmt_int)
-            exib_watch["qtd_usuarios"] = exib_watch["qtd_usuarios"].map(fmt_int)
-            exib_watch["quantidade_uso"] = exib_watch["quantidade_uso"].map(fmt_int)
-            exib_watch["uso_por_procedimento"] = exib_watch["uso_por_procedimento"].map(fmt_float2)
-            exib_watch["uso_por_vida"] = exib_watch["uso_por_vida"].map(fmt_float2)
-            exib_watch["fase"] = exib_watch["fase"].map(fmt_fase)
-            exib_watch["evolucao_pct"] = exib_watch["evolucao_pct"].map(lambda v: f"{v:+.1f}%")
-            # Nomes de coluna mais curtos, só nessa grade, pra ficar mais fácil de visualizar
-            exib_watch = exib_watch.rename(columns={
-                "qtd_procedimentos": "qtd_proced",
-                "qtd_usuarios": "qtd_usu",
-                "quantidade_uso": "qtde_USO",
-                "uso_por_procedimento": "USO/proced",
-                "uso_por_vida": "USO/vidas",
-                "fase": "FASE",
-                "evolucao_pct": "Evolução",
-            })
-            st.dataframe(exib_watch, hide_index=True, use_container_width=True)
-        else:
-            st.info("Sem dados para montar a watchlist.")
     # ---------- OFENSORES (baseado só em volume e uso) ----------
     with tab_ofensores:
         st.markdown("#### 🚨 Prestadores ofensores")
         st.caption(
-            "Um prestador é marcado como **ofensor** quando atende **≥ 2 de 3 critérios** no top 5% "
-            "(percentil 95). Abaixo, a explicação de cada coluna:"
+            "Calculado por **prestador + especialidade** (não mistura as especialidades de um "
+            "mesmo prestador numa conta só). Um prestador+especialidade é marcado como **ofensor** "
+            "quando bate em **≥ 2 de 3 critérios**, todos no top 5% (percentil 95) da base filtrada: "
+            "volume de procedimentos, uso por procedimento e uso por vida."
         )
-        with st.expander("📖 O que significa cada alerta?", expanded=True):
+        with st.expander("📖 Como ler as colunas criterios_atingidos, relevante e justificativa"):
             st.markdown(
-                "- 🔴 **alerta_volume** é acionado quando a **quantidade de procedimentos** "
-                "está no **top 5% maior**. Indica volume anormalmente alto de solicitações."
+                "- 📊 **criterios_atingidos** = quantos dos 3 critérios acima foram batidos (0 a 3)."
                 "\n"
-                "- 🔴 **alerta_uso_procedimento** é acionado quando o **uso por procedimento** "
-                "(quantidade de uso ÷ procedimentos) está no **top 5% mais alto**. "
-                "Indica intensidade de uso elevada por procedimento."
-                "\n"
-                "- 🔴 **alerta_uso_vida** é acionado quando o **uso por vida** "
-                "(quantidade de uso ÷ vidas/usuários distintos) está no **top 5% mais alto**. "
-                "Indica intensidade de uso elevada por usuário atendido."
-                "\n"
-                "- 📊 **criterios_atingidos** = quantos dos 3 alertas acima foram acionados (0 a 3)."
-                "\n"
-                "- 🚨 **relevante** é acionado quando **criterios_atingidos ≥ 2** — "
-                "é o flag que marca o prestador como ofensor de fato."
+                "- 🚨 **relevante** é marcado quando **criterios_atingidos ≥ 2** — "
+                "é o flag que marca o prestador+especialidade como ofensor de fato."
                 "\n"
                 "- 📝 **justificativa** = texto explicando **exatamente quais critérios** "
                 "foram acionados e quais os valores/limiares correspondentes."
@@ -889,12 +815,18 @@ elif st.session_state.pagina == "severidade":
             exib_of["uso_por_procedimento"] = exib_of["uso_por_procedimento"].map(fmt_float2)
             exib_of["uso_por_vida"] = exib_of["uso_por_vida"].map(fmt_float2)
             exib_of["fase"] = exib_of["fase"].map(fmt_fase)
-            # Flags com cores
-            exib_of["alerta_volume"] = exib_of["alerta_volume"].map(lambda b: "🔴 Sim" if b else "✅ Não")
-            exib_of["alerta_uso_procedimento"] = exib_of["alerta_uso_procedimento"].map(lambda b: "🔴 Sim" if b else "✅ Não")
-            exib_of["alerta_uso_vida"] = exib_of["alerta_uso_vida"].map(lambda b: "🔴 Sim" if b else "✅ Não")
             exib_of["criterios_atingidos"] = exib_of["criterios_atingidos"].map(lambda v: f"{v}/3")
             exib_of["relevante"] = exib_of["relevante"].map(lambda b: "🚨 OFENSOR" if b else "—")
+            exib_of = exib_of.drop(columns=["alerta_volume", "alerta_uso_procedimento", "alerta_uso_vida"], errors="ignore")
+            # Nomes de coluna mais curtos, só nessa grade, pra ficar mais fácil de visualizar
+            exib_of = exib_of.rename(columns={
+                "qtd_procedimentos": "qtd_proced",
+                "qtd_usuarios": "qtd_usu",
+                "quantidade_uso": "qtde_USO",
+                "uso_por_procedimento": "USO/proced",
+                "uso_por_vida": "USO/vidas",
+                "fase": "FASE",
+            })
             st.dataframe(exib_of, hide_index=True, use_container_width=True)
             # Destaque para ofensores relevantes com justificativa — retrátil e pesquisável
             relevantes = ofensores[ofensores["relevante"]].copy()
@@ -957,6 +889,70 @@ elif st.session_state.pagina == "severidade":
             st.dataframe(comp_relevante, hide_index=True, use_container_width=True)
             with st.expander(f"Ver também as {len(comp_ignorado)} variações abaixo do volume mínimo"):
                 st.dataframe(comp_ignorado, hide_index=True, use_container_width=True)
+        st.divider()
+        st.markdown("#### 🎯 Prestadores que merecem atenção")
+        watchlist = montar_watchlist(df_filtrado, usuarios=usuarios_filtrado)
+        if not watchlist.empty:
+            # Preparar DataFrame para o gráfico — garantir tipos corretos
+            wl_plot = watchlist.copy()
+            for col in ["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"]:
+                if col not in wl_plot.columns:
+                    wl_plot[col] = "—"
+                wl_plot[col] = wl_plot[col].fillna("—").astype(str)
+            # Rótulo do eixo Y — dois prestadores (CD_PRESTADOR diferentes, ex.: unidades/CNPJs
+            # distintos da mesma rede) podem ter o mesmo NOME_PRESTADOR. Usar só o nome faria o
+            # Plotly empilhar as barras deles na mesma categoria (barra mais comprida que
+            # qualquer um dos dois valores individuais). Desambigua com o CNPJ/CPF só quando
+            # o nome se repete.
+            wl_plot["rotulo_grafico"] = wl_plot["NOME_PRESTADOR"]
+            duplicados = wl_plot["NOME_PRESTADOR"].duplicated(keep=False)
+            if duplicados.any():
+                wl_plot.loc[duplicados, "rotulo_grafico"] = (
+                    wl_plot.loc[duplicados, "NOME_PRESTADOR"]
+                    + " (CNPJ/CPF " + wl_plot.loc[duplicados, "CNPJ_CPF_PRESTADOR"] + ")"
+                )
+            fig_watch = px.bar(
+                wl_plot.sort_values("fase", ascending=True), x="fase",
+                y="rotulo_grafico", orientation="h",
+                text="fase", title="Prestadores que merecem atenção",
+                custom_data=["CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"],
+            )
+            fig_watch.update_traces(
+                texttemplate="%{text:,.4f}",
+                textposition="outside",
+                hovertemplate=(
+                    "<b>%{y}</b><br>"
+                    "FASE: %{x:,.4f}<br>"
+                    "UF: %{customdata[1]}<br>"
+                    "Cidade: %{customdata[2]}<br>"
+                    "Cluster: %{customdata[3]}"
+                    "<extra></extra>"
+                ),
+            )
+            fig_watch.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10), yaxis_type="category")
+            st.plotly_chart(fig_watch, use_container_width=True)
+            # Tabela com info do prestador (sem o código, com nome)
+            exib_watch = watchlist.drop(columns=["CD_PRESTADOR"], errors="ignore").copy()
+            exib_watch["qtd_procedimentos"] = exib_watch["qtd_procedimentos"].map(fmt_int)
+            exib_watch["qtd_usuarios"] = exib_watch["qtd_usuarios"].map(fmt_int)
+            exib_watch["quantidade_uso"] = exib_watch["quantidade_uso"].map(fmt_int)
+            exib_watch["uso_por_procedimento"] = exib_watch["uso_por_procedimento"].map(fmt_float2)
+            exib_watch["uso_por_vida"] = exib_watch["uso_por_vida"].map(fmt_float2)
+            exib_watch["fase"] = exib_watch["fase"].map(fmt_fase)
+            exib_watch["evolucao_pct"] = exib_watch["evolucao_pct"].map(lambda v: f"{v:+.1f}%")
+            # Nomes de coluna mais curtos, só nessa grade, pra ficar mais fácil de visualizar
+            exib_watch = exib_watch.rename(columns={
+                "qtd_procedimentos": "qtd_proced",
+                "qtd_usuarios": "qtd_usu",
+                "quantidade_uso": "qtde_USO",
+                "uso_por_procedimento": "USO/proced",
+                "uso_por_vida": "USO/vidas",
+                "fase": "FASE",
+                "evolucao_pct": "Evolução",
+            })
+            st.dataframe(exib_watch, hide_index=True, use_container_width=True)
+        else:
+            st.info("Sem dados para montar a watchlist.")
     # ---------- DESVIOS DE SOLICITAÇÕES (qtde do prestador vs. média nacional) ----------
     with tab_desvios:
         st.markdown("#### 📐 Desvios de Solicitações")
