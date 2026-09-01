@@ -404,11 +404,25 @@ if st.session_state.pagina == "projecao":
     mes_key_atual = mes_key(view_year, view_month)
     eh_mes_atual = (view_year == ANO_HOJE and view_month == MES_HOJE)
     dado_mensal_do_mes_visto = st.session_state.historico_mensal.get(mes_key_atual)
-    if eh_mes_atual:
+    tem_oficial = dado_mensal_do_mes_visto and dado_mensal_do_mes_visto.get("projetado") is not None
+    if tem_oficial:
+        # "Projetado oficial" foi cadastrado manualmente pra esse mês — isso sobrepõe a
+        # fórmula. Cadastrar o "Real" (usado só na tabela de Histórico mensal) NÃO entra
+        # aqui e não afeta esse valor.
+        projecao = dado_mensal_do_mes_visto["projetado"]
+        label_projetado = "Valor projetado (oficial)"
+        nota = f"Projetado oficial informado para {label_mes(mes_key_atual)} (não é recalculado pela soma diária)."
+    else:
+        # Sem oficial cadastrado — a fórmula de projeção continua valendo mesmo depois que
+        # o mês vira/fecha (não trava mais em "só enquanto for o mês corrente do calendário").
+        # Pro mês corrente, o corte é o dia de hoje; pra qualquer outro mês (já encerrado ou
+        # ainda não iniciado), o corte é o último dia do próprio mês visualizado — a função
+        # já busca sozinha o último dia com lançamento real dentro desse limite.
+        dia_corte_calc = DIA_HOJE if eh_mes_atual else total
         resultado_sinistro = projetar_sinistro_mes_atual(
             st.session_state.lancamentos,
             st.session_state.historico_mensal,
-            view_year, view_month, DIA_HOJE,
+            view_year, view_month, dia_corte_calc,
             n_meses=2, metodo="razao_soma",
         )
         projecao = resultado_sinistro["sinistro_projetado"]
@@ -417,14 +431,6 @@ if st.session_state.pagina == "projecao":
             nota = ""
         else:
             nota = "Dados insuficientes (dias úteis decorridos ou meses fechados com Real) para calcular a projeção do Sinistro."
-    elif dado_mensal_do_mes_visto and dado_mensal_do_mes_visto["projetado"] is not None:
-        projecao = dado_mensal_do_mes_visto["projetado"]
-        label_projetado = "Valor projetado (oficial)"
-        nota = f"Projetado oficial informado para {label_mes(mes_key_atual)} (não é recalculado pela soma diária)."
-    else:
-        projecao = acumulado
-        label_projetado = "Valor projetado (sem oficial)"
-        nota = f"Sem Projetado oficial cadastrado para {label_mes(mes_key_atual)} — mostrando a soma dos lançamentos diários."
     m1, m2, m3 = st.columns(3)
     m1.metric(label_projetado, fmt_brl(projecao))
     m2.metric("Valor acumulado", fmt_brl(acumulado))
