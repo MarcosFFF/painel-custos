@@ -236,7 +236,7 @@ def carregar_base_severidade(pasta="."):
         "CD_PROCEDIMENTO", "NOME_PROCEDIMENTO", "CD_PRESTADOR", "NOME_PRESTADOR",
         "CNPJ_CPF_PRESTADOR", "CIDADE_PRESTADOR",
     ]
-    # Nota: a análise de severidade (ISR, rankings, watchlist, ofensores) continua
+    # Nota: a análise de severidade (FASE, rankings, watchlist, ofensores) continua
     # 100% baseada em uso e volume — não em R$. A coluna soma_valor (VL_PAGO) volta
     # a existir só para o alerta de aumento de qtde+valor (prestadores críticos).
     agregado = dados.groupby(grupos, dropna=False, observed=True).agg(
@@ -355,47 +355,38 @@ def _info_prestador(df):
     if "CNPJ_CPF_PRESTADOR" in df.columns:
         agregacoes["CNPJ_CPF_PRESTADOR"] = ("CNPJ_CPF_PRESTADOR", lambda x: x.mode().iloc[0] if not x.mode().empty else "—")
     return df.groupby("CD_PRESTADOR", observed=True).agg(**agregacoes).reset_index()
-def _indice_severidade(r):
+def _fase(r):
     """
-    Índice de Severidade Relativa (ISR) — média de duas relatividades, cada
-    uma cruzando dois dos três parâmetros de uso e comparada à média da base:
+    FASE — Fator de Severidade — produto direto de três indicadores do grupo,
+    sem comparação com média nem peso separado:
 
-        Frequência  = qtd_procedimentos ÷ qtd_usuarios     (procedimentos por vida)
-        Intensidade = quantidade_uso ÷ qtd_procedimentos    (uso por procedimento)
+        Frequência    = qtd_procedimentos ÷ qtd_usuarios                        (procedimentos por vida)
+        Incidência    = qtd_procedimentos ÷ quantidade_uso                      (procedimentos por unidade de uso)
+        Peso do grupo = (qtd_procedimentos do grupo ÷ qtd_procedimentos total da base) × 100
 
-        R_frequência  = Frequência do grupo  ÷ Frequência média da base
-        R_intensidade = Intensidade do grupo ÷ Intensidade média da base
-        ISR = (R_frequência + R_intensidade) ÷ 2
+        FASE = Frequência × Incidência × Peso do grupo
 
-    ISR = 1,00 é a média da base; acima de 1,00 é mais severo (uso mais
-    concentrado em poucas vidas/procedimentos ou mais intenso por
-    procedimento); abaixo de 1,00 é menos severo. Ao contrário de uma taxa
-    "por 100.000" fixa, esta versão se autoajusta à escala real dos dados —
-    não explode para grupos de baixo volume, porque cada relatividade só
-    divide por uma grandeza de cada vez (não pelo produto das duas). Não
-    considera valores em R$.
+    Não existe mais uma referência fixa tipo "1,00 = média" — o valor só faz
+    sentido em ranking relativo (comparando um grupo com o outro dentro do
+    mesmo filtro). O "Peso do grupo" suprime naturalmente grupos de volume
+    muito baixo (amostra pequena não aparenta mais severidade do que tem).
+
+    "qtd_procedimentos total da base" é a soma de qtd_procedimentos de TODO o
+    r recebido (todos os grupos da dimensão, antes de qualquer corte por
+    top_n) — ou seja, o total já dentro dos filtros aplicados no momento.
 
     Recebe um DataFrame com as colunas quantidade_uso, qtd_usuarios e
-    qtd_procedimentos e devolve uma Series (indice_severidade) alinhada ao
-    índice de r.
+    qtd_procedimentos e devolve uma Series (fase) alinhada ao índice de r.
     """
     total_proc = r["qtd_procedimentos"].sum()
-    total_usuarios = r["qtd_usuarios"].sum()
-    total_uso = r["quantidade_uso"].sum()
-    freq_media = (total_proc / total_usuarios) if total_usuarios else np.nan
-    intens_media = (total_uso / total_proc) if total_proc else np.nan
-    freq_grupo = np.where(r["qtd_usuarios"] > 0, r["qtd_procedimentos"] / r["qtd_usuarios"], np.nan)
-    intens_grupo = np.where(r["qtd_procedimentos"] > 0, r["quantidade_uso"] / r["qtd_procedimentos"], np.nan)
-    if not freq_media or pd.isna(freq_media):
-        r_freq = np.full(len(r), np.nan)
+    frequencia = np.where(r["qtd_usuarios"] > 0, r["qtd_procedimentos"] / r["qtd_usuarios"], np.nan)
+    incidencia = np.where(r["quantidade_uso"] > 0, r["qtd_procedimentos"] / r["quantidade_uso"], np.nan)
+    if not total_proc:
+        peso_grupo = np.full(len(r), np.nan)
     else:
-        r_freq = freq_grupo / freq_media
-    if not intens_media or pd.isna(intens_media):
-        r_intens = np.full(len(r), np.nan)
-    else:
-        r_intens = intens_grupo / intens_media
-    indice = (r_freq + r_intens) / 2
-    return pd.Series(indice, index=r.index).round(2)
+        peso_grupo = (r["qtd_procedimentos"] / total_proc) * 100
+    fase = frequencia * incidencia * peso_grupo
+    return pd.Series(fase, index=r.index).round(6)
 @st.cache_data(show_spinner=False)
 def ranking_por(df, coluna, top_n=15, usuarios=None):
     r = df.groupby(coluna, dropna=False, observed=True).agg(
@@ -425,7 +416,7 @@ def evolucao_mensal(df, usuarios=None):
     r["uso_por_procedimento"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
     r["procedimento_por_vida"] = (r["qtd_procedimentos"] / r["qtd_usuarios"]).round(3)
-    r["indice_severidade"] = _indice_severidade(r)
+    r["fase"] = _fase(r)
     return r
 @st.cache_data(show_spinner=False)
 def ranking_severidade(df, coluna, top_n=15, usuarios=None):
@@ -446,8 +437,8 @@ def ranking_severidade(df, coluna, top_n=15, usuarios=None):
         r["qtd_usuarios"] = np.nan
     r["uso_por_procedimento"] = (r["quantidade_uso"] / r["qtd_procedimentos"]).round(2)
     r["uso_por_vida"] = (r["quantidade_uso"] / r["qtd_usuarios"]).round(2)
-    r["indice_severidade"] = _indice_severidade(r)
-    return r.sort_values("indice_severidade", ascending=False).head(top_n)
+    r["fase"] = _fase(r)
+    return r.sort_values("fase", ascending=False).head(top_n)
 @st.cache_data(show_spinner=False)
 def calcular_media_nacional(agregado, coluna_dimensao, usuarios=None):
     """Média de uso nacional (sem filtros) por dimensão."""
@@ -492,7 +483,7 @@ def montar_watchlist(df, top_n=20, usuarios=None):
          + por_prestador["pct_uso_por_vida"] * 0.35
          + por_prestador["pct_qtd_procedimentos"] * 0.30) * 100
     ).round(0)
-    por_prestador["indice_severidade"] = _indice_severidade(por_prestador)
+    por_prestador["fase"] = _fase(por_prestador)
     # Tendência percentual (variação do volume do mês mais recente vs anterior, se houver)
     if "MES" in df.columns and df["MES"].nunique() > 1:
         meses_ord = sorted(df["MES"].unique())
@@ -509,7 +500,7 @@ def montar_watchlist(df, top_n=20, usuarios=None):
     resultado = por_prestador.sort_values("pontuacao", ascending=False).head(top_n)
     cols = ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER", "ESPECIALIDADE",
             "qtd_procedimentos", "qtd_usuarios", "quantidade_uso", "uso_por_procedimento", "uso_por_vida",
-            "indice_severidade", "tendencia_pct", "pontuacao"]
+            "fase", "tendencia_pct", "pontuacao"]
     cols = [c for c in cols if c in resultado.columns]
     return resultado[cols].reset_index(drop=True)
 @st.cache_data(show_spinner=False)
@@ -559,13 +550,13 @@ def identificar_ofensores(df, percentil=0.95, usuarios=None):
         justificativas.append(just)
     por_prestador["justificativa"] = justificativas
     por_prestador["relevante"] = por_prestador["criterios_atingidos"] >= 2
-    por_prestador["indice_severidade"] = _indice_severidade(por_prestador)
+    por_prestador["fase"] = _fase(por_prestador)
     resultado = por_prestador.sort_values(
-        ["indice_severidade", "criterios_atingidos"], ascending=[False, False], na_position="last"
+        ["fase", "criterios_atingidos"], ascending=[False, False], na_position="last"
     )
     cols = ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER", "ESPECIALIDADE",
             "qtd_procedimentos", "qtd_usuarios", "quantidade_uso", "uso_por_procedimento", "uso_por_vida",
-            "indice_severidade", "alerta_volume", "alerta_uso_procedimento", "alerta_uso_vida",
+            "fase", "alerta_volume", "alerta_uso_procedimento", "alerta_uso_vida",
             "criterios_atingidos", "relevante", "justificativa"]
     cols = [c for c in cols if c in resultado.columns]
     return resultado[cols].reset_index(drop=True)
@@ -753,7 +744,7 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
     """
     Alerta de prestador + procedimento com aumento relevante de qtde E de valor
     (R$ pago), mês atual vs anterior — usa números absolutos (qtde de guias e
-    soma de VL_PAGO), não a métrica de uso ponderada usada no ISR/resumo por uso.
+    soma de VL_PAGO), não a métrica de uso ponderada usada no FASE/resumo por uso.
     Uma combinação (prestador, especialidade, procedimento) só entra se TODAS as
     condições abaixo forem verdadeiras:
       - qtde do mês atual > volume_minimo (ex.: > 50 procedimentos)
