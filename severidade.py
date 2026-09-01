@@ -499,20 +499,28 @@ def montar_watchlist(df, top_n=20, usuarios=None):
 def identificar_ofensores(df, percentil=0.95, usuarios=None):
     """
     Identifica ofensores com justificativa textual, baseado só em uso e volume.
-    Um prestador é ofensor quando atende ≥ 2 de 3 critérios no top 5%:
-    volume de procedimentos, uso por procedimento, uso por vida.
+    Calculado por prestador + especialidade (mesma granularidade de calcular_desvios) —
+    assim um prestador que atende várias especialidades não tem o uso por vida/FASE
+    diluído ou distorcido por misturar todas elas numa conta só.
+    Uma combinação prestador+especialidade é ofensora quando atende ≥ 2 de 3 critérios
+    no top 5%: volume de procedimentos, uso por procedimento, uso por vida.
     """
     info = _info_prestador(df)
-    por_prestador = df.groupby("CD_PRESTADOR", observed=True).agg(
+    por_prestador = df.groupby(["CD_PRESTADOR", "ESPECIALIDADE"], observed=True).agg(
         qtd_procedimentos=("qtd_procedimentos", "sum"),
         quantidade_uso=("soma_uso", "sum"),
     ).reset_index()
+    if por_prestador.empty:
+        return por_prestador
     if usuarios is not None:
-        por_prestador = por_prestador.merge(vidas_por(usuarios, "CD_PRESTADOR"), on="CD_PRESTADOR", how="left")
+        por_prestador = por_prestador.merge(
+            vidas_por(usuarios, ["CD_PRESTADOR", "ESPECIALIDADE"]), on=["CD_PRESTADOR", "ESPECIALIDADE"], how="left"
+        )
         por_prestador["qtd_usuarios"] = por_prestador["qtd_usuarios"].fillna(0)
     else:
         por_prestador["qtd_usuarios"] = np.nan
-    por_prestador = por_prestador.merge(info, on="CD_PRESTADOR", how="left")
+    colunas_info = [c for c in ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"] if c in info.columns]
+    por_prestador = por_prestador.merge(info[colunas_info], on="CD_PRESTADOR", how="left")
     por_prestador["uso_por_procedimento"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_procedimentos"]).round(2)
     por_prestador["uso_por_vida"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_usuarios"]).round(2)
     if len(por_prestador) == 0:
