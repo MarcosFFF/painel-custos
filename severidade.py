@@ -458,7 +458,7 @@ def calcular_media_nacional(agregado, coluna_dimensao, usuarios=None):
 def montar_watchlist(df, top_n=20, usuarios=None):
     """
     Watchlist com Nome, CPF/CNPJ, UF, Cidade e Cluster de cada prestador.
-    Pontuação 0-100 combinando uso por procedimento, uso por vida e volume.
+    Ordenada por FASE (o mesmo fator de severidade usado no resto do painel).
     """
     info = _info_prestador(df)
     por_prestador = df.groupby("CD_PRESTADOR", observed=True).agg(
@@ -475,16 +475,8 @@ def montar_watchlist(df, top_n=20, usuarios=None):
     por_prestador = por_prestador.merge(info, on="CD_PRESTADOR", how="left")
     por_prestador["uso_por_procedimento"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_procedimentos"]).round(2)
     por_prestador["uso_por_vida"] = (por_prestador["quantidade_uso"] / por_prestador["qtd_usuarios"]).round(2)
-    # Pontuação composta (0-100) — percentis de uso por procedimento, uso por vida e volume
-    for c in ["uso_por_procedimento", "uso_por_vida", "qtd_procedimentos"]:
-        por_prestador[f"pct_{c}"] = por_prestador[c].rank(pct=True).fillna(0)
-    por_prestador["pontuacao"] = (
-        (por_prestador["pct_uso_por_procedimento"] * 0.35
-         + por_prestador["pct_uso_por_vida"] * 0.35
-         + por_prestador["pct_qtd_procedimentos"] * 0.30) * 100
-    ).round(0)
     por_prestador["fase"] = _fase(por_prestador)
-    # Tendência percentual (variação do volume do mês mais recente vs anterior, se houver)
+    # Evolução percentual (variação do volume do mês mais recente vs anterior, se houver)
     if "MES" in df.columns and df["MES"].nunique() > 1:
         meses_ord = sorted(df["MES"].unique())
         ultimo = meses_ord[-1]
@@ -494,13 +486,13 @@ def montar_watchlist(df, top_n=20, usuarios=None):
         agg_ult = df_ult.groupby("CD_PRESTADOR", observed=True)["qtd_procedimentos"].sum()
         agg_pen = df_pen.groupby("CD_PRESTADOR", observed=True)["qtd_procedimentos"].sum()
         tend = ((agg_ult - agg_pen) / agg_pen.replace(0, np.nan) * 100).round(1)
-        por_prestador["tendencia_pct"] = por_prestador["CD_PRESTADOR"].map(tend).fillna(0)
+        por_prestador["evolucao_pct"] = por_prestador["CD_PRESTADOR"].map(tend).fillna(0)
     else:
-        por_prestador["tendencia_pct"] = 0.0
-    resultado = por_prestador.sort_values("pontuacao", ascending=False).head(top_n)
+        por_prestador["evolucao_pct"] = 0.0
+    resultado = por_prestador.sort_values("fase", ascending=False).head(top_n)
     cols = ["CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER", "ESPECIALIDADE",
             "qtd_procedimentos", "qtd_usuarios", "quantidade_uso", "uso_por_procedimento", "uso_por_vida",
-            "fase", "tendencia_pct", "pontuacao"]
+            "fase", "evolucao_pct"]
     cols = [c for c in cols if c in resultado.columns]
     return resultado[cols].reset_index(drop=True)
 @st.cache_data(show_spinner=False)
