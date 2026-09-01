@@ -1177,9 +1177,12 @@ elif st.session_state.pagina == "severidade":
                                 f"e em {mes_atual_lbl} foram {fmt_int(row['usuarios_atual'])}."
                             )
                         if pd.notna(row.get("fase_anterior")) and pd.notna(row.get("fase_atual")):
-                            texto += (
-                                f" O FASE em {mes_anterior_lbl} foi {fmt_fase(row['fase_anterior'])} e em "
-                                f"{mes_atual_lbl} foi {fmt_fase(row['fase_atual'])}, com variação de "
-                                f"**{row['variacao_fase_pct']:+.0f}%**."
-                            )
+                            if row["fase_atual"] < 0.009:
+                                texto += " Sem variação relevante no FASE."
+                            else:
+                                texto += (
+                                    f" O FASE em {mes_anterior_lbl} foi {fmt_fase(row['fase_anterior'])} e em "
+                                    f"{mes_atual_lbl} foi {fmt_fase(row['fase_atual'])}, com variação de "
+                                    f"**{row['variacao_fase_pct']:+.0f}%**."
+                                )
                         st.markdown(texto)
