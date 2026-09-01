@@ -740,7 +740,8 @@ def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, t
            f"Só entram grupos com volume ≥ {volume_minimo} procedimentos em ambos os meses.")
     return resultado, msg
 @st.cache_data(show_spinner=False)
-def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=1500.0, pct_minimo=50.0, usuarios=None):
+def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=1500.0, pct_minimo=50.0,
+                                    fase_pct_minimo=50.0, usuarios=None):
     """
     Alerta de prestador + procedimento com aumento relevante de qtde E de valor
     (R$ pago), mês atual vs anterior — usa números absolutos (qtde de guias e
@@ -751,6 +752,8 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
       - aumento absoluto em R$ (valor atual - valor anterior) > aumento_valor_minimo
       - variação % da qtde  >= pct_minimo
       - variação % do valor >= pct_minimo
+      - variação % do FASE  >= fase_pct_minimo (FASE calculado na mesma granularidade
+        prestador+especialidade+procedimento, um valor por mês)
     Retorna (DataFrame, mensagem). DataFrame vazio se nada atender aos critérios.
     """
     if "MES" not in df.columns or df["MES"].dropna().nunique() < 2:
@@ -766,6 +769,7 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
         agregacoes = {
             f"qtd_{sufixo}": ("qtd_procedimentos", "sum"),
             f"valor_{sufixo}": ("soma_valor", "sum"),
+            f"uso_{sufixo}": ("soma_uso", "sum"),
         }
         r = sub.groupby(chave, dropna=False, observed=True).agg(**agregacoes).reset_index()
         if usuarios is not None:
@@ -774,6 +778,13 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
             r[f"usuarios_{sufixo}"] = r[f"usuarios_{sufixo}"].fillna(0)
         else:
             r[f"usuarios_{sufixo}"] = np.nan
+        # FASE do mês, na mesma granularidade (prestador + especialidade + procedimento)
+        r_fase = pd.DataFrame({
+            "qtd_procedimentos": r[f"qtd_{sufixo}"],
+            "quantidade_uso": r[f"uso_{sufixo}"],
+            "qtd_usuarios": r[f"usuarios_{sufixo}"],
+        })
+        r[f"fase_{sufixo}"] = _fase(r_fase)
         return r
 
     atual = _agg_mes(df[df["MES"] == ultimo], "atual", ultimo)
@@ -790,17 +801,22 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
     comp["variacao_usuarios_pct"] = np.where(
         comp["usuarios_anterior"] > 0, (comp["usuarios_atual"] - comp["usuarios_anterior"]) / comp["usuarios_anterior"] * 100, np.nan
     )
+    comp["variacao_fase_pct"] = np.where(
+        comp["fase_anterior"] > 0, (comp["fase_atual"] - comp["fase_anterior"]) / comp["fase_anterior"] * 100, np.nan
+    )
 
     comp = comp[
         (comp["qtd_atual"] > volume_minimo)
         & (comp["delta_valor"] > aumento_valor_minimo)
         & (comp["variacao_qtd_pct"] >= pct_minimo)
         & (comp["variacao_valor_pct"] >= pct_minimo)
+        & (comp["variacao_fase_pct"] >= fase_pct_minimo)
     ]
     valor_min_fmt = f"{aumento_valor_minimo:,.2f}".replace(",", "§").replace(".", ",").replace("§", ".")
     if comp.empty:
         msg = (f"Nenhum prestador atendeu aos critérios ({ultimo} vs {penult}): qtde atual > {volume_minimo}, "
-               f"aumento de valor > R$ {valor_min_fmt}, variação de qtde e de valor ≥ {pct_minimo:.0f}%.")
+               f"aumento de valor > R$ {valor_min_fmt}, variação de qtde e de valor ≥ {pct_minimo:.0f}%, "
+               f"variação do FASE ≥ {fase_pct_minimo:.0f}%.")
         return comp, msg
 
     info = _info_prestador(df)
@@ -810,7 +826,8 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
     comp["MES_ANTERIOR"] = penult
     comp = comp.sort_values(["CD_PRESTADOR", "variacao_valor_pct"], ascending=[True, False]).reset_index(drop=True)
     msg = (f"{ultimo} vs {penult}. Critérios: qtde atual > {volume_minimo}, aumento de valor > "
-           f"R$ {valor_min_fmt}, variação de qtde e de valor ≥ {pct_minimo:.0f}%.")
+           f"R$ {valor_min_fmt}, variação de qtde e de valor ≥ {pct_minimo:.0f}%, "
+           f"variação do FASE ≥ {fase_pct_minimo:.0f}%.")
     return comp, msg
 @st.cache_data(show_spinner=False)
 def identificar_desvios_solicitacao(df, agregado_nacional=None, volume_minimo=30, desvio_minimo_pct=50.0, procedimento=None):
