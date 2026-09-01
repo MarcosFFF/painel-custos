@@ -797,9 +797,21 @@ elif st.session_state.pagina == "severidade":
                 if col not in wl_plot.columns:
                     wl_plot[col] = "—"
                 wl_plot[col] = wl_plot[col].fillna("—").astype(str)
+            # Rótulo do eixo Y — dois prestadores (CD_PRESTADOR diferentes, ex.: unidades/CNPJs
+            # distintos da mesma rede) podem ter o mesmo NOME_PRESTADOR. Usar só o nome faria o
+            # Plotly empilhar as barras deles na mesma categoria (barra mais comprida que
+            # qualquer um dos dois valores individuais). Desambigua com o CNPJ/CPF só quando
+            # o nome se repete.
+            wl_plot["rotulo_grafico"] = wl_plot["NOME_PRESTADOR"]
+            duplicados = wl_plot["NOME_PRESTADOR"].duplicated(keep=False)
+            if duplicados.any():
+                wl_plot.loc[duplicados, "rotulo_grafico"] = (
+                    wl_plot.loc[duplicados, "NOME_PRESTADOR"]
+                    + " (CNPJ/CPF " + wl_plot.loc[duplicados, "CNPJ_CPF_PRESTADOR"] + ")"
+                )
             fig_watch = px.bar(
                 wl_plot.sort_values("fase", ascending=True), x="fase",
-                y="NOME_PRESTADOR", orientation="h",
+                y="rotulo_grafico", orientation="h",
                 text="fase", title="Prestadores que merecem atenção",
                 custom_data=["CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"],
             )
