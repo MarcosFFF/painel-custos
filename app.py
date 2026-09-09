@@ -8,7 +8,7 @@ from datetime import date, datetime
 from supabase import create_client, Client
 import plotly.express as px
 import plotly.graph_objects as go
-from projecao_sinistro import projetar_sinistro_mes_atual, projetar_dias_restantes
+from projecao_sinistro import projetar_sinistro_mes_atual, projetar_dias_restantes, eh_dia_util
 try:
     from severidade import (
         carregar_base_severidade, aplicar_filtros, evolucao_mensal,
@@ -150,7 +150,10 @@ def eh_fim_de_semana(y, m, d):
 def calendario(y, m):
     total = dias_no_mes(y, m)
     dn = sum(1 for d in range(1, total + 1) if eh_fim_de_semana(y, m, d))
-    du = total - dn
+    # "Dias úteis" desconta fim de semana E feriado nacional (fixo ou móvel) — não é mais
+    # só "total - fins de semana", porque um feriado em dia de semana (ex.: 07/set) também
+    # não conta como dia útil.
+    du = sum(1 for d in range(1, total + 1) if eh_dia_util(date(y, m, d)))
     return total, du, dn
 def fmt_brl(v):
     if v is None:
@@ -236,13 +239,25 @@ def gravar_real_mensal(key, valor):
 def gravar_projetado_mensal(key, valor):
     """Insere/atualiza o Projetado (oficial) de um mês — funciona pra qualquer mês, inclusive
     o mês corrente (sobrepõe a fórmula de projeção) e meses que ainda não têm nenhuma linha
-    no histórico (cria a linha, com Real nulo até ser informado)."""
+    no histórico (cria a linha, com Real nulo até ser informado). Não mexe no Real."""
     atual = st.session_state.historico_mensal.get(key, {"projetado": None, "real": None})
     try:
         supabase.table("historico_mensal").upsert(
             {"mes_ano": key, "projetado": float(valor), "real": atual["real"]}
         ).execute()
         st.session_state.historico_mensal[key] = {"projetado": float(valor), "real": atual["real"]}
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+def limpar_projetado_mensal(key):
+    """Remove o Projetado (oficial) de um mês — volta a usar a fórmula de projeção automática
+    pra esse mês. Não mexe no Real."""
+    atual = st.session_state.historico_mensal.get(key, {"projetado": None, "real": None})
+    try:
+        supabase.table("historico_mensal").upsert(
+            {"mes_ano": key, "projetado": None, "real": atual["real"]}
+        ).execute()
+        st.session_state.historico_mensal[key] = {"projetado": None, "real": atual["real"]}
         return True, ""
     except Exception as e:
         return False, str(e)
@@ -313,7 +328,7 @@ def acumulado_ate_dia(y, m, dia_limite):
 def mes_anterior_de(y, m):
     return (y, m - 1) if m > 1 else (y - 1, 12)
 def dias_uteis_decorridos_de(y, m, total, entradas):
-    return sum(1 for d, v in entradas.items() if not eh_fim_de_semana(y, m, d))
+    return sum(1 for d, v in entradas.items() if eh_dia_util(date(y, m, d)))
 # ============================================================
 # LOGIN
 # ============================================================
@@ -461,6 +476,7 @@ if st.session_state.pagina == "projecao":
     ind1.metric("Dias úteis decorridos / total", f"{decorridos} / {du_total}")
     ind2.metric("Total de dias de fins de semana no mês", dn_total)
     ind3.metric("Total de dias no mês", total)
+    st.caption("Dias úteis descontam finais de semana e feriados nacionais (fixos e móveis).")
     st.divider()
     st.subheader("Comparativos")
     ano_ant_mes, mes_ant_mes = mes_anterior_de(view_year, view_month)
@@ -524,9 +540,15 @@ if st.session_state.pagina == "projecao":
     linhas = []
     for d in range(1, total + 1):
         finde = eh_fim_de_semana(view_year, view_month, d)
+        # Feriado nacional que caiu em dia de semana (não conta como fim de semana, mas
+        # também não é dia útil) — sinalizado à parte pra ficar visível na tabela.
+        feriado = (not finde) and (not eh_dia_util(date(view_year, view_month, d)))
         wd = DOW_NOMES[date(view_year, view_month, d).weekday()]
         is_hoje = eh_mes_atual and d == DIA_HOJE
-        rotulo = f"{wd}{' · fim de semana' if finde else ''}{' · hoje' if is_hoje else ''}"
+        rotulo = (
+            f"{wd}{' · fim de semana' if finde else ''}{' · feriado' if feriado else ''}"
+            f"{' · hoje' if is_hoje else ''}"
+        )
         linhas.append({"Dia": d, "Dia da semana": rotulo, "Valor (R$)": entradas.get(d)})
     df_dias = pd.DataFrame(linhas)
     dia_ancora = min(DIA_HOJE, total) if eh_mes_atual else total
@@ -593,6 +615,9 @@ if st.session_state.pagina == "projecao":
         st.dataframe(df_mensal_exibir, hide_index=True, use_container_width=True)
         if is_admin:
             st.markdown("**✏️ Inserir/corrigir Projetado e Real de um mês**")
+            st.caption(
+                "Projetado e Real são salvos de forma independente — salvar um nunca altera o outro."
+            )
             # Lista de meses pra escolher: os que já têm linha no histórico, unidos com uma
             # janela de 12 meses antes/depois do mês atual — assim dá pra inserir um mês que
             # ainda não tem nenhuma linha no banco (ex.: agosto recém-fechado, ou até o mês
@@ -611,34 +636,55 @@ if st.session_state.pagina == "projecao":
             dado_escolhido = st.session_state.historico_mensal.get(escolha, {"projetado": None, "real": None})
             col_proj, col_real = st.columns(2)
             with col_proj:
+                st.markdown(f"Projetado (oficial) — {label_mes(escolha)}")
+                projetado_atual = dado_escolhido["projetado"]
                 novo_projetado = st.number_input(
-                    f"Projetado (oficial) — {label_mes(escolha)}",
-                    value=float(dado_escolhido["projetado"]) if dado_escolhido["projetado"] is not None else 0.0,
+                    "Valor projetado",
+                    value=float(projetado_atual) if projetado_atual is not None else 0.0,
                     step=0.01,
                     format="%.2f",
                     key=f"input_projetado_{escolha}",
+                    label_visibility="collapsed",
                 )
+                sub_col1, sub_col2 = st.columns(2)
+                with sub_col1:
+                    if st.button("Salvar Projetado", key=f"salvar_projetado_{escolha}"):
+                        ok, erro = gravar_projetado_mensal(escolha, novo_projetado)
+                        if ok:
+                            st.success(f"Projetado de {label_mes(escolha)} salvo: {fmt_brl(novo_projetado)}.")
+                            st.rerun()
+                        else:
+                            st.error(f"Erro ao salvar: {erro}")
+                with sub_col2:
+                    if projetado_atual is not None:
+                        if st.button("Remover override", key=f"limpar_projetado_{escolha}"):
+                            ok, erro = limpar_projetado_mensal(escolha)
+                            if ok:
+                                st.success(f"Projetado oficial de {label_mes(escolha)} removido — volta a usar a fórmula.")
+                                st.rerun()
+                            else:
+                                st.error(f"Erro ao remover: {erro}")
             with col_real:
+                st.markdown(f"Real — {label_mes(escolha)}")
                 if eh_mes_corrente_edicao:
-                    st.caption("Real não é editável aqui pro mês corrente — ele vem dos lançamentos diários.")
-                    novo_real = None
+                    st.caption("Não editável pro mês corrente — vem dos lançamentos diários.")
                 else:
+                    real_atual = dado_escolhido["real"]
                     novo_real = st.number_input(
-                        f"Real — {label_mes(escolha)}",
-                        value=float(dado_escolhido["real"]) if dado_escolhido["real"] is not None else 0.0,
+                        "Valor real",
+                        value=float(real_atual) if real_atual is not None else 0.0,
                         step=0.01,
                         format="%.2f",
                         key=f"input_real_{escolha}",
+                        label_visibility="collapsed",
                     )
-            st.caption("O Projetado (oficial) sobrepõe a fórmula de projeção pra esse mês, inclusive o mês corrente.")
-            if st.button("Salvar", key=f"salvar_hist_{escolha}"):
-                ok_proj, erro_proj = gravar_projetado_mensal(escolha, novo_projetado)
-                ok_real, erro_real = (True, "") if novo_real is None else gravar_real_mensal(escolha, novo_real)
-                if ok_proj and ok_real:
-                    st.success(f"{label_mes(escolha)} atualizado com sucesso.")
-                    st.rerun()
-                else:
-                    st.error(f"Erro ao salvar: {erro_proj or erro_real}")
+                    if st.button("Salvar Real", key=f"salvar_real_{escolha}"):
+                        ok, erro = gravar_real_mensal(escolha, novo_real)
+                        if ok:
+                            st.success(f"Real de {label_mes(escolha)} salvo: {fmt_brl(novo_real)}.")
+                            st.rerun()
+                        else:
+                            st.error(f"Erro ao salvar: {erro}")
 # ============================================================
 # PÁGINA: SEVERIDADE
 # ============================================================
