@@ -612,6 +612,36 @@ elif st.session_state.pagina == "severidade":
         if st.button("🔄 Recarregar", use_container_width=True):
             carregar_base_severidade.clear()
             st.rerun()
+    with st.expander("ℹ️ Informações Técnicas - Aba Severidade"):
+        st.markdown(
+            "A aba Severidade mede padrão de utilização — não custo.\n\n"
+            "**Objetivo:** identificar onde a utilização foge do esperado (especialidade, região, "
+            "procedimento ou prestador).\n\n"
+            "**A pergunta que a aba responde:** Esse grupo está usando mais do que deveria, e isso é "
+            "relevante em volume ou é ruído estatístico de uma amostra pequena?\n\n"
+            "---\n\n"
+            "**FASE (Fator de Severidade):** é o produto de três componentes, calculado para qualquer "
+            "grupo (uma especialidade, uma UF, um procedimento, um prestador...):\n\n"
+            "**FASE = Frequência × Incidência × Peso do grupo**\n\n"
+            "- **Frequência:** Procedimentos ÷ Vidas *(quantos procedimentos por paciente distinto)*\n"
+            "- **Incidência:** Procedimentos ÷ Uso *(quanto do 'uso' (peso do procedimento) cada guia "
+            "consome)*\n"
+            "- **Peso do grupo:** (Procedimentos do grupo ÷ Procedimentos totais) × 100 *(relevância do "
+            "grupo dentro da base — filtra ruído de amostra pequena)*\n\n"
+            "FASE só faz sentido em ranking comparativo: quanto maior, mais severo em relação aos outros "
+            "grupos do mesmo filtro (um grupo minúsculo não aparece como severo só por ter uma métrica "
+            "bruta alta).\n\n"
+            "Um procedimento caro não é, por si só, sinal de má utilização — e um procedimento barato "
+            "usado em excesso pode ser um problema maior.\n\n"
+            "---\n\n"
+            "A lista de prestadores exibida respeita os filtros ativos (UF, especialidade, cidade). Isso "
+            "evita comparar um prestador com uma \"média\" que já foi recortada artificialmente pelo "
+            "filtro.\n\n"
+            "Todas as comparações mês a mês (comparação mensal, resumo, alerta de qtde+valor) usam o "
+            "mesmo período do mês nos dois lados: se o mês mais recente só tem dados até o dia 07, o mês "
+            "anterior entra na conta também só até o dia 07 — para não comparar um mês fechado inteiro "
+            "com um mês ainda em andamento."
+        )
     agregado, base_usuarios, aviso_carga = carregar_base_severidade(".")
     if agregado is None:
         st.error(f"Não consegui carregar os dados de severidade: {aviso_carga}")
