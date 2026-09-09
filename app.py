@@ -422,7 +422,7 @@ if st.session_state.pagina == "projecao":
     else:
         # Sem oficial cadastrado — a fórmula de projeção continua valendo mesmo depois que
         # o mês vira/fecha (não trava mais em "só enquanto for o mês corrente do calendário").
-        # Pro mês corrente, o corte é o dia de hoje; pra qualquer outro mês (já encerrado ou
+        # Para o mês corrente, o corte é o dia de hoje; pra qualquer outro mês (já encerrado ou
         # ainda não iniciado), o corte é o último dia do próprio mês visualizado — a função
         # já busca sozinha o último dia com lançamento real dentro desse limite.
         dia_corte_calc = DIA_HOJE if eh_mes_atual else total
@@ -643,17 +643,17 @@ elif st.session_state.pagina == "severidade":
             "com um mês ainda em andamento.\n\n"
             "---\n\n"
             "**Volume mínimo de procedimentos para considerar uma variação relevante.**\n\n"
-            "Padrão: 30\n"
-            "Evita que um grupo com pouquíssimos procedimentos apareça com uma variação % gigante.\n"
+            "Padrão: 30\n\n"
+            "Evita que um grupo com pouquíssimos procedimentos apareça com uma variação % gigante.\n\n"
             "Ele afeta especificamente dois pontos do painel:\n\n"
             "- **Aba Ofensores**\n"
             "- **Aba Resumo**\n\n"
             "**Não** afeta o Ranking de Severidade (FASE)\n\n"
-            "Se colocar 1: Risco: ruído estatístico.\n"
+            "**Se colocar 1:** Risco: ruído estatístico.\n\n"
             "**Com 30 (padrão):** um equilíbrio — filtra o ruído de grupos muito pequenos, mas ainda "
-            "inclui volume moderado.\n"
+            "inclui volume moderado.\n\n"
             "**Com 100:** Fica mais rigoroso. Reduz falso positivo, mas pode esconder um "
-            "desvio real que ainda está com volume moderado.\n"
+            "desvio real que ainda está com volume moderado.\n\n"
             "**Com 200:** Bem restritivo — só os maiores grupos aparecem. Bom para focar nos "
             "pode deixar passar despercebido um grupo médio que está crescendo rápido mas ainda não bateu esse "
             "patamar de volume."
