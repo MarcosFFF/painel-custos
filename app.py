@@ -233,6 +233,19 @@ def gravar_real_mensal(key, valor):
         return True, ""
     except Exception as e:
         return False, str(e)
+def gravar_projetado_mensal(key, valor):
+    """Insere/atualiza o Projetado (oficial) de um mês — funciona pra qualquer mês, inclusive
+    o mês corrente (sobrepõe a fórmula de projeção) e meses que ainda não têm nenhuma linha
+    no histórico (cria a linha, com Real nulo até ser informado)."""
+    atual = st.session_state.historico_mensal.get(key, {"projetado": None, "real": None})
+    try:
+        supabase.table("historico_mensal").upsert(
+            {"mes_ano": key, "projetado": float(valor), "real": atual["real"]}
+        ).execute()
+        st.session_state.historico_mensal[key] = {"projetado": float(valor), "real": atual["real"]}
+        return True, ""
+    except Exception as e:
+        return False, str(e)
 def enviar_email_projecao(view_year, view_month, label_projetado, projecao, acumulado,
                            decorridos, du_total, dias_lancados, total_dias, nota_projecao,
                            variacoes_projetado):
@@ -422,7 +435,7 @@ if st.session_state.pagina == "projecao":
     else:
         # Sem oficial cadastrado — a fórmula de projeção continua valendo mesmo depois que
         # o mês vira/fecha (não trava mais em "só enquanto for o mês corrente do calendário").
-        # Para o mês corrente, o corte é o dia de hoje; pra qualquer outro mês (já encerrado ou
+        # Pro mês corrente, o corte é o dia de hoje; pra qualquer outro mês (já encerrado ou
         # ainda não iniciado), o corte é o último dia do próprio mês visualizado — a função
         # já busca sozinha o último dia com lançamento real dentro desse limite.
         dia_corte_calc = DIA_HOJE if eh_mes_atual else total
@@ -564,14 +577,11 @@ if st.session_state.pagina == "projecao":
     with st.expander("📊 Histórico mensal · Projetado × Real"):
         linhas_mensal = []
         mes_corrente_label = None
-        opcoes_edicao = []
         for k in sorted(st.session_state.historico_mensal.keys(), reverse=True):
             dado = st.session_state.historico_mensal[k]
             eh_atual = k >= mes_key(ANO_HOJE, MES_HOJE)
             if eh_atual:
                 mes_corrente_label = label_mes(k)
-            else:
-                opcoes_edicao.append((label_mes(k), k))
             linhas_mensal.append({
                 "Mês": label_mes(k),
                 "Projetado": "mês corrente" if eh_atual else fmt_brl(dado["projetado"]),
@@ -581,26 +591,54 @@ if st.session_state.pagina == "projecao":
         if mes_corrente_label:
             st.caption(f"{mes_corrente_label} é o mês corrente — o Real dele é calculado automaticamente.")
         st.dataframe(df_mensal_exibir, hide_index=True, use_container_width=True)
-        if is_admin and opcoes_edicao:
-            st.markdown("**✏️ Corrigir o Real de um mês encerrado**")
-            labels_edicao = [lbl for lbl, _ in opcoes_edicao]
-            escolha = st.selectbox("Mês", labels_edicao, key="select_mes_editar")
-            key_escolhida = dict(opcoes_edicao)[escolha]
-            valor_atual = st.session_state.historico_mensal[key_escolhida]["real"]
-            novo_valor = st.number_input(
-                f"Novo valor Real para {escolha}",
-                value=float(valor_atual) if valor_atual is not None else 0.0,
-                step=0.01,
-                format="%.2f",
-                key=f"input_real_{key_escolhida}",
+        if is_admin:
+            st.markdown("**✏️ Inserir/corrigir Projetado e Real de um mês**")
+            # Lista de meses pra escolher: os que já têm linha no histórico, unidos com uma
+            # janela de 12 meses antes/depois do mês atual — assim dá pra inserir um mês que
+            # ainda não tem nenhuma linha no banco (ex.: agosto recém-fechado, ou até o mês
+            # corrente, pra sobrepor a fórmula de projeção com um Projetado oficial).
+            meses_disponiveis = set(st.session_state.historico_mensal.keys())
+            for delta in range(-12, 13):
+                total_meses = (MES_HOJE - 1) + delta
+                y = ANO_HOJE + total_meses // 12
+                m = total_meses % 12 + 1
+                meses_disponiveis.add(mes_key(y, m))
+            labels_edicao = sorted(meses_disponiveis, reverse=True)
+            escolha = st.selectbox(
+                "Mês", labels_edicao, format_func=label_mes, key="select_mes_editar"
             )
-            if st.button("Salvar", key=f"salvar_real_{key_escolhida}"):
-                ok, erro = gravar_real_mensal(key_escolhida, novo_valor)
-                if ok:
-                    st.success(f"Real de {escolha} atualizado para {fmt_brl(novo_valor)}.")
+            eh_mes_corrente_edicao = escolha >= mes_key(ANO_HOJE, MES_HOJE)
+            dado_escolhido = st.session_state.historico_mensal.get(escolha, {"projetado": None, "real": None})
+            col_proj, col_real = st.columns(2)
+            with col_proj:
+                novo_projetado = st.number_input(
+                    f"Projetado (oficial) — {label_mes(escolha)}",
+                    value=float(dado_escolhido["projetado"]) if dado_escolhido["projetado"] is not None else 0.0,
+                    step=0.01,
+                    format="%.2f",
+                    key=f"input_projetado_{escolha}",
+                )
+            with col_real:
+                if eh_mes_corrente_edicao:
+                    st.caption("Real não é editável aqui pro mês corrente — ele vem dos lançamentos diários.")
+                    novo_real = None
+                else:
+                    novo_real = st.number_input(
+                        f"Real — {label_mes(escolha)}",
+                        value=float(dado_escolhido["real"]) if dado_escolhido["real"] is not None else 0.0,
+                        step=0.01,
+                        format="%.2f",
+                        key=f"input_real_{escolha}",
+                    )
+            st.caption("O Projetado (oficial) sobrepõe a fórmula de projeção pra esse mês, inclusive o mês corrente.")
+            if st.button("Salvar", key=f"salvar_hist_{escolha}"):
+                ok_proj, erro_proj = gravar_projetado_mensal(escolha, novo_projetado)
+                ok_real, erro_real = (True, "") if novo_real is None else gravar_real_mensal(escolha, novo_real)
+                if ok_proj and ok_real:
+                    st.success(f"{label_mes(escolha)} atualizado com sucesso.")
                     st.rerun()
                 else:
-                    st.error(f"Erro ao salvar: {erro}")
+                    st.error(f"Erro ao salvar: {erro_proj or erro_real}")
 # ============================================================
 # PÁGINA: SEVERIDADE
 # ============================================================
@@ -643,17 +681,17 @@ elif st.session_state.pagina == "severidade":
             "com um mês ainda em andamento.\n\n"
             "---\n\n"
             "**Volume mínimo de procedimentos para considerar uma variação relevante.**\n\n"
-            "Padrão: 30\n\n"
-            "Evita que um grupo com pouquíssimos procedimentos apareça com uma variação % gigante.\n\n"
+            "Padrão: 30\n"
+            "Evita que um grupo com pouquíssimos procedimentos apareça com uma variação % gigante.\n"
             "Ele afeta especificamente dois pontos do painel:\n\n"
             "- **Aba Ofensores**\n"
             "- **Aba Resumo**\n\n"
             "**Não** afeta o Ranking de Severidade (FASE)\n\n"
-            "**Se colocar 1:** Risco: ruído estatístico.\n\n"
+            "Se colocar 1: Risco: ruído estatístico.\n"
             "**Com 30 (padrão):** um equilíbrio — filtra o ruído de grupos muito pequenos, mas ainda "
-            "inclui volume moderado.\n\n"
+            "inclui volume moderado.\n"
             "**Com 100:** Fica mais rigoroso. Reduz falso positivo, mas pode esconder um "
-            "desvio real que ainda está com volume moderado.\n\n"
+            "desvio real que ainda está com volume moderado.\n"
             "**Com 200:** Bem restritivo — só os maiores grupos aparecem. Bom para focar nos "
             "pode deixar passar despercebido um grupo médio que está crescendo rápido mas ainda não bateu esse "
             "patamar de volume."
