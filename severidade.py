@@ -198,6 +198,11 @@ def carregar_base_severidade(pasta="."):
     sem_atend = dados["DATA_REF"].isna()
     dados.loc[sem_atend, "DATA_REF"] = dados.loc[sem_atend, "DATA_SOL"]
     dados["MES"] = dados["DATA_REF"].dt.strftime("%Y-%m")
+    # Dia do mês da DATA_REF — usado para comparar meses pelo MESMO período
+    # (ex.: mês atual só tem dados até dia 07 -> o mês anterior entra na
+    # comparação também só até o dia 07), em vez de mês fechado vs mês em
+    # andamento.
+    dados["DIA"] = dados["DATA_REF"].dt.day
     tabela_1004 = pd.read_excel(_localizar_arquivo(pasta, "1004"), sheet_name=0)
     mapa_1004 = _casar_colunas(tabela_1004.columns, ["CODIGO", "USO"])
     tabela_1004 = tabela_1004[[mapa_1004["CODIGO"], mapa_1004["USO"]]].copy()
@@ -232,7 +237,7 @@ def carregar_base_severidade(pasta="."):
         dados["NOME_PRESTADOR"] = None
         dados["CNPJ_CPF_PRESTADOR"] = None
     grupos = [
-        "MES", "UF", "REGIAO", "ESPECIALIDADE", "CD_PLANO", "NR_PLANO", "CLUSTER",
+        "MES", "DIA", "UF", "REGIAO", "ESPECIALIDADE", "CD_PLANO", "NR_PLANO", "CLUSTER",
         "CD_PROCEDIMENTO", "NOME_PROCEDIMENTO", "CD_PRESTADOR", "NOME_PRESTADOR",
         "CNPJ_CPF_PRESTADOR", "CIDADE_PRESTADOR",
     ]
@@ -290,7 +295,7 @@ def carregar_base_severidade(pasta="."):
     # paciente na mesma combinação) — a partir dela dá pra calcular
     # nunique(CD_USUARIO) corretamente, não importa em qual nível se agrupe.
     colunas_usuarios = [
-        "MES", "UF", "REGIAO", "ESPECIALIDADE", "CD_PLANO", "NR_PLANO", "CLUSTER",
+        "MES", "DIA", "UF", "REGIAO", "ESPECIALIDADE", "CD_PLANO", "NR_PLANO", "CLUSTER",
         "NOME_PROCEDIMENTO", "CD_PRESTADOR", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR",
         "CIDADE_PRESTADOR", "CD_USUARIO",
     ]
@@ -596,16 +601,33 @@ def calcular_desvios(df, usuarios=None):
             "uso_por_vida", "uso_por_vida_esp", "desvio_uso_vida_pct"]
     cols = [c for c in cols if c in resultado.columns]
     return resultado[cols].reset_index(drop=True)
+def _dia_corte_mes(df, mes):
+    """Maior DIA (dia do mês, a partir de DATA_SOL) presente para `mes` em df.
+    Usado para cortar o mês anterior no MESMO período, quando o mês atual
+    ainda está em andamento (ex.: só tem lançamentos até dia 07)."""
+    if "DIA" not in df.columns:
+        return None
+    dias = df.loc[df["MES"] == mes, "DIA"]
+    dias = dias.dropna()
+    if dias.empty:
+        return None
+    return int(dias.max())
 @st.cache_data(show_spinner=False)
 def comparacao_mensal(df, coluna, volume_minimo=30, usuarios=None):
-    """Compara o último mês vs o anterior por coluna (volume e uso), respeitando volume mínimo."""
+    """Compara o último mês vs o anterior por coluna (volume e uso), respeitando volume mínimo.
+    Comparação por MESMO período: se o último mês só tem dados até o dia D
+    (maior DIA presente), o mês anterior entra na conta também só até o dia D —
+    evita comparar um mês fechado inteiro com um mês ainda em andamento."""
     if "MES" not in df.columns or df["MES"].nunique() < 2:
         return pd.DataFrame(), "Dados insuficientes para comparação (necessário ≥ 2 meses)."
     meses_ord = sorted(df["MES"].unique())
     ultimo = meses_ord[-1]
     penult = meses_ord[-2]
+    dia_corte = _dia_corte_mes(df, ultimo)
     df_ult = df[df["MES"] == ultimo]
     df_pen = df[df["MES"] == penult]
+    if dia_corte is not None:
+        df_pen = df_pen[df_pen["DIA"] <= dia_corte]
     agg_ult = df_ult.groupby(coluna, observed=True).agg(
         qtd_atual=("qtd_procedimentos", "sum"),
         uso_atual=("soma_uso", "sum"),
@@ -615,8 +637,12 @@ def comparacao_mensal(df, coluna, volume_minimo=30, usuarios=None):
         uso_anterior=("soma_uso", "sum"),
     )
     if usuarios is not None:
-        vidas_ult = vidas_por(usuarios[usuarios["MES"] == ultimo], coluna).set_index(coluna)["qtd_usuarios"].rename("usuarios_atual")
-        vidas_pen = vidas_por(usuarios[usuarios["MES"] == penult], coluna).set_index(coluna)["qtd_usuarios"].rename("usuarios_anterior")
+        usu_ult = usuarios[usuarios["MES"] == ultimo]
+        usu_pen = usuarios[usuarios["MES"] == penult]
+        if dia_corte is not None and "DIA" in usuarios.columns:
+            usu_pen = usu_pen[usu_pen["DIA"] <= dia_corte]
+        vidas_ult = vidas_por(usu_ult, coluna).set_index(coluna)["qtd_usuarios"].rename("usuarios_atual")
+        vidas_pen = vidas_por(usu_pen, coluna).set_index(coluna)["qtd_usuarios"].rename("usuarios_anterior")
         agg_ult = agg_ult.join(vidas_ult, how="left")
         agg_pen = agg_pen.join(vidas_pen, how="left")
     else:
@@ -631,7 +657,8 @@ def comparacao_mensal(df, coluna, volume_minimo=30, usuarios=None):
     )
     comp["relevante"] = comp["qtd_atual"] >= volume_minimo
     comp = comp.sort_values("variacao_pct", ascending=False, na_position="last").reset_index()
-    msg = (f"Comparando {ultimo} vs {penult} por {coluna}. "
+    periodo_msg = f", ambos até o dia {dia_corte:02d}" if dia_corte is not None else ""
+    msg = (f"Comparando {ultimo} vs {penult} por {coluna}{periodo_msg}. "
            f"Relevante = volume atual ≥ {volume_minimo} procedimentos.")
     return comp, msg
 def _variacao_pct_uso(df, coluna, volume_minimo, top_n, usuarios=None):
@@ -641,23 +668,37 @@ def _variacao_pct_uso(df, coluna, volume_minimo, top_n, usuarios=None):
     uso > 0 no mês anterior — evita que um grupo minúsculo mostre uma
     variação % gigante e sem significado.
 
+    Comparação por MESMO período: o mês anterior só entra com os dias até o
+    maior DIA presente no mês atual (ex.: mês atual só tem dados até dia 07 ->
+    mês anterior também entra só até o dia 07), em vez de mês fechado inteiro
+    vs mês em andamento.
+
     Também traz qtd_usuarios_atual/anterior (vidas — pacientes distintos de
     verdade, calculados a partir de `usuarios`, sem contar o mesmo paciente
     mais de uma vez) e a variação % dessa quantidade de vidas.
     """
     meses_ord = sorted(df["MES"].dropna().unique())
     ultimo, penult = meses_ord[-1], meses_ord[-2]
-    atual = df[df["MES"] == ultimo].groupby(coluna, dropna=False, observed=True).agg(
+    dia_corte = _dia_corte_mes(df, ultimo)
+    df_ultimo = df[df["MES"] == ultimo]
+    df_penult = df[df["MES"] == penult]
+    if dia_corte is not None:
+        df_penult = df_penult[df_penult["DIA"] <= dia_corte]
+    atual = df_ultimo.groupby(coluna, dropna=False, observed=True).agg(
         qtd_procedimentos_atual=("qtd_procedimentos", "sum"),
         soma_uso_atual=("soma_uso", "sum"),
     ).reset_index()
-    anterior = df[df["MES"] == penult].groupby(coluna, dropna=False, observed=True).agg(
+    anterior = df_penult.groupby(coluna, dropna=False, observed=True).agg(
         qtd_procedimentos_anterior=("qtd_procedimentos", "sum"),
         soma_uso_anterior=("soma_uso", "sum"),
     ).reset_index()
     if usuarios is not None:
-        vidas_atual = vidas_por(usuarios[usuarios["MES"] == ultimo], coluna).rename(columns={"qtd_usuarios": "qtd_usuarios_atual"})
-        vidas_anterior = vidas_por(usuarios[usuarios["MES"] == penult], coluna).rename(columns={"qtd_usuarios": "qtd_usuarios_anterior"})
+        usu_ultimo = usuarios[usuarios["MES"] == ultimo]
+        usu_penult = usuarios[usuarios["MES"] == penult]
+        if dia_corte is not None and "DIA" in usuarios.columns:
+            usu_penult = usu_penult[usu_penult["DIA"] <= dia_corte]
+        vidas_atual = vidas_por(usu_ultimo, coluna).rename(columns={"qtd_usuarios": "qtd_usuarios_atual"})
+        vidas_anterior = vidas_por(usu_penult, coluna).rename(columns={"qtd_usuarios": "qtd_usuarios_anterior"})
         atual = atual.merge(vidas_atual, on=coluna, how="left")
         anterior = anterior.merge(vidas_anterior, on=coluna, how="left")
         atual["qtd_usuarios_atual"] = atual["qtd_usuarios_atual"].fillna(0)
@@ -690,11 +731,16 @@ def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, t
     causaram essa subida; 10 UFs que mais subiram, as cidades (com cluster)
     que causaram essa subida; 20 prestadores que mais subiram, com
     cidade/UF/cluster/especialidade e os procedimentos responsáveis.
+
+    Comparação por MESMO período (ver _variacao_pct_uso): se o mês mais
+    recente só tem dados até um certo dia do mês, o mês anterior usado na
+    comparação também é cortado nesse mesmo dia.
     """
     if "MES" not in df.columns or df["MES"].dropna().nunique() < 2:
         return None, "Dados insuficientes para comparação (necessário ≥ 2 meses)."
     meses_ord = sorted(df["MES"].dropna().unique())
     ultimo, penult = meses_ord[-1], meses_ord[-2]
+    dia_corte = _dia_corte_mes(df, ultimo)
 
     especialidades = _variacao_pct_uso(df, "ESPECIALIDADE", volume_minimo, top_especialidades, usuarios=usuarios)
     detalhes_especialidade = {
@@ -736,7 +782,8 @@ def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, t
         "ufs": ufs, "detalhes_uf": detalhes_uf,
         "prestadores": prestadores, "detalhes_prestador": detalhes_prestador,
     }
-    msg = (f"Comparando {ultimo} vs {penult}, por variação % de uso. "
+    periodo_msg = f", ambos até o dia {dia_corte:02d}" if dia_corte is not None else ""
+    msg = (f"Comparando {ultimo} vs {penult}{periodo_msg}, por variação % de uso. "
            f"Só entram grupos com volume ≥ {volume_minimo} procedimentos em ambos os meses.")
     return resultado, msg
 @st.cache_data(show_spinner=False)
@@ -754,6 +801,10 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
       - variação % do valor >= pct_minimo
       - variação % do FASE  >= fase_pct_minimo (FASE calculado na mesma granularidade
         prestador+especialidade+procedimento, um valor por mês)
+
+    Comparação por MESMO período: o mês anterior entra só com os dias até o
+    maior DIA presente no mês atual (mesma regra de comparacao_mensal /
+    _variacao_pct_uso / resumo_comparativo).
     Retorna (DataFrame, mensagem). DataFrame vazio se nada atender aos critérios.
     """
     if "MES" not in df.columns or df["MES"].dropna().nunique() < 2:
@@ -762,10 +813,11 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
         return pd.DataFrame(), "Base sem valores em R$ (soma_valor) — recarregue os dados."
     meses_ord = sorted(df["MES"].dropna().unique())
     ultimo, penult = meses_ord[-1], meses_ord[-2]
+    dia_corte = _dia_corte_mes(df, ultimo)
     chave = ["CD_PRESTADOR", "ESPECIALIDADE", "NOME_PROCEDIMENTO"]
     cols_info = [c for c in ["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE_PRESTADOR", "CLUSTER"] if c in df.columns]
 
-    def _agg_mes(sub, sufixo, mes):
+    def _agg_mes(sub, sufixo, mes, dia_max=None):
         agregacoes = {
             f"qtd_{sufixo}": ("qtd_procedimentos", "sum"),
             f"valor_{sufixo}": ("soma_valor", "sum"),
@@ -773,7 +825,10 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
         }
         r = sub.groupby(chave, dropna=False, observed=True).agg(**agregacoes).reset_index()
         if usuarios is not None:
-            vidas = vidas_por(usuarios[usuarios["MES"] == mes], chave).rename(columns={"qtd_usuarios": f"usuarios_{sufixo}"})
+            usu_mes = usuarios[usuarios["MES"] == mes]
+            if dia_max is not None and "DIA" in usuarios.columns:
+                usu_mes = usu_mes[usu_mes["DIA"] <= dia_max]
+            vidas = vidas_por(usu_mes, chave).rename(columns={"qtd_usuarios": f"usuarios_{sufixo}"})
             r = r.merge(vidas, on=chave, how="left")
             r[f"usuarios_{sufixo}"] = r[f"usuarios_{sufixo}"].fillna(0)
         else:
@@ -787,8 +842,12 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
         r[f"fase_{sufixo}"] = _fase(r_fase)
         return r
 
+    df_penult = df[df["MES"] == penult]
+    if dia_corte is not None:
+        df_penult = df_penult[df_penult["DIA"] <= dia_corte]
+
     atual = _agg_mes(df[df["MES"] == ultimo], "atual", ultimo)
-    anterior = _agg_mes(df[df["MES"] == penult], "anterior", penult)
+    anterior = _agg_mes(df_penult, "anterior", penult, dia_max=dia_corte)
     comp = atual.merge(anterior, on=chave, how="inner")
     comp = comp[comp["CD_PRESTADOR"].notna() & comp["ESPECIALIDADE"].notna() & comp["NOME_PROCEDIMENTO"].notna()]
     if comp.empty:
@@ -813,8 +872,9 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
         & (comp["variacao_fase_pct"] >= fase_pct_minimo)
     ]
     valor_min_fmt = f"{aumento_valor_minimo:,.2f}".replace(",", "§").replace(".", ",").replace("§", ".")
+    periodo_msg = f", ambos até o dia {dia_corte:02d}" if dia_corte is not None else ""
     if comp.empty:
-        msg = (f"Nenhum prestador atendeu aos critérios ({ultimo} vs {penult}): qtde atual > {volume_minimo}, "
+        msg = (f"Nenhum prestador atendeu aos critérios ({ultimo} vs {penult}{periodo_msg}): qtde atual > {volume_minimo}, "
                f"aumento de valor > R$ {valor_min_fmt}, variação de qtde e de valor ≥ {pct_minimo:.0f}%, "
                f"variação do FASE ≥ {fase_pct_minimo:.0f}%.")
         return comp, msg
@@ -825,7 +885,7 @@ def alertas_prestador_procedimento(df, volume_minimo=50, aumento_valor_minimo=15
     comp["MES_ATUAL"] = ultimo
     comp["MES_ANTERIOR"] = penult
     comp = comp.sort_values(["CD_PRESTADOR", "variacao_valor_pct"], ascending=[True, False]).reset_index(drop=True)
-    msg = (f"{ultimo} vs {penult}. Critérios: qtde atual > {volume_minimo}, aumento de valor > "
+    msg = (f"{ultimo} vs {penult}{periodo_msg}. Critérios: qtde atual > {volume_minimo}, aumento de valor > "
            f"R$ {valor_min_fmt}, variação de qtde e de valor ≥ {pct_minimo:.0f}%, "
            f"variação do FASE ≥ {fase_pct_minimo:.0f}%.")
     return comp, msg
