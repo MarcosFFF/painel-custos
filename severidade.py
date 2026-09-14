@@ -244,8 +244,13 @@ def carregar_base_severidade(pasta="."):
     # Nota: a análise de severidade (FASE, rankings, watchlist, ofensores) continua
     # 100% baseada em uso e volume — não em R$. A coluna soma_valor (VL_PAGO) volta
     # a existir só para o alerta de aumento de qtde+valor (prestadores críticos).
+    #
+    # qtd_procedimentos = quantidade REAL de procedimentos (uma linha da base = um
+    # procedimento realizado), contada com "count" (nº de linhas do grupo) — NÃO é
+    # nunique(NU_GUIA). Uma guia com 2 linhas do mesmo procedimento (ex.: 2 dentes
+    # restaurados na mesma guia) conta como 2 procedimentos aqui, não como 1 guia.
     agregado = dados.groupby(grupos, dropna=False, observed=True).agg(
-        qtd_procedimentos=("NU_GUIA", "nunique"),
+        qtd_procedimentos=("NU_GUIA", "count"),
         qtd_usuarios=("CD_USUARIO", "nunique"),
         soma_uso=("QTD_USO", "sum"),
         soma_valor=("VL_PAGO", "sum"),
@@ -366,10 +371,10 @@ def _fase(r):
     sem comparação com média nem peso separado:
 
         Frequência    = qtd_procedimentos ÷ qtd_usuarios                        (procedimentos por vida)
-        Incidência    = qtd_procedimentos ÷ quantidade_uso                      (procedimentos por unidade de uso)
+        Intensidade   = qtd_procedimentos ÷ quantidade_uso                      (procedimentos por unidade de uso)
         Peso do grupo = (qtd_procedimentos do grupo ÷ qtd_procedimentos total da base) × 100
 
-        FASE = Frequência × Incidência × Peso do grupo
+        FASE = Frequência × Intensidade × Peso do grupo
 
     Não existe mais uma referência fixa tipo "1,00 = média" — o valor só faz
     sentido em ranking relativo (comparando um grupo com o outro dentro do
@@ -385,12 +390,12 @@ def _fase(r):
     """
     total_proc = r["qtd_procedimentos"].sum()
     frequencia = np.where(r["qtd_usuarios"] > 0, r["qtd_procedimentos"] / r["qtd_usuarios"], np.nan)
-    incidencia = np.where(r["quantidade_uso"] > 0, r["qtd_procedimentos"] / r["quantidade_uso"], np.nan)
+    intensidade = np.where(r["quantidade_uso"] > 0, r["qtd_procedimentos"] / r["quantidade_uso"], np.nan)
     if not total_proc:
         peso_grupo = np.full(len(r), np.nan)
     else:
         peso_grupo = (r["qtd_procedimentos"] / total_proc) * 100
-    fase = frequencia * incidencia * peso_grupo
+    fase = frequencia * intensidade * peso_grupo
     return pd.Series(fase, index=r.index).round(6)
 @st.cache_data(show_spinner=False)
 def ranking_por(df, coluna, top_n=15, usuarios=None):
