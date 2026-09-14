@@ -800,7 +800,7 @@ elif st.session_state.pagina == "severidade":
     st.divider()
     tab_rank, tab_evolucao, tab_ofensores, tab_desvios, tab_resumo, tab_temp = st.tabs(
         ["Ranking de Severidade", "Evolução mensal", "Ofensores", "Desvios de Solicitações", "Resumo",
-         "🧪 Temp: 9040/110/2035/5314"]
+         "🧪 Temp: 9040/110/2035/5314/4500/1064/4425"]
     )
     # ---------- RANKING DE SEVERIDADE (FASE — só gráficos, sem tabelas) ----------
     JANELA_5_BARRAS = 300  # altura fixa (px) que mostra ~5 barras; o resto rola dentro do quadro
@@ -1330,21 +1330,21 @@ elif st.session_state.pagina == "severidade":
                                     )
                             st.markdown(texto)
     # ============================================================
-    # ABA TEMPORÁRIA — Códigos 9040, 110, 2035, 5314
+    # ABA TEMPORÁRIA — Códigos 9040, 110, 2035, 5314, 4500, 1064, 4425
     # ============================================================
     # Aba de consulta pontual, fácil de remover depois: basta apagar este bloco
     # "with tab_temp:" inteiro e tirar "tab_temp" / "🧪 Temp: ..." da linha do
     # st.tabs(...) lá em cima.
     with tab_temp:
-        st.markdown("#### 🧪 Aba temporária — Procedimentos 9040, 110, 2035 e 5314")
+        st.markdown("#### 🧪 Aba temporária — Procedimentos 9040, 110, 2035, 5314, 4500, 1064 e 4425")
         st.caption(
-            "Aba temporária, só para consulta pontual desses 4 códigos — respeita os filtros ativos "
+            "Aba temporária, só para consulta pontual desses códigos — respeita os filtros ativos "
             "no topo da página (mês, UF, especialidade etc.), igual às demais abas. FASE calculado com "
             "o mesmo peso-do-grupo (denominador) da aba 'Ranking de Severidade', então os valores de FASE "
             "aqui são comparáveis com os de lá."
         )
 
-        codigos_temp = [9040, 110, 2035, 5314]
+        codigos_temp = [9040, 110, 2035, 5314, 4500, 1064, 4425]
 
         # Mapa código -> nome do procedimento, dentro dos filtros ativos (1 código = 1 nome,
         # assumindo que cada CD_PROCEDIMENTO tem uma única NOME_PROCEDIMENTO associada — é assim
@@ -1362,12 +1362,12 @@ elif st.session_state.pagina == "severidade":
         nomes_temp = list(mapa_cod_nome_temp.values())
 
         if not nomes_temp:
-            st.info("Nenhum dos 4 códigos apareceu nos filtros atuais.")
+            st.info("Nenhum dos códigos selecionados apareceu nos filtros atuais.")
         else:
             df_temp = df_filtrado[df_filtrado["CD_PROCEDIMENTO"].isin(codigos_temp)]
             usuarios_temp = usuarios_filtrado[usuarios_filtrado["NOME_PROCEDIMENTO"].isin(nomes_temp)]
 
-            # ---- métricas gerais (os 4 códigos somados, sem contar a mesma vida 2x) ----
+            # ---- métricas gerais (os códigos selecionados somados, sem contar a mesma vida 2x) ----
             _qtd_geral_temp = df_temp["qtd_procedimentos"].sum()
             _uso_geral_temp = df_temp["soma_uso"].sum()
             _vidas_geral_temp = usuarios_temp["CD_USUARIO"].nunique()
@@ -1385,7 +1385,7 @@ elif st.session_state.pagina == "severidade":
 
             # ---- ranking por código (com FASE) ----
             # Calcula o FASE sobre TODA a base filtrada (mesmo denominador/peso-do-grupo da aba
-            # "Ranking de Severidade") e só depois recorta para os 4 códigos — assim o FASE daqui
+            # "Ranking de Severidade") e só depois recorta para os códigos selecionados — assim o FASE daqui
             # é comparável com o da outra aba, em vez de inflado por comparar só entre eles 4.
             rank_geral_temp = ranking_severidade(
                 df_filtrado, "NOME_PROCEDIMENTO", top_n=1_000_000, usuarios=usuarios_filtrado
@@ -1406,6 +1406,28 @@ elif st.session_state.pagina == "severidade":
                 for cod, nome in zip(rank_temp["CD_PROCEDIMENTO"], rank_temp["NOME_PROCEDIMENTO"])
             ]
 
+            # ---- coluna com a "continha" do FASE (Frequência × Intensidade × Peso do grupo) ----
+            # total_proc_temp = total de procedimentos de TODA a base filtrada (mesmo denominador
+            # usado no peso-do-grupo pela função _fase, em severidade.py) — não é a soma só dos
+            # códigos selecionados aqui, é o total geral, pra bater com o FASE mostrado ao lado.
+            total_proc_temp = rank_geral_temp["qtd_procedimentos"].sum()
+
+            def _calculo_fase_temp(qtd_proc, qtd_usu, uso, total):
+                if not qtd_proc or not qtd_usu or not uso or not total:
+                    return "—"
+                return (
+                    f"({fmt_int(qtd_proc)}/{fmt_int(qtd_usu)}) × "
+                    f"({fmt_int(qtd_proc)}/{fmt_int(uso)}) × "
+                    f"({fmt_int(qtd_proc)}/{fmt_int(total)} × 100)"
+                )
+
+            rank_temp["calculo_fase"] = [
+                _calculo_fase_temp(qp, qu, us, total_proc_temp)
+                for qp, qu, us in zip(
+                    rank_temp["qtd_procedimentos"], rank_temp["qtd_usuarios"], rank_temp["quantidade_uso"]
+                )
+            ]
+
             exib_rank_temp = rank_temp.copy()
             exib_rank_temp["qtd_procedimentos"] = exib_rank_temp["qtd_procedimentos"].map(fmt_int)
             exib_rank_temp["qtd_usuarios"] = exib_rank_temp["qtd_usuarios"].map(fmt_int)
@@ -1415,7 +1437,7 @@ elif st.session_state.pagina == "severidade":
             exib_rank_temp["fase"] = exib_rank_temp["fase"].map(fmt_fase)
             exib_rank_temp = exib_rank_temp[[
                 "rotulo", "qtd_procedimentos", "qtd_usuarios", "quantidade_uso",
-                "uso_por_procedimento", "uso_por_vida", "fase",
+                "uso_por_procedimento", "uso_por_vida", "calculo_fase", "fase",
             ]].rename(columns={
                 "rotulo": "Procedimento",
                 "qtd_procedimentos": "Qtd procedimentos",
@@ -1423,9 +1445,15 @@ elif st.session_state.pagina == "severidade":
                 "quantidade_uso": "Soma de uso",
                 "uso_por_procedimento": "Uso/procedimento",
                 "uso_por_vida": "Uso/vida",
+                "calculo_fase": "Cálculo do FASE (Frequência × Intensidade × Peso do grupo)",
                 "fase": "FASE",
             })
             st.dataframe(exib_rank_temp, hide_index=True, use_container_width=True)
+            st.caption(
+                "Cálculo do FASE: (qtd procedimentos ÷ qtd vidas) × (qtd procedimentos ÷ soma de uso) × "
+                "(qtd procedimentos do código ÷ qtd procedimentos de toda a base filtrada × 100). "
+                "Multiplicando as três partes dá exatamente o valor da coluna FASE."
+            )
 
             # ---- gráficos interativos: qtd de procedimentos e qtd de vidas por código ----
             col_qtd_temp, col_vidas_temp = st.columns(2)
