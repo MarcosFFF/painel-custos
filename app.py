@@ -1384,9 +1384,9 @@ elif st.session_state.pagina == "severidade":
             st.divider()
 
             # ---- ranking por código (com FASE) ----
-            # Calcula o FASE sobre TODA a base filtrada (mesmo denominador/peso-do-grupo da aba
-            # "Ranking de Severidade") e só depois recorta para os códigos selecionados — assim o FASE daqui
-            # é comparável com o da outra aba, em vez de inflado por comparar só entre eles 4.
+            # Calcula sobre TODA a base filtrada (mesmo universo da aba "Ranking de Severidade")
+            # e só depois recorta para os códigos selecionados — o "peso do grupo" abaixo usa
+            # esse total geral como denominador, não a soma só dos códigos selecionados aqui.
             rank_geral_temp = ranking_severidade(
                 df_filtrado, "NOME_PROCEDIMENTO", top_n=1_000_000, usuarios=usuarios_filtrado
             )
@@ -1406,25 +1406,33 @@ elif st.session_state.pagina == "severidade":
                 for cod, nome in zip(rank_temp["CD_PROCEDIMENTO"], rank_temp["NOME_PROCEDIMENTO"])
             ]
 
-            # ---- coluna com a "continha" do FASE (Frequência × Intensidade × Peso do grupo) ----
-            # total_proc_temp = total de procedimentos de TODA a base filtrada (mesmo denominador
-            # usado no peso-do-grupo pela função _fase, em severidade.py) — não é a soma só dos
-            # códigos selecionados aqui, é o total geral, pra bater com o FASE mostrado ao lado.
+            # ---- FASE só desta aba: uso_por_vida × peso_do_grupo ----
+            # Regra pedida especificamente pra essa aba temporária — NÃO mexe em severidade.py,
+            # então o FASE oficial (Frequência × Intensidade × Peso do grupo, em _fase()) continua
+            # do jeito que está no resto do painel (Ranking de Severidade, Ofensores etc.).
+            # uso_por_vida já vem pronto do ranking_severidade(); só falta o peso do grupo:
+            #   peso_do_grupo = (qtd procedimentos do código ÷ qtd procedimentos de toda a base) × 100
+            # total_proc_temp = total de procedimentos de TODA a base filtrada (não é a soma só
+            # dos códigos selecionados aqui, é o total geral — a parte "está ok" confirmada).
             total_proc_temp = rank_geral_temp["qtd_procedimentos"].sum()
+            rank_temp["peso_grupo"] = (
+                (rank_temp["qtd_procedimentos"] / total_proc_temp * 100) if total_proc_temp else 0.0
+            )
+            rank_temp["fase"] = rank_temp["uso_por_vida"] * rank_temp["peso_grupo"]
 
-            def _calculo_fase_temp(qtd_proc, qtd_usu, uso, total):
-                if not qtd_proc or not qtd_usu or not uso or not total:
+            # ---- coluna com a "continha" do FASE (uso_por_vida × peso_do_grupo) ----
+            def _calculo_fase_temp(uso, qtd_usu, qtd_proc, total):
+                if not qtd_usu or not total:
                     return "—"
                 return (
-                    f"({fmt_int(qtd_proc)}/{fmt_int(qtd_usu)}) × "
-                    f"({fmt_int(qtd_proc)}/{fmt_int(uso)}) × "
+                    f"({fmt_int(uso)}/{fmt_int(qtd_usu)}) × "
                     f"({fmt_int(qtd_proc)}/{fmt_int(total)} × 100)"
                 )
 
             rank_temp["calculo_fase"] = [
-                _calculo_fase_temp(qp, qu, us, total_proc_temp)
-                for qp, qu, us in zip(
-                    rank_temp["qtd_procedimentos"], rank_temp["qtd_usuarios"], rank_temp["quantidade_uso"]
+                _calculo_fase_temp(uso, qu, qp, total_proc_temp)
+                for uso, qu, qp in zip(
+                    rank_temp["quantidade_uso"], rank_temp["qtd_usuarios"], rank_temp["qtd_procedimentos"]
                 )
             ]
 
@@ -1445,14 +1453,16 @@ elif st.session_state.pagina == "severidade":
                 "quantidade_uso": "Soma de uso",
                 "uso_por_procedimento": "Uso/procedimento",
                 "uso_por_vida": "Uso/vida",
-                "calculo_fase": "Cálculo do FASE (Frequência × Intensidade × Peso do grupo)",
+                "calculo_fase": "Cálculo do FASE (Uso por vida × Peso do grupo)",
                 "fase": "FASE",
             })
             st.dataframe(exib_rank_temp, hide_index=True, use_container_width=True)
             st.caption(
-                "Cálculo do FASE: (qtd procedimentos ÷ qtd vidas) × (qtd procedimentos ÷ soma de uso) × "
-                "(qtd procedimentos do código ÷ qtd procedimentos de toda a base filtrada × 100). "
-                "Multiplicando as três partes dá exatamente o valor da coluna FASE."
+                "FASE nesta aba (regra só daqui, não é o FASE oficial das outras abas): "
+                "(soma de uso ÷ qtd vidas) × (qtd procedimentos do código ÷ qtd procedimentos de toda "
+                "a base filtrada × 100). Multiplicando as duas partes dá exatamente o valor da coluna "
+                "FASE. No resto do painel (Ranking de Severidade, Ofensores etc.) o FASE continua sendo "
+                "Frequência × Intensidade × Peso do grupo, sem alteração."
             )
 
             # ---- gráficos interativos: qtd de procedimentos e qtd de vidas por código ----
@@ -1490,6 +1500,11 @@ elif st.session_state.pagina == "severidade":
             st.divider()
             st.markdown("**Evolução mensal por código**")
 
+            # Total de procedimentos de toda a base filtrada, por mês — denominador do peso do
+            # grupo mês a mês (mesma lógica do total_proc_temp acima, só que quebrado por MES,
+            # pra manter "peso do grupo" comparando cada mês com o total daquele mesmo mês).
+            total_proc_mes_temp = df_filtrado.groupby("MES", observed=True)["qtd_procedimentos"].sum()
+
             evol_temp_frames = []
             for cod in codigos_temp:
                 nome_cod = mapa_cod_nome_temp.get(cod)
@@ -1500,6 +1515,15 @@ elif st.session_state.pagina == "severidade":
                 if sub_df.empty:
                     continue
                 evo = evolucao_mensal(sub_df, sub_usu)
+                # FASE recalculado com a mesma regra local desta aba (uso_por_vida × peso_do_grupo),
+                # substituindo o FASE oficial que evolucao_mensal() traz por padrão — peso do grupo
+                # aqui é por mês: qtd de procedimentos do código naquele mês ÷ qtd de procedimentos
+                # de toda a base filtrada naquele mesmo mês × 100.
+                evo["peso_grupo"] = [
+                    (qp / total_proc_mes_temp.get(mes, 0) * 100) if total_proc_mes_temp.get(mes, 0) else 0.0
+                    for mes, qp in zip(evo["MES"], evo["qtd_procedimentos"])
+                ]
+                evo["fase"] = evo["uso_por_vida"] * evo["peso_grupo"]
                 evo["Procedimento"] = f"{cod} — {nome_cod}"
                 evol_temp_frames.append(evo)
 
