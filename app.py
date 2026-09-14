@@ -14,7 +14,7 @@ try:
         carregar_base_severidade, aplicar_filtros, evolucao_mensal,
         ranking_severidade, identificar_ofensores, calcular_desvios, montar_watchlist,
         comparacao_mensal, resumo_comparativo, alertas_prestador_procedimento,
-        identificar_desvios_solicitacao,
+        identificar_desvios_solicitacao, calcular_media_nacional,
     )
 except Exception as _erro_import_severidade:
     # O Streamlit Cloud redige a mensagem de erro padrão — mostramos o traceback
@@ -1345,10 +1345,10 @@ elif st.session_state.pagina == "severidade":
         st.caption(
             f"Códigos: {', '.join(str(c) for c in codigos_temp)}. Aba temporária, só para consulta "
             "pontual desses códigos — respeita os filtros ativos no topo da página (mês, UF, "
-            "especialidade etc.), igual às demais abas. **FASE calculado só aqui com uma regra "
-            "própria desta aba** (uso_por_procedimento × uso_por_vida) — não é o FASE oficial das "
+            "especialidade etc.), igual às demais abas. **Métricas calculadas só aqui, com regra "
+            "própria desta aba** (FASE esperado / FASP praticado / CS) — não é o FASE oficial das "
             "outras abas (Ranking de Severidade, Ofensores etc.), que continua usando "
-            "Frequência × Intensidade × Peso do grupo."
+            "Frequência × Intensidade × Peso do grupo, sem alteração."
         )
 
         # Mapa código -> nome do procedimento, dentro dos filtros ativos (1 código = 1 nome,
@@ -1411,28 +1411,72 @@ elif st.session_state.pagina == "severidade":
                 for cod, nome in zip(rank_temp["CD_PROCEDIMENTO"], rank_temp["NOME_PROCEDIMENTO"])
             ]
 
-            # ---- FASE só desta aba: uso_por_procedimento × uso_por_vida ----
-            # Regra pedida especificamente pra essa aba temporária — NÃO mexe em severidade.py,
-            # então o FASE oficial (Frequência × Intensidade × Peso do grupo, em _fase()) continua
-            # do jeito que está no resto do painel (Ranking de Severidade, Ofensores etc.).
-            # Equivale a soma_uso² ÷ (qtd_procedimentos × qtd_vidas) — uso_por_procedimento e
-            # uso_por_vida já vêm prontos do ranking_severidade(), só falta multiplicar os dois.
-            rank_temp["fase"] = rank_temp["uso_por_procedimento"] * rank_temp["uso_por_vida"]
+            # ---- base nacional (sem filtro nenhum) por procedimento — referência do "esperado" ----
+            # Taxa nacional = qtd_procedimentos ÷ qtd_vidas, calculada sobre `agregado`/`base_usuarios`
+            # CRUS (sem nenhum filtro do topo da página) — "quantos procedimentos desse código o
+            # Brasil todo faz, por vida". Reaproveita calcular_media_nacional(), que já existe em
+            # severidade.py (usada em Desvios de Solicitações) — não mexe em severidade.py.
+            nacional_temp = calcular_media_nacional(
+                agregado, "NOME_PROCEDIMENTO", usuarios=base_usuarios
+            ).set_index("NOME_PROCEDIMENTO")
 
-            # ---- coluna com a "continha" do FASE (uso_por_procedimento × uso_por_vida) ----
-            def _calculo_fase_temp(uso, qtd_proc, qtd_usu):
-                if not qtd_proc or not qtd_usu:
-                    return "—"
+            def _base_nacional_temp(nome_proc):
+                if nome_proc not in nacional_temp.index:
+                    return float("nan"), float("nan")
                 return (
-                    f"({fmt_int(uso)}/{fmt_int(qtd_proc)}) × "
-                    f"({fmt_int(uso)}/{fmt_int(qtd_usu)})"
+                    nacional_temp.loc[nome_proc, "qtd_procedimentos"],
+                    nacional_temp.loc[nome_proc, "qtd_usuarios"],
                 )
 
-            rank_temp["calculo_fase"] = [
-                _calculo_fase_temp(uso, qp, qu)
-                for uso, qp, qu in zip(
-                    rank_temp["quantidade_uso"], rank_temp["qtd_procedimentos"], rank_temp["qtd_usuarios"]
+            _qtd_proc_nac_list, _qtd_usu_nac_list = [], []
+            for _nome_proc in rank_temp["NOME_PROCEDIMENTO"]:
+                _qpn, _qun = _base_nacional_temp(_nome_proc)
+                _qtd_proc_nac_list.append(_qpn)
+                _qtd_usu_nac_list.append(_qun)
+            rank_temp["qtd_procedimentos_nacional"] = _qtd_proc_nac_list
+            rank_temp["qtd_vidas_nacional"] = _qtd_usu_nac_list
+
+            # ---- FASE (esperado) / FASP (praticado) / CS — regra só desta aba ----
+            # NÃO mexe em severidade.py: o FASE oficial (Frequência × Intensidade × Peso do
+            # grupo, em _fase()) continua do jeito que está no resto do painel.
+            #
+            #   FASE (esperado)  = (qtd_procedimentos nacional ÷ qtd_vidas nacional) × qtd_vidas
+            #                      em utilização deste corte — quantos procedimentos este corte
+            #                      "deveria" ter, seguindo a taxa nacional desse procedimento.
+            #   FASP (praticado) = qtd_procedimentos realmente observados neste corte — direto,
+            #                      sem conta nenhuma.
+            #   CS (Coeficiente de Severidade) = FASP ÷ FASE — 1,00 = praticado igual ao esperado;
+            #                      >1 = mais severo que o esperado pela taxa nacional; <1 = menos.
+            rank_temp["fase_esperado"] = (
+                rank_temp["qtd_procedimentos_nacional"] / rank_temp["qtd_vidas_nacional"]
+            ) * rank_temp["qtd_usuarios"]
+            rank_temp["fasp_praticado"] = rank_temp["qtd_procedimentos"]
+            rank_temp["cs"] = rank_temp["fasp_praticado"] / rank_temp["fase_esperado"]
+
+            # ---- colunas com a "continha" de cada um: FASE, FASP e CS ----
+            def _calculo_fase_esperado_temp(qpn, qun, qu_corte):
+                if not qun or pd.isna(qun):
+                    return "—"
+                return f"({fmt_int(qpn)} ÷ {fmt_int(qun)}) × {fmt_int(qu_corte)}"
+
+            def _calculo_fasp_temp(qp_corte):
+                return f"{fmt_int(qp_corte)} (observado direto no corte)"
+
+            def _calculo_cs_temp(fasp, fase):
+                if not fase or pd.isna(fase):
+                    return "—"
+                return f"{fmt_int(fasp)} ÷ {fmt_float2(fase)}"
+
+            rank_temp["calculo_fase_esperado"] = [
+                _calculo_fase_esperado_temp(qpn, qun, qu)
+                for qpn, qun, qu in zip(
+                    rank_temp["qtd_procedimentos_nacional"], rank_temp["qtd_vidas_nacional"], rank_temp["qtd_usuarios"]
                 )
+            ]
+            rank_temp["calculo_fasp"] = [_calculo_fasp_temp(qp) for qp in rank_temp["fasp_praticado"]]
+            rank_temp["calculo_cs"] = [
+                _calculo_cs_temp(fasp, fase)
+                for fasp, fase in zip(rank_temp["fasp_praticado"], rank_temp["fase_esperado"])
             ]
 
             exib_rank_temp = rank_temp.copy()
@@ -1441,10 +1485,15 @@ elif st.session_state.pagina == "severidade":
             exib_rank_temp["quantidade_uso"] = exib_rank_temp["quantidade_uso"].map(fmt_int)
             exib_rank_temp["uso_por_procedimento"] = exib_rank_temp["uso_por_procedimento"].map(fmt_float2)
             exib_rank_temp["uso_por_vida"] = exib_rank_temp["uso_por_vida"].map(fmt_float2)
-            exib_rank_temp["fase"] = exib_rank_temp["fase"].map(fmt_fase)
+            exib_rank_temp["fase_esperado"] = exib_rank_temp["fase_esperado"].map(fmt_float2)
+            exib_rank_temp["fasp_praticado"] = exib_rank_temp["fasp_praticado"].map(fmt_int)
+            exib_rank_temp["cs"] = exib_rank_temp["cs"].map(fmt_float2)
             exib_rank_temp = exib_rank_temp[[
                 "rotulo", "qtd_procedimentos", "qtd_usuarios", "quantidade_uso",
-                "uso_por_procedimento", "uso_por_vida", "calculo_fase", "fase",
+                "uso_por_procedimento", "uso_por_vida",
+                "calculo_fase_esperado", "fase_esperado",
+                "calculo_fasp", "fasp_praticado",
+                "calculo_cs", "cs",
             ]].rename(columns={
                 "rotulo": "Procedimento",
                 "qtd_procedimentos": "Qtd procedimentos",
@@ -1452,17 +1501,24 @@ elif st.session_state.pagina == "severidade":
                 "quantidade_uso": "Soma de uso",
                 "uso_por_procedimento": "Uso/procedimento",
                 "uso_por_vida": "Uso/vida",
-                "calculo_fase": "Cálculo do FASE (Uso por procedimento × Uso por vida)",
-                "fase": "FASE",
+                "calculo_fase_esperado": "Cálculo do FASE (esperado)",
+                "fase_esperado": "FASE (esperado)",
+                "calculo_fasp": "Cálculo do FASP (praticado)",
+                "fasp_praticado": "FASP (praticado)",
+                "calculo_cs": "Cálculo do CS",
+                "cs": "CS (Coeficiente de Severidade)",
             })
             st.dataframe(exib_rank_temp, hide_index=True, use_container_width=True)
             st.caption(
-                "FASE nesta aba (regra só daqui, não é o FASE oficial das outras abas): "
-                "(soma de uso ÷ qtd procedimentos) × (soma de uso ÷ qtd vidas) — equivale a "
-                "soma_uso² ÷ (qtd_procedimentos × qtd_vidas). Multiplicando as duas partes dá "
-                "exatamente o valor da coluna FASE. No resto do painel (Ranking de Severidade, "
-                "Ofensores etc.) o FASE continua sendo Frequência × Intensidade × Peso do grupo, "
-                "sem alteração."
+                "**FASE (esperado)** = quanto este corte deveria ter de procedimentos se seguisse "
+                "a taxa nacional desse procedimento (qtd procedimentos ÷ qtd vidas, sobre a base "
+                "nacional sem nenhum filtro) aplicada às vidas em utilização deste corte. "
+                "**FASP (praticado)** = qtd de procedimentos realmente observada neste corte — "
+                "direto, sem conta. **CS (Coeficiente de Severidade)** = FASP ÷ FASE: 1,00 "
+                "significa que o corte praticou exatamente o esperado pela taxa nacional; acima "
+                "de 1, mais severo que o esperado; abaixo de 1, menos severo. Regra só desta aba — "
+                "não mexe no FASE oficial (Frequência × Intensidade × Peso do grupo) usado no "
+                "resto do painel. Ainda não considera valores em R$, só a frequência de uso."
             )
 
             # ---- gráficos interativos: qtd de procedimentos e qtd de vidas por código ----
@@ -1494,8 +1550,24 @@ elif st.session_state.pagina == "severidade":
                 )
                 st.plotly_chart(fig_vidas_temp, use_container_width=True)
 
-            # ---- FASE por código (reaproveita o mesmo estilo de gráfico da aba "Ranking de Severidade") ----
-            _grafico_severidade(rank_temp, "rotulo", "FASE por código de procedimento", altura=320)
+            # ---- CS por código (gráfico próprio desta aba — não reaproveita _grafico_severidade
+            # porque essa função é compartilhada com as abas oficiais e espera coluna "fase";
+            # aqui a métrica é o CS, com escala de cor centrada em 1,0 = esperado) ----
+            fig_cs_temp = px.bar(
+                rank_temp.sort_values("cs"),
+                x="cs", y="rotulo", orientation="h",
+                text="cs", title="CS (Coeficiente de Severidade) por código de procedimento",
+                color="cs", color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
+                color_continuous_midpoint=1.0,
+            )
+            fig_cs_temp.update_traces(texttemplate="%{text:.2f}", textposition="outside", cliponaxis=False)
+            fig_cs_temp.add_vline(x=1.0, line_dash="dash", line_color="#888")
+            fig_cs_temp.update_layout(
+                height=320, margin=dict(l=10, r=60, t=40, b=10),
+                coloraxis_showscale=False, yaxis_title="",
+            )
+            st.plotly_chart(fig_cs_temp, use_container_width=True)
+            st.caption("Linha pontilhada em CS = 1,00 (praticado igual ao esperado pela taxa nacional).")
 
             st.divider()
             st.markdown("**Evolução mensal por código**")
@@ -1510,10 +1582,14 @@ elif st.session_state.pagina == "severidade":
                 if sub_df.empty:
                     continue
                 evo = evolucao_mensal(sub_df, sub_usu)
-                # FASE recalculado com a mesma regra local desta aba (uso_por_procedimento ×
-                # uso_por_vida), substituindo o FASE oficial que evolucao_mensal() traz por padrão.
-                # As duas colunas já vêm prontas de evolucao_mensal() — só falta multiplicar.
-                evo["fase"] = evo["uso_por_procedimento"] * evo["uso_por_vida"]
+                # CS por mês, mesma regra da grade acima: a taxa nacional do procedimento é fixa
+                # (não muda mês a mês) — só o "esperado" varia, porque as vidas em utilização
+                # variam mês a mês. "Praticado" é sempre o qtd_procedimentos daquele mês, direto.
+                _qpn_evo, _qun_evo = _base_nacional_temp(nome_cod)
+                _taxa_nac_evo = (_qpn_evo / _qun_evo) if _qun_evo else float("nan")
+                evo["fase_esperado"] = _taxa_nac_evo * evo["qtd_usuarios"]
+                evo["fasp_praticado"] = evo["qtd_procedimentos"]
+                evo["cs"] = evo["fasp_praticado"] / evo["fase_esperado"]
                 evo["Procedimento"] = f"{cod} — {nome_cod}"
                 evol_temp_frames.append(evo)
 
@@ -1547,11 +1623,12 @@ elif st.session_state.pagina == "severidade":
                     )
                     st.plotly_chart(fig_vidas_mes_temp, use_container_width=True)
 
-                fig_fase_mes_temp = px.line(
-                    evol_temp, x="MES", y="fase", color="Procedimento", markers=True,
-                    title="FASE por mês, por código",
+                fig_cs_mes_temp = px.line(
+                    evol_temp, x="MES", y="cs", color="Procedimento", markers=True,
+                    title="CS (Coeficiente de Severidade) por mês, por código",
                 )
-                fig_fase_mes_temp.update_layout(height=340, margin=dict(l=10, r=10, t=40, b=10), yaxis_title="FASE")
-                st.plotly_chart(fig_fase_mes_temp, use_container_width=True)
+                fig_cs_mes_temp.add_hline(y=1.0, line_dash="dash", line_color="#888")
+                fig_cs_mes_temp.update_layout(height=340, margin=dict(l=10, r=10, t=40, b=10), yaxis_title="CS")
+                st.plotly_chart(fig_cs_mes_temp, use_container_width=True)
             else:
                 st.info("Sem dados mensais suficientes para montar a evolução.")
