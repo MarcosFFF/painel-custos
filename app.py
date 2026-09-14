@@ -1393,9 +1393,18 @@ elif st.session_state.pagina == "severidade":
             rank_temp = rank_geral_temp[rank_geral_temp["NOME_PROCEDIMENTO"].isin(nomes_temp)].copy()
             nome_para_codigo_temp = {v: k for k, v in mapa_cod_nome_temp.items()}
             rank_temp["CD_PROCEDIMENTO"] = rank_temp["NOME_PROCEDIMENTO"].map(nome_para_codigo_temp)
-            rank_temp["rotulo"] = (
-                rank_temp["CD_PROCEDIMENTO"].astype(int).astype(str) + " — " + rank_temp["NOME_PROCEDIMENTO"]
-            )
+            # Lista de compreensão em vez de concatenar Series com "+": como
+            # NOME_PROCEDIMENTO (e CD_PROCEDIMENTO depois do .map() logo acima) ficam em
+            # dtype category/arrow, o "+" vetorizado do pandas pode estourar TypeError
+            # ("operation 'add' not supported for dtype 'str' with dtype 'category'")
+            # dependendo da versão do pandas/pyarrow — inclusive .astype(str)/.map(str)
+            # sozinhos não bastam, porque Series.map em coluna category devolve outra
+            # category. Iterando com zip(), cada valor já sai como escalar Python comum,
+            # então o f-string nunca encosta em operação vetorizada de Series.
+            rank_temp["rotulo"] = [
+                f"{int(cod)} — {nome}"
+                for cod, nome in zip(rank_temp["CD_PROCEDIMENTO"], rank_temp["NOME_PROCEDIMENTO"])
+            ]
 
             exib_rank_temp = rank_temp.copy()
             exib_rank_temp["qtd_procedimentos"] = exib_rank_temp["qtd_procedimentos"].map(fmt_int)
