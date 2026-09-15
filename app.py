@@ -1386,7 +1386,7 @@ elif st.session_state.pagina == "severidade":
         st.markdown("#### Coeficiente de Severidade")
 
         st.caption(
-            "CS (Coeficiente de Severidade) = (QP ÷ FASE) × 10 (10 significa que o corte "
+            "CS (Coeficiente de Severidade) = (QP ÷ FASE) × 10 (Se o resultado igual a 10 significa que o corte "
             "praticou exatamente o esperado pela taxa nacional; acima de 10, mais severo; "
             "abaixo de 10, menos severo.) Não considera valores em R$.  \n"
             "FASE = (qtd procedimentos nacional ÷ qtd vidas nacional) × qtd vidas em utilização  \n"
