@@ -1386,14 +1386,6 @@ elif st.session_state.pagina == "severidade":
         st.markdown("#### Coeficiente de Severidade")
 
         st.caption(
-            "Respeita os filtros ativos no topo da página (mês, UF, especialidade etc.), "
-            "igual às demais abas, e cobre todos os procedimentos que aparecerem nesses "
-            "filtros. **Métricas calculadas só aqui, com regra própria desta aba** (FASE - "
-            "Fator de Severidade Esperado / QP - Quantidade de Procedimentos / CS - "
-            "Coeficiente de Severidade) — não é o FASE oficial da(s) aba(s) de Ranking de "
-            "Severidade/Ofensores (hoje ocultas, mas ainda calculadas do mesmo jeito no "
-            "código), que continua usando Frequência × Intensidade × Peso do grupo, sem "
-            "alteração.\n\n"
             "CS (Coeficiente de Severidade) = (QP ÷ FASE) × 10 (10 significa que o corte "
             "praticou exatamente o esperado pela taxa nacional; acima de 10, mais severo; "
             "abaixo de 10, menos severo.) Não considera valores em R$.  \n"
