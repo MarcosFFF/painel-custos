@@ -1538,8 +1538,9 @@ elif st.session_state.pagina == "severidade":
                 <style>
                 .grade-cs-temp-wrap {{ overflow-x: auto; }}
                 .grade-cs-temp {{ border-collapse: collapse; width: 100%; font-size: 12px; }}
-                .grade-cs-temp th, .grade-cs-temp td {{
-                    text-align: center; padding: 4px 8px; white-space: nowrap;
+                .grade-cs-temp th, .grade-cs-temp td,
+                .grade-cs-temp th:first-child, .grade-cs-temp td:first-child {{
+                    text-align: center !important; padding: 4px 8px; white-space: nowrap;
                     border-bottom: 1px solid rgba(128, 128, 128, 0.3);
                 }}
                 .grade-cs-temp th {{ font-weight: 600; }}
