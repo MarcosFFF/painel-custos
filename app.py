@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import html
 import os
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -1509,10 +1510,10 @@ elif st.session_state.pagina == "severidade":
                 "calculo_cs", "cs",
             ]].rename(columns={
                 "rotulo": "Procedimento",
-                "qtd_procedimentos": "Qtd procedimentos",
+                "qtd_procedimentos": "Qtde proced",
                 "qtd_usuarios": "Qtd vidas",
                 "quantidade_uso": "Soma de uso",
-                "uso_por_procedimento": "Uso/procedimento",
+                "uso_por_procedimento": "Uso/proced",
                 "uso_por_vida": "Uso/vida",
                 "calculo_fase_esperado": "Cálculo do FASE",
                 "fase_esperado": "FASE",
@@ -1520,28 +1521,37 @@ elif st.session_state.pagina == "severidade":
                 "calculo_cs": "Cálculo do CS",
                 "cs": "CS",
             })
-            # Fonte menor só nesta grade (não mexe nas outras abas) — marcador invisível +
-            # seletor CSS ":has()" pra achar só o quadro de dados que vem logo a seguir, em vez
-            # de um <style> genérico que encolheria todas as tabelas do painel.
-            st.markdown('<div id="marcador-grade-cs"></div>', unsafe_allow_html=True)
+            # Grade montada como tabela HTML própria, em vez de st.dataframe: o widget padrão do
+            # Streamlit desenha o conteúdo das células em canvas (glide-data-grid), então CSS de
+            # fonte/alinhamento não alcança o texto de dentro das células — só assim dá pra
+            # garantir fonte menor e valores centralizados de verdade. Classe própria (não é um
+            # <style> genérico), então não mexe em nenhuma outra tabela do painel.
+            _cabecalho_grade_cs = "".join(
+                f"<th>{html.escape(str(c))}</th>" for c in exib_rank_temp.columns
+            )
+            _linhas_grade_cs = "".join(
+                "<tr>" + "".join(f"<td>{html.escape(str(v))}</td>" for v in linha) + "</tr>"
+                for linha in exib_rank_temp.itertuples(index=False, name=None)
+            )
             st.markdown(
-                """
+                f"""
                 <style>
-                div:has(> #marcador-grade-cs) + div [data-testid="stDataFrame"] * {
-                    font-size: 12px !important;
-                }
+                .grade-cs-temp-wrap {{ overflow-x: auto; }}
+                .grade-cs-temp {{ border-collapse: collapse; width: 100%; font-size: 12px; }}
+                .grade-cs-temp th, .grade-cs-temp td {{
+                    text-align: center; padding: 4px 8px; white-space: nowrap;
+                    border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+                }}
+                .grade-cs-temp th {{ font-weight: 600; }}
                 </style>
+                <div class="grade-cs-temp-wrap">
+                <table class="grade-cs-temp">
+                <thead><tr>{_cabecalho_grade_cs}</tr></thead>
+                <tbody>{_linhas_grade_cs}</tbody>
+                </table>
+                </div>
                 """,
                 unsafe_allow_html=True,
-            )
-            st.dataframe(
-                exib_rank_temp,
-                hide_index=True,
-                use_container_width=True,
-                column_config={
-                    "Cálculo do FASE": st.column_config.TextColumn(width="small"),
-                    "Cálculo do CS": st.column_config.TextColumn(width="small"),
-                },
             )
             st.caption(
                 "**FASE (esperado)** = quanto este corte deveria ter de procedimentos se seguisse "
