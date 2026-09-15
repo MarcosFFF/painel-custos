@@ -1482,9 +1482,10 @@ elif st.session_state.pagina == "severidade":
                     rank_temp["qtd_procedimentos_nacional"], rank_temp["qtd_vidas_nacional"], rank_temp["qtd_usuarios"]
                 )
             ]
-            # Sem coluna "Cálculo do FASP" — o valor do FASP É o número observado, direto, sem
-            # conta nenhuma (já dito uma vez na legenda), então não tem "continha" pra mostrar
-            # de novo em toda linha — a coluna "FASP" abaixo já mostra o valor.
+            # "Cálculo do FASP" = o próprio valor observado — sem fórmula (o FASP não é calculado
+            # a partir de outros números, é o número real do corte), mas mantido como coluna
+            # separada da "FASP" por simetria com "Cálculo do FASE"/"Cálculo do CS".
+            rank_temp["calculo_fasp"] = [fmt_int(qp) for qp in rank_temp["fasp_praticado"]]
             rank_temp["calculo_cs"] = [
                 _calculo_cs_temp(fasp, fase)
                 for fasp, fase in zip(rank_temp["fasp_praticado"], rank_temp["fase_esperado"])
@@ -1506,7 +1507,7 @@ elif st.session_state.pagina == "severidade":
                 "rotulo", "qtd_procedimentos", "qtd_usuarios", "quantidade_uso",
                 "uso_por_procedimento", "uso_por_vida",
                 "calculo_fase_esperado", "fase_esperado",
-                "fasp_praticado",
+                "calculo_fasp", "fasp_praticado",
                 "calculo_cs", "cs",
             ]].rename(columns={
                 "rotulo": "Procedimento",
@@ -1517,6 +1518,7 @@ elif st.session_state.pagina == "severidade":
                 "uso_por_vida": "Uso/vida",
                 "calculo_fase_esperado": "Cálculo do FASE",
                 "fase_esperado": "FASE",
+                "calculo_fasp": "Cálculo do FASP",
                 "fasp_praticado": "FASP",
                 "calculo_cs": "Cálculo do CS",
                 "cs": "CS",
@@ -1555,16 +1557,22 @@ elif st.session_state.pagina == "severidade":
                 unsafe_allow_html=True,
             )
             st.caption(
-                "**FASE (esperado)** = quanto este corte deveria ter de procedimentos se seguisse "
-                "a taxa nacional desse procedimento (qtd procedimentos ÷ qtd vidas, sobre a base "
-                "nacional sem nenhum filtro) aplicada às vidas em utilização deste corte. "
-                "**FASP (praticado)** = qtd de procedimentos realmente observada neste corte — "
-                "direto, sem conta. **CS (Coeficiente de Severidade)** = (FASP ÷ FASE) × 10: "
-                "10,000 significa que o corte praticou exatamente o esperado pela taxa nacional; "
-                "acima de 10, mais severo que o esperado; abaixo de 10, menos severo. Regra só "
-                "desta aba — não mexe no FASE oficial (Frequência × Intensidade × Peso do grupo) "
-                "usado no resto do painel. Ainda não considera valores em R$, só a frequência de "
-                "uso."
+                "**FASE** = (qtd procedimentos nacional ÷ qtd vidas nacional) × qtd vidas do "
+                "corte — é quanto este corte deveria ter de procedimentos se seguisse a taxa "
+                "nacional desse procedimento. Parâmetros: **qtd procedimentos nacional** = total "
+                "de procedimentos desse código na base inteira, sem nenhum filtro; **qtd vidas "
+                "nacional** = total de vidas distintas que usaram esse procedimento na base "
+                "inteira, sem filtro; **qtd vidas do corte** = vidas em utilização desse "
+                "procedimento dentro dos filtros ativos agora no topo da página (mês, UF, "
+                "cluster etc.) — é a mesma coluna \"Qtd vidas\" da grade. "
+                "**FASP** = qtd de procedimentos desse código realmente observada neste corte "
+                "(com os filtros ativos) — não tem fórmula/parâmetro, é o número direto, a "
+                "mesma coluna \"Qtde proced\" da grade. "
+                "**CS (Coeficiente de Severidade)** = (FASP ÷ FASE) × 10: 10,000 significa que "
+                "o corte praticou exatamente o esperado pela taxa nacional; acima de 10, mais "
+                "severo que o esperado; abaixo de 10, menos severo. Regra só desta aba — não "
+                "mexe no FASE oficial (Frequência × Intensidade × Peso do grupo) usado no resto "
+                "do painel. Ainda não considera valores em R$, só a frequência de uso."
             )
 
             # ---- gráficos interativos: qtd de procedimentos e qtd de vidas por código ----
