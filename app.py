@@ -1709,7 +1709,20 @@ elif st.session_state.pagina == "severidade":
                 "amostra pequena, não um padrão (passe o mouse pra ver os números de cada ponto)."
             )
 
-            def _severidade_agregada_temp(coluna_dimensao):
+            def _info_extra_temp(coluna_dimensao, colunas_extra):
+                """Atributo mais frequente (moda) de cada `coluna_dimensao` — ex.: cidade/UF/
+                cluster de cada prestador — só pra enriquecer o hover dos gráficos, não entra
+                em nenhum cálculo de FASE/FASP/CS."""
+                colunas_presentes = [c for c in colunas_extra if c in df_temp.columns]
+                if not colunas_presentes:
+                    return pd.DataFrame()
+                agregacoes = {
+                    c: (c, lambda x: x.mode().iloc[0] if not x.mode().empty else "—")
+                    for c in colunas_presentes
+                }
+                return df_temp.groupby(coluna_dimensao, observed=True).agg(**agregacoes).reset_index()
+
+            def _severidade_agregada_temp(coluna_dimensao, colunas_extra=None):
                 """
                 FASE/FASP/CS por `coluna_dimensao` (ex.: CD_PRESTADOR, CIDADE_PRESTADOR),
                 somando entre TODOS os procedimentos desta aba. A taxa nacional de cada
@@ -1717,6 +1730,8 @@ elif st.session_state.pagina == "severidade":
                 procedimento dentro de cada grupo da dimensão — e só depois de somar FASE e
                 FASP entre os procedimentos é que o CS final do grupo é calculado. Não é uma
                 média dos CS de cada procedimento (isso não pesaria pelo volume de cada um).
+                `colunas_extra` são atributos descritivos (cidade, UF, cluster) trazidos à
+                parte, pela moda de cada grupo, só pra hover — não afetam o cálculo.
                 """
                 grupo_cols = [coluna_dimensao, "NOME_PROCEDIMENTO"]
                 extra_cols = ["NOME_PRESTADOR"] if (
@@ -1749,23 +1764,35 @@ elif st.session_state.pagina == "severidade":
                 resultado["qtd_usuarios"] = resultado["qtd_usuarios"].fillna(0)
                 resultado = resultado[resultado["fase_esperado"] > 0]
                 resultado["cs"] = (resultado["fasp_praticado"] / resultado["fase_esperado"]) * 10
+
+                info_extra = _info_extra_temp(coluna_dimensao, colunas_extra or [])
+                if not info_extra.empty:
+                    resultado = resultado.merge(info_extra, on=coluna_dimensao, how="left")
                 return resultado
 
-            def _grafico_dispersao_cs_temp(dados, rotulo_col, titulo):
+            _rotulos_hover_temp = {
+                "qtd_usuarios": "Qtd vidas", "fasp_praticado": "Qtd procedimentos", "cs": "CS",
+                "CIDADE_PRESTADOR": "Cidade", "UF": "UF", "CLUSTER": "Cluster",
+            }
+
+            def _grafico_dispersao_cs_temp(dados, rotulo_col, titulo, hover_extra=None):
                 if dados is None or dados.empty or "qtd_usuarios" not in dados.columns:
                     st.info(f"Sem dados suficientes para o gráfico de {titulo.lower()}.")
                     return
-                dados_plot = dados[(dados["qtd_usuarios"] > 0) & dados["cs"].notna()]
+                dados_plot = dados[(dados["qtd_usuarios"] > 0) & dados["cs"].notna()].copy()
                 if dados_plot.empty:
                     st.info(f"Sem dados suficientes para o gráfico de {titulo.lower()}.")
                     return
+                hover_data = {"qtd_usuarios": ":,.0f", "fasp_praticado": ":,.0f", "cs": ":.3f"}
+                for col in (hover_extra or []):
+                    if col in dados_plot.columns:
+                        dados_plot[col] = dados_plot[col].fillna("—")
+                        hover_data[col] = True
                 fig = px.scatter(
                     dados_plot, x="qtd_usuarios", y="cs", size="fasp_praticado", color="cs",
                     color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
                     color_continuous_midpoint=10, size_max=32, hover_name=rotulo_col,
-                    hover_data={
-                        "qtd_usuarios": ":,.0f", "fasp_praticado": ":,.0f", "cs": ":.3f",
-                    },
+                    hover_data=hover_data, labels=_rotulos_hover_temp,
                     log_x=True, title=titulo,
                 )
                 fig.add_hline(y=10, line_dash="dash", line_color="#888")
@@ -1775,7 +1802,9 @@ elif st.session_state.pagina == "severidade":
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-            df_disp_prest_temp = _severidade_agregada_temp("CD_PRESTADOR")
+            df_disp_prest_temp = _severidade_agregada_temp(
+                "CD_PRESTADOR", colunas_extra=["CIDADE_PRESTADOR", "UF", "CLUSTER"]
+            )
             if not df_disp_prest_temp.empty:
                 col_nome_disp_prest = (
                     "NOME_PRESTADOR" if "NOME_PRESTADOR" in df_disp_prest_temp.columns else "CD_PRESTADOR"
@@ -1787,12 +1816,20 @@ elif st.session_state.pagina == "severidade":
                     )
                 ]
 
-            df_disp_cidade_temp = _severidade_agregada_temp("CIDADE_PRESTADOR")
+            df_disp_cidade_temp = _severidade_agregada_temp(
+                "CIDADE_PRESTADOR", colunas_extra=["UF", "CLUSTER"]
+            )
             if not df_disp_cidade_temp.empty:
                 df_disp_cidade_temp["rotulo"] = df_disp_cidade_temp["CIDADE_PRESTADOR"].astype(str)
 
             col_disp_prest, col_disp_cidade = st.columns(2)
             with col_disp_prest:
-                _grafico_dispersao_cs_temp(df_disp_prest_temp, "rotulo", "Prestadores")
+                _grafico_dispersao_cs_temp(
+                    df_disp_prest_temp, "rotulo", "Prestadores",
+                    hover_extra=["CIDADE_PRESTADOR", "UF", "CLUSTER"],
+                )
             with col_disp_cidade:
-                _grafico_dispersao_cs_temp(df_disp_cidade_temp, "rotulo", "Cidades")
+                _grafico_dispersao_cs_temp(
+                    df_disp_cidade_temp, "rotulo", "Cidades",
+                    hover_extra=["UF", "CLUSTER"],
+                )
