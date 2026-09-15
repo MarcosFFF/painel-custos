@@ -1506,9 +1506,15 @@ elif st.session_state.pagina == "severidade":
             # Versão "achatada" (colunas já renomeadas), usada via merge em vez de laço linha a
             # linha — com todos os procedimentos (em vez dos 13 fixos de antes), o laço python
             # anterior ficaria lento; merge é vetorizado e escala bem mesmo com muitos códigos.
-            nacional_temp_flat = nacional_temp.rename(columns={
+            # Só as 3 colunas necessárias pro merge — calcular_media_nacional() também devolve
+            # "quantidade_uso" (entre outras), que colide com a coluna de mesmo nome que
+            # ranking_severidade() já põe em rank_temp; sem esse recorte, o merge renomeia as
+            # duas pra "quantidade_uso_x"/"quantidade_uso_y" e a coluna "quantidade_uso" some.
+            nacional_temp_flat = nacional_temp.reset_index()[
+                ["NOME_PROCEDIMENTO", "qtd_procedimentos", "qtd_usuarios"]
+            ].rename(columns={
                 "qtd_procedimentos": "qtd_procedimentos_nacional", "qtd_usuarios": "qtd_vidas_nacional",
-            }).reset_index()
+            })
 
             def _base_nacional_temp(nome_proc):
                 if nome_proc not in nacional_temp.index:
