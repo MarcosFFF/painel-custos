@@ -1623,10 +1623,12 @@ elif st.session_state.pagina == "severidade":
                 .grade-cs-temp-wrap { overflow-x: auto; }
                 .grade-cs-temp-wrap-scroll { overflow-x: auto; overflow-y: auto; max-height: 165px; }
                 .grade-cs-temp { border-collapse: collapse; width: 100%; font-size: 12px; }
-                .grade-cs-temp th, .grade-cs-temp td,
-                .grade-cs-temp th:first-child, .grade-cs-temp td:first-child {
+                .grade-cs-temp th, .grade-cs-temp td {
                     text-align: center !important; padding: 4px 8px; white-space: nowrap;
                     border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+                }
+                .grade-cs-temp th:first-child, .grade-cs-temp td:first-child {
+                    text-align: left !important;
                 }
                 .grade-cs-temp th { font-weight: 600; }
                 </style>
@@ -1653,7 +1655,7 @@ elif st.session_state.pagina == "severidade":
                     unsafe_allow_html=True,
                 )
 
-            _tabela_html_temp(exib_rank_temp)
+            _tabela_html_temp(exib_rank_temp, scroll=True)
 
             # ---- prestadores do procedimento selecionado, com FASE/FASP/CS por prestador ----
             # Só aparece quando um procedimento específico está selecionado no filtro acima (com
