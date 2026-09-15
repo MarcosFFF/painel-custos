@@ -1573,6 +1573,7 @@ elif st.session_state.pagina == "severidade":
                 """
                 <style>
                 .grade-cs-temp-wrap { overflow-x: auto; }
+                .grade-cs-temp-wrap-scroll { overflow-x: auto; overflow-y: auto; max-height: 480px; }
                 .grade-cs-temp { border-collapse: collapse; width: 100%; font-size: 12px; }
                 .grade-cs-temp th, .grade-cs-temp td,
                 .grade-cs-temp th:first-child, .grade-cs-temp td:first-child {
@@ -1585,15 +1586,16 @@ elif st.session_state.pagina == "severidade":
                 unsafe_allow_html=True,
             )
 
-            def _tabela_html_temp(df_exibicao):
+            def _tabela_html_temp(df_exibicao, scroll=False):
                 cabecalho = "".join(f"<th>{html.escape(str(c))}</th>" for c in df_exibicao.columns)
                 linhas = "".join(
                     "<tr>" + "".join(f"<td>{html.escape(str(v))}</td>" for v in linha) + "</tr>"
                     for linha in df_exibicao.itertuples(index=False, name=None)
                 )
+                classe_wrap = "grade-cs-temp-wrap-scroll" if scroll else "grade-cs-temp-wrap"
                 st.markdown(
                     f"""
-                    <div class="grade-cs-temp-wrap">
+                    <div class="{classe_wrap}">
                     <table class="grade-cs-temp">
                     <thead><tr>{cabecalho}</tr></thead>
                     <tbody>{linhas}</tbody>
@@ -1690,7 +1692,7 @@ elif st.session_state.pagina == "severidade":
                         "calculo_cs": "Cálculo do CS",
                         "cs": "CS",
                     })
-                    _tabela_html_temp(exib_prestador_temp)
+                    _tabela_html_temp(exib_prestador_temp, scroll=True)
                     st.caption(
                         "FASE/FASP/CS aqui usam a mesma taxa nacional do procedimento (constante), "
                         "só que aplicada às vidas em utilização de cada prestador — mostra se aquele "
@@ -1796,9 +1798,7 @@ elif st.session_state.pagina == "severidade":
             if not df_disp_cidade_temp.empty:
                 df_disp_cidade_temp["rotulo"] = df_disp_cidade_temp["CIDADE_PRESTADOR"].astype(str)
 
-            col_disp_proc, col_disp_prest, col_disp_cidade = st.columns(3)
-            with col_disp_proc:
-                _grafico_dispersao_cs_temp(rank_temp, "rotulo", "Procedimentos")
+            col_disp_prest, col_disp_cidade = st.columns(2)
             with col_disp_prest:
                 _grafico_dispersao_cs_temp(df_disp_prest_temp, "rotulo", "Prestadores")
             with col_disp_cidade:
