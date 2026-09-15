@@ -1224,15 +1224,37 @@ elif st.session_state.pagina == "severidade":
                 det_show = det_show.rename(columns=renome)
                 st.dataframe(det_show, hide_index=True, use_container_width=True)
 
+            # Repetido perto de cada lista (não só no topo da aba) e usado pro aviso de item
+            # negativo: essas listas são sempre "top N por variação" — se não existirem N grupos
+            # realmente subindo, a lista completa a cota com quem caiu menos, ainda assim rotulado
+            # "maior aumento". O sinal (+/-) de cada variação mostra a diferença.
+            _aviso_periodo_resumo = (
+                "📅 Comparação sempre no mesmo período em ambos os meses (detalhe completo no "
+                "topo desta aba)."
+            )
+
+            def _rotulo_variacao(v):
+                if pd.isna(v):
+                    return "Variação de uso: —"
+                aviso = "⚠️ caiu, não subiu — " if v < 0 else ""
+                return f"{aviso}Variação de uso: {v:+.1f}%"
+
             # ---------- Especialidades ----------
             especialidades = resumo["especialidades"]
             if especialidades.empty:
                 st.markdown("##### 5 especialidades com maior aumento")
                 st.info("Nenhuma especialidade com volume suficiente nos dois meses para comparar.")
             else:
+                st.caption(_aviso_periodo_resumo)
+                if (especialidades["variacao_pct"] < 0).any():
+                    st.warning(
+                        "Nem todas as 5 abaixo tiveram alta de verdade — como faltaram "
+                        "especialidades subindo o suficiente pra completar a lista, ela trouxe "
+                        "também quem caiu menos (marcado com ⚠️ abaixo)."
+                    )
                 with st.expander("5 especialidades com maior aumento", expanded=False):
                     for _, row in especialidades.iterrows():
-                        titulo = f"{row['ESPECIALIDADE']} · Variação de uso: {row['variacao_pct']:+.1f}%"
+                        titulo = f"{row['ESPECIALIDADE']} · {_rotulo_variacao(row['variacao_pct'])}"
                         with st.container(border=True):
                             st.markdown(f"**{titulo}**")
                             _linha_resumo(row)
@@ -1248,9 +1270,16 @@ elif st.session_state.pagina == "severidade":
                 st.markdown("##### 10 UFs com maior aumento")
                 st.info("Nenhuma UF com volume suficiente nos dois meses para comparar.")
             else:
+                st.caption(_aviso_periodo_resumo)
+                if (ufs["variacao_pct"] < 0).any():
+                    st.warning(
+                        "Nem todas as 10 abaixo tiveram alta de verdade — como faltaram UFs "
+                        "subindo o suficiente pra completar a lista, ela trouxe também quem caiu "
+                        "menos (marcado com ⚠️ abaixo)."
+                    )
                 with st.expander("10 UFs com maior aumento", expanded=False):
                     for _, row in ufs.iterrows():
-                        titulo = f"{row['UF']} · Variação de uso: {row['variacao_pct']:+.1f}%"
+                        titulo = f"{row['UF']} · {_rotulo_variacao(row['variacao_pct'])}"
                         with st.container(border=True):
                             st.markdown(f"**{titulo}**")
                             _linha_resumo(row)
@@ -1266,6 +1295,13 @@ elif st.session_state.pagina == "severidade":
                 st.markdown("##### 20 prestadores com maior aumento")
                 st.info("Nenhum prestador com volume suficiente nos dois meses para comparar.")
             else:
+                st.caption(_aviso_periodo_resumo)
+                if (prestadores["variacao_pct"] < 0).any():
+                    st.warning(
+                        "Nem todos os 20 abaixo tiveram alta de verdade — como faltaram "
+                        "prestadores subindo o suficiente pra completar a lista, ela trouxe "
+                        "também quem caiu menos (marcado com ⚠️ abaixo)."
+                    )
                 with st.expander("20 prestadores com maior aumento", expanded=False):
                     for _, row in prestadores.iterrows():
                         nome = row.get("NOME_PRESTADOR") or f"Prestador {int(row['CD_PRESTADOR'])}"
@@ -1273,7 +1309,7 @@ elif st.session_state.pagina == "severidade":
                             f"- **{nome}** — CPF/CNPJ: {row.get('CNPJ_CPF_PRESTADOR') or '—'} · "
                             f"{row.get('UF') or '—'} · {row.get('CIDADE') or '—'} · Cluster: {row.get('CLUSTER') or '—'} · "
                             f"Especialidade principal: {row.get('ESPECIALIDADE') or '—'} · "
-                            f"Variação de uso: {row['variacao_pct']:+.1f}%"
+                            f"{_rotulo_variacao(row['variacao_pct'])}"
                         )
         st.divider()
         # ---------- Alerta: prestador + procedimento com aumento relevante de qtde e valor ----------
