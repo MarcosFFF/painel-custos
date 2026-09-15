@@ -1644,21 +1644,50 @@ elif st.session_state.pagina == "severidade":
                         )
                     ]
 
+                    # Mesmas "continhas" da grade principal, agora reaproveitadas aqui — cada
+                    # prestador funciona como um "corte" à parte, mas comparado com a mesma taxa
+                    # nacional desse procedimento.
+                    rank_prestador_temp["calculo_fase_esperado"] = [
+                        _calculo_fase_esperado_temp(_qpn_prest, _qun_prest, qu)
+                        for qu in rank_prestador_temp["qtd_usuarios"]
+                    ]
+                    rank_prestador_temp["calculo_fasp"] = [
+                        fmt_int(qp) for qp in rank_prestador_temp["fasp_praticado"]
+                    ]
+                    rank_prestador_temp["calculo_cs"] = [
+                        _calculo_cs_temp(fasp, fase)
+                        for fasp, fase in zip(
+                            rank_prestador_temp["fasp_praticado"], rank_prestador_temp["fase_esperado"]
+                        )
+                    ]
+
                     exib_prestador_temp = rank_prestador_temp.copy()
                     exib_prestador_temp["qtd_procedimentos"] = exib_prestador_temp["qtd_procedimentos"].map(fmt_int)
                     exib_prestador_temp["qtd_usuarios"] = exib_prestador_temp["qtd_usuarios"].map(fmt_int)
+                    exib_prestador_temp["quantidade_uso"] = exib_prestador_temp["quantidade_uso"].map(fmt_int)
+                    exib_prestador_temp["uso_por_procedimento"] = exib_prestador_temp["uso_por_procedimento"].map(fmt_float2)
+                    exib_prestador_temp["uso_por_vida"] = exib_prestador_temp["uso_por_vida"].map(fmt_float2)
                     exib_prestador_temp["fase_esperado"] = exib_prestador_temp["fase_esperado"].map(fmt_float2)
                     exib_prestador_temp["fasp_praticado"] = exib_prestador_temp["fasp_praticado"].map(fmt_int)
                     exib_prestador_temp["cs"] = exib_prestador_temp["cs"].map(_fmt_cs_temp)
                     exib_prestador_temp = exib_prestador_temp[[
-                        "rotulo_prestador", "qtd_procedimentos", "qtd_usuarios",
-                        "fase_esperado", "fasp_praticado", "cs",
+                        "rotulo_prestador", "qtd_procedimentos", "qtd_usuarios", "quantidade_uso",
+                        "uso_por_procedimento", "uso_por_vida",
+                        "calculo_fase_esperado", "fase_esperado",
+                        "calculo_fasp", "fasp_praticado",
+                        "calculo_cs", "cs",
                     ]].rename(columns={
                         "rotulo_prestador": "Prestador",
                         "qtd_procedimentos": "Qtde proced",
                         "qtd_usuarios": "Qtd vidas",
+                        "quantidade_uso": "Soma de uso",
+                        "uso_por_procedimento": "Uso/proced",
+                        "uso_por_vida": "Uso/vida",
+                        "calculo_fase_esperado": "Cálculo do FASE",
                         "fase_esperado": "FASE",
+                        "calculo_fasp": "Cálculo do FASP",
                         "fasp_praticado": "FASP",
+                        "calculo_cs": "Cálculo do CS",
                         "cs": "CS",
                     })
                     _tabela_html_temp(exib_prestador_temp)
