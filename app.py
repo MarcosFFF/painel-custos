@@ -1350,7 +1350,12 @@ elif st.session_state.pagina == "severidade":
             "própria desta aba** (FASE - Fator de Severidade Esperado / FASP - Fator de "
             "Severidade Praticado / CS - Coeficiente de Severidade) — não é o FASE oficial das "
             "outras abas (Ranking de Severidade, Ofensores etc.), que continua usando "
-            "Frequência × Intensidade × Peso do grupo, sem alteração."
+            "Frequência × Intensidade × Peso do grupo, sem alteração.\n\n"
+            "FASE = (qtd procedimentos nacional ÷ qtd vidas nacional) × qtd vidas em utilização  \n"
+            "FASP = qtd de procedimentos  \n"
+            "CS (Coeficiente de Severidade) = (FASP ÷ FASE) × 10 — 10 significa que o corte "
+            "praticou exatamente o esperado pela taxa nacional; acima de 10, mais severo; abaixo "
+            "de 10, menos severo. Ainda não considera valores em R$, só a frequência de uso."
         )
 
         # Mapa código -> nome do procedimento, dentro dos filtros ativos (1 código = 1 nome,
@@ -1556,25 +1561,6 @@ elif st.session_state.pagina == "severidade":
                 """,
                 unsafe_allow_html=True,
             )
-            st.caption(
-                "**FASE** = (qtd procedimentos nacional ÷ qtd vidas nacional) × qtd vidas do "
-                "corte — é quanto este corte deveria ter de procedimentos se seguisse a taxa "
-                "nacional desse procedimento. Parâmetros: **qtd procedimentos nacional** = total "
-                "de procedimentos desse código na base inteira, sem nenhum filtro; **qtd vidas "
-                "nacional** = total de vidas distintas que usaram esse procedimento na base "
-                "inteira, sem filtro; **qtd vidas do corte** = vidas em utilização desse "
-                "procedimento dentro dos filtros ativos agora no topo da página (mês, UF, "
-                "cluster etc.) — é a mesma coluna \"Qtd vidas\" da grade. "
-                "**FASP** = qtd de procedimentos desse código realmente observada neste corte "
-                "(com os filtros ativos) — não tem fórmula/parâmetro, é o número direto, a "
-                "mesma coluna \"Qtde proced\" da grade. "
-                "**CS (Coeficiente de Severidade)** = (FASP ÷ FASE) × 10: 10,000 significa que "
-                "o corte praticou exatamente o esperado pela taxa nacional; acima de 10, mais "
-                "severo que o esperado; abaixo de 10, menos severo. Regra só desta aba — não "
-                "mexe no FASE oficial (Frequência × Intensidade × Peso do grupo) usado no resto "
-                "do painel. Ainda não considera valores em R$, só a frequência de uso."
-            )
-
             # ---- gráficos interativos: qtd de procedimentos e qtd de vidas por código ----
             col_qtd_temp, col_vidas_temp = st.columns(2)
             with col_qtd_temp:
