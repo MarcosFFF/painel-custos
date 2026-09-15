@@ -1573,7 +1573,7 @@ elif st.session_state.pagina == "severidade":
                 """
                 <style>
                 .grade-cs-temp-wrap { overflow-x: auto; }
-                .grade-cs-temp-wrap-scroll { overflow-x: auto; overflow-y: auto; max-height: 480px; }
+                .grade-cs-temp-wrap-scroll { overflow-x: auto; overflow-y: auto; max-height: 165px; }
                 .grade-cs-temp { border-collapse: collapse; width: 100%; font-size: 12px; }
                 .grade-cs-temp th, .grade-cs-temp td,
                 .grade-cs-temp th:first-child, .grade-cs-temp td:first-child {
