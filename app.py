@@ -1389,16 +1389,16 @@ elif st.session_state.pagina == "severidade":
             "Respeita os filtros ativos no topo da página (mês, UF, especialidade etc.), "
             "igual às demais abas, e cobre todos os procedimentos que aparecerem nesses "
             "filtros. **Métricas calculadas só aqui, com regra própria desta aba** (FASE - "
-            "Fator de Severidade Esperado / FASP - Fator de Severidade Praticado / CS - "
+            "Fator de Severidade Esperado / QP - Quantidade de Procedimentos / CS - "
             "Coeficiente de Severidade) — não é o FASE oficial da(s) aba(s) de Ranking de "
             "Severidade/Ofensores (hoje ocultas, mas ainda calculadas do mesmo jeito no "
             "código), que continua usando Frequência × Intensidade × Peso do grupo, sem "
             "alteração.\n\n"
+            "CS (Coeficiente de Severidade) = (QP ÷ FASE) × 10 (10 significa que o corte "
+            "praticou exatamente o esperado pela taxa nacional; acima de 10, mais severo; "
+            "abaixo de 10, menos severo.) Não considera valores em R$.  \n"
             "FASE = (qtd procedimentos nacional ÷ qtd vidas nacional) × qtd vidas em utilização  \n"
-            "FASP = qtd de procedimentos  \n"
-            "CS (Coeficiente de Severidade) = (FASP ÷ FASE) × 10 — 10 significa que o corte "
-            "praticou exatamente o esperado pela taxa nacional; acima de 10, mais severo; abaixo "
-            "de 10, menos severo. Ainda não considera valores em R$, só a frequência de uso."
+            "QP = qtd de procedimentos"
         )
 
         # Mapa código -> nome do procedimento, dentro dos filtros ativos, para TODOS os
@@ -1526,16 +1526,16 @@ elif st.session_state.pagina == "severidade":
 
             rank_temp = rank_temp.merge(nacional_temp_flat, on="NOME_PROCEDIMENTO", how="left")
 
-            # ---- FASE (esperado) / FASP (praticado) / CS — regra só desta aba ----
+            # ---- FASE (esperado) / QP (praticado) / CS — regra só desta aba ----
             # NÃO mexe em severidade.py: o FASE oficial (Frequência × Intensidade × Peso do
             # grupo, em _fase()) continua do jeito que está no resto do painel.
             #
             #   FASE (esperado)  = (qtd_procedimentos nacional ÷ qtd_vidas nacional) × qtd_vidas
             #                      em utilização deste corte — quantos procedimentos este corte
             #                      "deveria" ter, seguindo a taxa nacional desse procedimento.
-            #   FASP (praticado) = qtd_procedimentos realmente observados neste corte — direto,
+            #   QP (praticado) = qtd_procedimentos realmente observados neste corte — direto,
             #                      sem conta nenhuma.
-            #   CS (Coeficiente de Severidade) = (FASP ÷ FASE) × 10 — 10,000 = praticado igual ao
+            #   CS (Coeficiente de Severidade) = (QP ÷ FASE) × 10 — 10,000 = praticado igual ao
             #                      esperado pela taxa nacional; acima de 10, mais severo; abaixo
             #                      de 10, menos severo. O ×10 só amplia a escala (a razão sozinha
             #                      fica sempre bem perto de 1) — não muda a ordem entre os
@@ -1543,8 +1543,8 @@ elif st.session_state.pagina == "severidade":
             rank_temp["fase_esperado"] = (
                 rank_temp["qtd_procedimentos_nacional"] / rank_temp["qtd_vidas_nacional"]
             ) * rank_temp["qtd_usuarios"]
-            rank_temp["fasp_praticado"] = rank_temp["qtd_procedimentos"]
-            rank_temp["cs"] = (rank_temp["fasp_praticado"] / rank_temp["fase_esperado"]) * 10
+            rank_temp["qp_praticado"] = rank_temp["qtd_procedimentos"]
+            rank_temp["cs"] = (rank_temp["qp_praticado"] / rank_temp["fase_esperado"]) * 10
 
             # ---- coluna com o CS formatado com 3 casas decimais (padrão fmt_float2 usa só 2) ----
             def _fmt_cs_temp(v):
@@ -1553,16 +1553,16 @@ elif st.session_state.pagina == "severidade":
                 s = f"{v:,.3f}"
                 return s.replace(",", "§").replace(".", ",").replace("§", ".")
 
-            # ---- colunas com a "continha" de cada um: FASE, FASP e CS ----
+            # ---- colunas com a "continha" de cada um: FASE, QP e CS ----
             def _calculo_fase_esperado_temp(qpn, qun, qu_corte):
                 if not qun or pd.isna(qun):
                     return "—"
                 return f"({fmt_int(qpn)} ÷ {fmt_int(qun)}) × {fmt_int(qu_corte)}"
 
-            def _calculo_cs_temp(fasp, fase):
+            def _calculo_cs_temp(qp, fase):
                 if not fase or pd.isna(fase):
                     return "—"
-                return f"({fmt_int(fasp)} ÷ {fmt_float2(fase)}) × 10"
+                return f"({fmt_int(qp)} ÷ {fmt_float2(fase)}) × 10"
 
             rank_temp["calculo_fase_esperado"] = [
                 _calculo_fase_esperado_temp(qpn, qun, qu)
@@ -1570,13 +1570,13 @@ elif st.session_state.pagina == "severidade":
                     rank_temp["qtd_procedimentos_nacional"], rank_temp["qtd_vidas_nacional"], rank_temp["qtd_usuarios"]
                 )
             ]
-            # "Cálculo do FASP" = o próprio valor observado — sem fórmula (o FASP não é calculado
+            # "Cálculo do QP" = o próprio valor observado — sem fórmula (o QP não é calculado
             # a partir de outros números, é o número real do corte), mas mantido como coluna
-            # separada da "FASP" por simetria com "Cálculo do FASE"/"Cálculo do CS".
-            rank_temp["calculo_fasp"] = [fmt_int(qp) for qp in rank_temp["fasp_praticado"]]
+            # separada da "QP" por simetria com "Cálculo do FASE"/"Cálculo do CS".
+            rank_temp["calculo_qp"] = [fmt_int(qp) for qp in rank_temp["qp_praticado"]]
             rank_temp["calculo_cs"] = [
-                _calculo_cs_temp(fasp, fase)
-                for fasp, fase in zip(rank_temp["fasp_praticado"], rank_temp["fase_esperado"])
+                _calculo_cs_temp(qp, fase)
+                for qp, fase in zip(rank_temp["qp_praticado"], rank_temp["fase_esperado"])
             ]
 
             # ---- ordena a grade por CS decrescente (do mais severo pro menos severo) ----
@@ -1589,13 +1589,13 @@ elif st.session_state.pagina == "severidade":
             exib_rank_temp["uso_por_procedimento"] = exib_rank_temp["uso_por_procedimento"].map(fmt_float2)
             exib_rank_temp["uso_por_vida"] = exib_rank_temp["uso_por_vida"].map(fmt_float2)
             exib_rank_temp["fase_esperado"] = exib_rank_temp["fase_esperado"].map(fmt_float2)
-            exib_rank_temp["fasp_praticado"] = exib_rank_temp["fasp_praticado"].map(fmt_int)
+            exib_rank_temp["qp_praticado"] = exib_rank_temp["qp_praticado"].map(fmt_int)
             exib_rank_temp["cs"] = exib_rank_temp["cs"].map(_fmt_cs_temp)
             exib_rank_temp = exib_rank_temp[[
                 "rotulo", "qtd_procedimentos", "qtd_usuarios", "quantidade_uso",
                 "uso_por_procedimento", "uso_por_vida",
                 "calculo_fase_esperado", "fase_esperado",
-                "calculo_fasp", "fasp_praticado",
+                "calculo_qp", "qp_praticado",
                 "calculo_cs", "cs",
             ]].rename(columns={
                 "rotulo": "Procedimento",
@@ -1606,8 +1606,8 @@ elif st.session_state.pagina == "severidade":
                 "uso_por_vida": "Uso/vida",
                 "calculo_fase_esperado": "Cálculo do FASE",
                 "fase_esperado": "FASE",
-                "calculo_fasp": "Cálculo do FASP",
-                "fasp_praticado": "FASP",
+                "calculo_qp": "Cálculo do QP",
+                "qp_praticado": "QP",
                 "calculo_cs": "Cálculo do CS",
                 "cs": "CS",
             })
@@ -1657,7 +1657,7 @@ elif st.session_state.pagina == "severidade":
 
             _tabela_html_temp(exib_rank_temp, scroll=True)
 
-            # ---- prestadores do procedimento selecionado, com FASE/FASP/CS por prestador ----
+            # ---- prestadores do procedimento selecionado, com FASE/QP/CS por prestador ----
             # Só aparece quando um procedimento específico está selecionado no filtro acima (com
             # "Todos" não faz sentido — a tabela ficaria com todo mundo que atendeu qualquer um
             # dos 13 códigos misturado). Também não aparece se um prestador específico já estiver
@@ -1680,9 +1680,9 @@ elif st.session_state.pagina == "severidade":
                     _qpn_prest, _qun_prest = _base_nacional_temp(nome_proc_sel_temp)
                     _taxa_nac_prest = (_qpn_prest / _qun_prest) if _qun_prest else float("nan")
                     rank_prestador_temp["fase_esperado"] = _taxa_nac_prest * rank_prestador_temp["qtd_usuarios"]
-                    rank_prestador_temp["fasp_praticado"] = rank_prestador_temp["qtd_procedimentos"]
+                    rank_prestador_temp["qp_praticado"] = rank_prestador_temp["qtd_procedimentos"]
                     rank_prestador_temp["cs"] = (
-                        rank_prestador_temp["fasp_praticado"] / rank_prestador_temp["fase_esperado"]
+                        rank_prestador_temp["qp_praticado"] / rank_prestador_temp["fase_esperado"]
                     ) * 10
                     rank_prestador_temp = rank_prestador_temp.sort_values("cs", ascending=False)
 
@@ -1703,13 +1703,13 @@ elif st.session_state.pagina == "severidade":
                         _calculo_fase_esperado_temp(_qpn_prest, _qun_prest, qu)
                         for qu in rank_prestador_temp["qtd_usuarios"]
                     ]
-                    rank_prestador_temp["calculo_fasp"] = [
-                        fmt_int(qp) for qp in rank_prestador_temp["fasp_praticado"]
+                    rank_prestador_temp["calculo_qp"] = [
+                        fmt_int(qp) for qp in rank_prestador_temp["qp_praticado"]
                     ]
                     rank_prestador_temp["calculo_cs"] = [
-                        _calculo_cs_temp(fasp, fase)
-                        for fasp, fase in zip(
-                            rank_prestador_temp["fasp_praticado"], rank_prestador_temp["fase_esperado"]
+                        _calculo_cs_temp(qp, fase)
+                        for qp, fase in zip(
+                            rank_prestador_temp["qp_praticado"], rank_prestador_temp["fase_esperado"]
                         )
                     ]
 
@@ -1720,13 +1720,13 @@ elif st.session_state.pagina == "severidade":
                     exib_prestador_temp["uso_por_procedimento"] = exib_prestador_temp["uso_por_procedimento"].map(fmt_float2)
                     exib_prestador_temp["uso_por_vida"] = exib_prestador_temp["uso_por_vida"].map(fmt_float2)
                     exib_prestador_temp["fase_esperado"] = exib_prestador_temp["fase_esperado"].map(fmt_float2)
-                    exib_prestador_temp["fasp_praticado"] = exib_prestador_temp["fasp_praticado"].map(fmt_int)
+                    exib_prestador_temp["qp_praticado"] = exib_prestador_temp["qp_praticado"].map(fmt_int)
                     exib_prestador_temp["cs"] = exib_prestador_temp["cs"].map(_fmt_cs_temp)
                     exib_prestador_temp = exib_prestador_temp[[
                         "rotulo_prestador", "qtd_procedimentos", "qtd_usuarios", "quantidade_uso",
                         "uso_por_procedimento", "uso_por_vida",
                         "calculo_fase_esperado", "fase_esperado",
-                        "calculo_fasp", "fasp_praticado",
+                        "calculo_qp", "qp_praticado",
                         "calculo_cs", "cs",
                     ]].rename(columns={
                         "rotulo_prestador": "Prestador",
@@ -1737,8 +1737,8 @@ elif st.session_state.pagina == "severidade":
                         "uso_por_vida": "Uso/vida",
                         "calculo_fase_esperado": "Cálculo do FASE",
                         "fase_esperado": "FASE",
-                        "calculo_fasp": "Cálculo do FASP",
-                        "fasp_praticado": "FASP",
+                        "calculo_qp": "Cálculo do QP",
+                        "qp_praticado": "QP",
                         "calculo_cs": "Cálculo do CS",
                         "cs": "CS",
                     })
@@ -1762,7 +1762,7 @@ elif st.session_state.pagina == "severidade":
             def _info_extra_temp(coluna_dimensao, colunas_extra):
                 """Atributo mais frequente (moda) de cada `coluna_dimensao` — ex.: cidade/UF/
                 cluster de cada prestador — só pra enriquecer o hover dos gráficos, não entra
-                em nenhum cálculo de FASE/FASP/CS."""
+                em nenhum cálculo de FASE/QP/CS."""
                 colunas_presentes = [c for c in colunas_extra if c in df_temp.columns]
                 if not colunas_presentes:
                     return pd.DataFrame()
@@ -1774,11 +1774,11 @@ elif st.session_state.pagina == "severidade":
 
             def _severidade_agregada_temp(coluna_dimensao, colunas_extra=None):
                 """
-                FASE/FASP/CS por `coluna_dimensao` (ex.: CD_PRESTADOR, CIDADE_PRESTADOR),
+                FASE/QP/CS por `coluna_dimensao` (ex.: CD_PRESTADOR, CIDADE_PRESTADOR),
                 somando entre TODOS os procedimentos desta aba. A taxa nacional de cada
                 procedimento é constante — aplicada às vidas em utilização daquele
                 procedimento dentro de cada grupo da dimensão — e só depois de somar FASE e
-                FASP entre os procedimentos é que o CS final do grupo é calculado. Não é uma
+                QP entre os procedimentos é que o CS final do grupo é calculado. Não é uma
                 média dos CS de cada procedimento (isso não pesaria pelo volume de cada um).
                 `colunas_extra` são atributos descritivos (cidade, UF, cluster) trazidos à
                 parte, pela moda de cada grupo, só pra hover — não afetam o cálculo.
@@ -1802,18 +1802,18 @@ elif st.session_state.pagina == "severidade":
                 base["fase_esperado"] = (
                     base["qtd_procedimentos_nacional"] / base["qtd_vidas_nacional"]
                 ) * base["qtd_usuarios"]
-                base["fasp_praticado"] = base["qtd_procedimentos"]
+                base["qp_praticado"] = base["qtd_procedimentos"]
 
                 group_final = [coluna_dimensao] + extra_cols
                 resultado = base.groupby(group_final, dropna=False, observed=True).agg(
                     fase_esperado=("fase_esperado", "sum"),
-                    fasp_praticado=("fasp_praticado", "sum"),
+                    qp_praticado=("qp_praticado", "sum"),
                 ).reset_index()
                 vidas_total = vidas_por(usuarios_temp, coluna_dimensao)
                 resultado = resultado.merge(vidas_total, on=coluna_dimensao, how="left")
                 resultado["qtd_usuarios"] = resultado["qtd_usuarios"].fillna(0)
                 resultado = resultado[resultado["fase_esperado"] > 0]
-                resultado["cs"] = (resultado["fasp_praticado"] / resultado["fase_esperado"]) * 10
+                resultado["cs"] = (resultado["qp_praticado"] / resultado["fase_esperado"]) * 10
 
                 info_extra = _info_extra_temp(coluna_dimensao, colunas_extra or [])
                 if not info_extra.empty:
@@ -1821,7 +1821,7 @@ elif st.session_state.pagina == "severidade":
                 return resultado
 
             _rotulos_hover_temp = {
-                "qtd_usuarios": "Qtd vidas", "fasp_praticado": "Qtd procedimentos", "cs": "CS",
+                "qtd_usuarios": "Qtd vidas", "qp_praticado": "Qtd procedimentos", "cs": "CS",
                 "CIDADE_PRESTADOR": "Cidade", "UF": "UF", "CLUSTER": "Cluster",
             }
 
@@ -1833,13 +1833,13 @@ elif st.session_state.pagina == "severidade":
                 if dados_plot.empty:
                     st.info(f"Sem dados suficientes para o gráfico de {titulo.lower()}.")
                     return
-                hover_data = {"qtd_usuarios": ":,.0f", "fasp_praticado": ":,.0f", "cs": ":.3f"}
+                hover_data = {"qtd_usuarios": ":,.0f", "qp_praticado": ":,.0f", "cs": ":.3f"}
                 for col in (hover_extra or []):
                     if col in dados_plot.columns:
                         dados_plot[col] = dados_plot[col].fillna("—")
                         hover_data[col] = True
                 fig = px.scatter(
-                    dados_plot, x="qtd_usuarios", y="cs", size="fasp_praticado", color="cs",
+                    dados_plot, x="qtd_usuarios", y="cs", size="qp_praticado", color="cs",
                     color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
                     color_continuous_midpoint=10, size_max=32, hover_name=rotulo_col,
                     hover_data=hover_data, labels=_rotulos_hover_temp,
