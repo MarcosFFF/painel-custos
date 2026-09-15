@@ -1423,6 +1423,12 @@ elif st.session_state.pagina == "severidade":
             "QP = qtd de procedimentos"
         )
 
+        st.caption(
+            "Selecione ao menos um filtro acima (procedimento, prestador, UF, região, cidade "
+            "ou cluster) para ver a dispersão de severidade — sem nenhum filtro, o corte "
+            "comparado se aproxima da própria base nacional e o CS fica pouco informativo."
+        )
+
         if not MOSTRAR_FILTROS_TOPO:
             # Mês/Plano/Especialidade do quadro de Filtros do topo (hoje oculto) — mesma
             # funcionalidade de antes (afetam df_filtrado/usuarios_filtrado, a página toda),
