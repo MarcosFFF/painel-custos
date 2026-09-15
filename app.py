@@ -15,7 +15,7 @@ try:
         carregar_base_severidade, aplicar_filtros, evolucao_mensal,
         ranking_severidade, identificar_ofensores, calcular_desvios, montar_watchlist,
         comparacao_mensal, resumo_comparativo, alertas_prestador_procedimento,
-        identificar_desvios_solicitacao, calcular_media_nacional,
+        identificar_desvios_solicitacao, calcular_media_nacional, vidas_por,
     )
 except Exception as _erro_import_severidade:
     # O Streamlit Cloud redige a mensagem de erro padrão — mostramos o traceback
@@ -1698,116 +1698,108 @@ elif st.session_state.pagina == "severidade":
                         "previa pros pacientes dele. Prestadores com poucas vidas/procedimentos podem "
                         "ter CS instável — olhe o volume antes de tirar conclusão de um CS isolado."
                     )
-            # ---- gráficos interativos: qtd de procedimentos e qtd de vidas por código ----
-            col_qtd_temp, col_vidas_temp = st.columns(2)
-            with col_qtd_temp:
-                fig_qtd_temp = px.bar(
-                    rank_temp.sort_values("qtd_procedimentos"),
-                    x="qtd_procedimentos", y="rotulo", orientation="h",
-                    text="qtd_procedimentos", title="Qtd de procedimentos por código",
-                    color="qtd_procedimentos", color_continuous_scale=["#87CEEB", "#1f6fb2"],
-                )
-                fig_qtd_temp.update_traces(texttemplate="%{text:,.0f}", textposition="outside", cliponaxis=False)
-                fig_qtd_temp.update_layout(
-                    height=320, margin=dict(l=10, r=60, t=40, b=10),
-                    coloraxis_showscale=False, yaxis_title="",
-                )
-                st.plotly_chart(fig_qtd_temp, use_container_width=True)
-            with col_vidas_temp:
-                fig_vidas_temp = px.bar(
-                    rank_temp.sort_values("qtd_usuarios"),
-                    x="qtd_usuarios", y="rotulo", orientation="h",
-                    text="qtd_usuarios", title="Qtd de vidas por código",
-                    color="qtd_usuarios", color_continuous_scale=["#f6d186", "#e07b39"],
-                )
-                fig_vidas_temp.update_traces(texttemplate="%{text:,.0f}", textposition="outside", cliponaxis=False)
-                fig_vidas_temp.update_layout(
-                    height=320, margin=dict(l=10, r=60, t=40, b=10),
-                    coloraxis_showscale=False, yaxis_title="",
-                )
-                st.plotly_chart(fig_vidas_temp, use_container_width=True)
-
-            # ---- CS por código (gráfico próprio desta aba — não reaproveita _grafico_severidade
-            # porque essa função é compartilhada com as abas oficiais e espera coluna "fase";
-            # aqui a métrica é o CS = (FASP/FASE) × 10, com escala de cor centrada em 10 = esperado.
-            # A barra em si continua crescente de baixo pra cima (leitura visual padrão); a ordem
-            # decrescente pedida fica na grade acima, que já está ordenada por CS decrescente) ----
-            fig_cs_temp = px.bar(
-                rank_temp.sort_values("cs"),
-                x="cs", y="rotulo", orientation="h",
-                text="cs", title="CS (Coeficiente de Severidade) por código de procedimento",
-                color="cs", color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
-                color_continuous_midpoint=10,
-            )
-            fig_cs_temp.update_traces(texttemplate="%{text:.3f}", textposition="outside", cliponaxis=False)
-            fig_cs_temp.add_vline(x=10, line_dash="dash", line_color="#888")
-            fig_cs_temp.update_layout(
-                height=320, margin=dict(l=10, r=60, t=40, b=10),
-                coloraxis_showscale=False, yaxis_title="",
-            )
-            st.plotly_chart(fig_cs_temp, use_container_width=True)
-            st.caption("Linha pontilhada em CS = 10,000 (praticado igual ao esperado pela taxa nacional).")
-
+            # ---- dispersão CS × volume: onde estão as severidades (outliers) ----
+            # Substitui os gráficos de barra/evolução mensal desta aba (removidos a pedido).
+            # Objetivo: achar procedimentos, prestadores e cidades com CS alto que sejam um
+            # padrão de verdade (muito volume) e não ruído de amostra pequena (pouco volume).
             st.divider()
-            st.markdown("**Evolução mensal por código**")
+            st.markdown("**Onde estão as severidades — dispersão CS × volume**")
+            st.caption(
+                "Cada ponto é um procedimento, prestador ou cidade. Eixo X = qtd de vidas em "
+                "utilização (escala log, pra caber quem tem muita e pouca vida no mesmo "
+                "gráfico); eixo Y = CS; tamanho do ponto = qtd de procedimentos. Linha "
+                "pontilhada em CS = 10 (praticado igual ao esperado). Ponto acima da linha e "
+                "bem à direita (muito volume) é o sinal mais confiável de severidade real — "
+                "acima da linha mas bem à esquerda (pouco volume) pode ser só instabilidade de "
+                "amostra pequena, não um padrão (passe o mouse pra ver os números de cada ponto)."
+            )
 
-            evol_temp_frames = []
-            for cod in codigos_temp:
-                nome_cod = mapa_cod_nome_temp.get(cod)
-                if nome_cod is None:
-                    continue
-                sub_df = df_temp[df_temp["CD_PROCEDIMENTO"] == cod]
-                sub_usu = usuarios_temp[usuarios_temp["NOME_PROCEDIMENTO"] == nome_cod]
-                if sub_df.empty:
-                    continue
-                evo = evolucao_mensal(sub_df, sub_usu)
-                # CS por mês, mesma regra da grade acima: a taxa nacional do procedimento é fixa
-                # (não muda mês a mês) — só o "esperado" varia, porque as vidas em utilização
-                # variam mês a mês. "Praticado" é sempre o qtd_procedimentos daquele mês, direto.
-                _qpn_evo, _qun_evo = _base_nacional_temp(nome_cod)
-                _taxa_nac_evo = (_qpn_evo / _qun_evo) if _qun_evo else float("nan")
-                evo["fase_esperado"] = _taxa_nac_evo * evo["qtd_usuarios"]
-                evo["fasp_praticado"] = evo["qtd_procedimentos"]
-                evo["cs"] = (evo["fasp_praticado"] / evo["fase_esperado"]) * 10
-                evo["Procedimento"] = f"{cod} — {nome_cod}"
-                evol_temp_frames.append(evo)
+            def _severidade_agregada_temp(coluna_dimensao):
+                """
+                FASE/FASP/CS por `coluna_dimensao` (ex.: CD_PRESTADOR, CIDADE_PRESTADOR),
+                somando entre TODOS os procedimentos desta aba. A taxa nacional de cada
+                procedimento é constante — aplicada às vidas em utilização daquele
+                procedimento dentro de cada grupo da dimensão — e só depois de somar FASE e
+                FASP entre os procedimentos é que o CS final do grupo é calculado. Não é uma
+                média dos CS de cada procedimento (isso não pesaria pelo volume de cada um).
+                """
+                grupo_cols = [coluna_dimensao, "NOME_PROCEDIMENTO"]
+                extra_cols = ["NOME_PRESTADOR"] if (
+                    coluna_dimensao == "CD_PRESTADOR" and "NOME_PRESTADOR" in df_temp.columns
+                ) else []
+                base = df_temp.groupby(grupo_cols + extra_cols, dropna=False, observed=True).agg(
+                    qtd_procedimentos=("qtd_procedimentos", "sum"),
+                ).reset_index()
+                base = base[base[coluna_dimensao].notna() & base["NOME_PROCEDIMENTO"].notna()]
+                if base.empty:
+                    return pd.DataFrame()
+                vidas_cel = vidas_por(usuarios_temp, grupo_cols)
+                base = base.merge(vidas_cel, on=grupo_cols, how="left")
+                base["qtd_usuarios"] = base["qtd_usuarios"].fillna(0)
+                _qpn_l, _qun_l = [], []
+                for nome_proc in base["NOME_PROCEDIMENTO"]:
+                    qpn, qun = _base_nacional_temp(nome_proc)
+                    _qpn_l.append(qpn)
+                    _qun_l.append(qun)
+                base["fase_esperado"] = (pd.Series(_qpn_l) / pd.Series(_qun_l)) * base["qtd_usuarios"]
+                base["fasp_praticado"] = base["qtd_procedimentos"]
 
-            if evol_temp_frames:
-                evol_temp = pd.concat(evol_temp_frames, ignore_index=True)
+                group_final = [coluna_dimensao] + extra_cols
+                resultado = base.groupby(group_final, dropna=False, observed=True).agg(
+                    fase_esperado=("fase_esperado", "sum"),
+                    fasp_praticado=("fasp_praticado", "sum"),
+                ).reset_index()
+                vidas_total = vidas_por(usuarios_temp, coluna_dimensao)
+                resultado = resultado.merge(vidas_total, on=coluna_dimensao, how="left")
+                resultado["qtd_usuarios"] = resultado["qtd_usuarios"].fillna(0)
+                resultado = resultado[resultado["fase_esperado"] > 0]
+                resultado["cs"] = (resultado["fasp_praticado"] / resultado["fase_esperado"]) * 10
+                return resultado
 
-                fig_uso_mes_temp = px.line(
-                    evol_temp, x="MES", y="quantidade_uso", color="Procedimento", markers=True,
-                    title="Soma de uso por mês, por código",
+            def _grafico_dispersao_cs_temp(dados, rotulo_col, titulo):
+                if dados is None or dados.empty or "qtd_usuarios" not in dados.columns:
+                    st.info(f"Sem dados suficientes para o gráfico de {titulo.lower()}.")
+                    return
+                dados_plot = dados[(dados["qtd_usuarios"] > 0) & dados["cs"].notna()]
+                if dados_plot.empty:
+                    st.info(f"Sem dados suficientes para o gráfico de {titulo.lower()}.")
+                    return
+                fig = px.scatter(
+                    dados_plot, x="qtd_usuarios", y="cs", size="fasp_praticado", color="cs",
+                    color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
+                    color_continuous_midpoint=10, size_max=32, hover_name=rotulo_col,
+                    hover_data={
+                        "qtd_usuarios": ":,.0f", "fasp_praticado": ":,.0f", "cs": ":.3f",
+                    },
+                    log_x=True, title=titulo,
                 )
-                fig_uso_mes_temp.update_layout(height=340, margin=dict(l=10, r=10, t=40, b=10), yaxis_title="Soma de uso")
-                st.plotly_chart(fig_uso_mes_temp, use_container_width=True)
-
-                col_qtd_mes_temp, col_vidas_mes_temp = st.columns(2)
-                with col_qtd_mes_temp:
-                    fig_qtd_mes_temp = px.line(
-                        evol_temp, x="MES", y="qtd_procedimentos", color="Procedimento", markers=True,
-                        title="Qtd de procedimentos por mês",
-                    )
-                    fig_qtd_mes_temp.update_layout(
-                        height=340, margin=dict(l=10, r=10, t=40, b=10), yaxis_title="Qtd procedimentos"
-                    )
-                    st.plotly_chart(fig_qtd_mes_temp, use_container_width=True)
-                with col_vidas_mes_temp:
-                    fig_vidas_mes_temp = px.line(
-                        evol_temp, x="MES", y="qtd_usuarios", color="Procedimento", markers=True,
-                        title="Qtd de vidas por mês",
-                    )
-                    fig_vidas_mes_temp.update_layout(
-                        height=340, margin=dict(l=10, r=10, t=40, b=10), yaxis_title="Qtd vidas"
-                    )
-                    st.plotly_chart(fig_vidas_mes_temp, use_container_width=True)
-
-                fig_cs_mes_temp = px.line(
-                    evol_temp, x="MES", y="cs", color="Procedimento", markers=True,
-                    title="CS (Coeficiente de Severidade) por mês, por código",
+                fig.add_hline(y=10, line_dash="dash", line_color="#888")
+                fig.update_layout(
+                    height=420, margin=dict(l=10, r=10, t=40, b=10),
+                    coloraxis_showscale=False, xaxis_title="Qtd vidas (escala log)", yaxis_title="CS",
                 )
-                fig_cs_mes_temp.add_hline(y=10, line_dash="dash", line_color="#888")
-                fig_cs_mes_temp.update_layout(height=340, margin=dict(l=10, r=10, t=40, b=10), yaxis_title="CS")
-                st.plotly_chart(fig_cs_mes_temp, use_container_width=True)
-            else:
-                st.info("Sem dados mensais suficientes para montar a evolução.")
+                st.plotly_chart(fig, use_container_width=True)
+
+            df_disp_prest_temp = _severidade_agregada_temp("CD_PRESTADOR")
+            if not df_disp_prest_temp.empty:
+                col_nome_disp_prest = (
+                    "NOME_PRESTADOR" if "NOME_PRESTADOR" in df_disp_prest_temp.columns else "CD_PRESTADOR"
+                )
+                df_disp_prest_temp["rotulo"] = [
+                    str(nome) if pd.notna(nome) and str(nome).strip() else f"Prestador {int(cod)}"
+                    for cod, nome in zip(
+                        df_disp_prest_temp["CD_PRESTADOR"], df_disp_prest_temp[col_nome_disp_prest]
+                    )
+                ]
+
+            df_disp_cidade_temp = _severidade_agregada_temp("CIDADE_PRESTADOR")
+            if not df_disp_cidade_temp.empty:
+                df_disp_cidade_temp["rotulo"] = df_disp_cidade_temp["CIDADE_PRESTADOR"].astype(str)
+
+            col_disp_proc, col_disp_prest, col_disp_cidade = st.columns(3)
+            with col_disp_proc:
+                _grafico_dispersao_cs_temp(rank_temp, "rotulo", "Procedimentos")
+            with col_disp_prest:
+                _grafico_dispersao_cs_temp(df_disp_prest_temp, "rotulo", "Prestadores")
+            with col_disp_cidade:
+                _grafico_dispersao_cs_temp(df_disp_cidade_temp, "rotulo", "Cidades")
