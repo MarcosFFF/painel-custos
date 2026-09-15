@@ -1693,13 +1693,6 @@ elif st.session_state.pagina == "severidade":
                         "cs": "CS",
                     })
                     _tabela_html_temp(exib_prestador_temp, scroll=True)
-                    st.caption(
-                        "FASE/FASP/CS aqui usam a mesma taxa nacional do procedimento (constante), "
-                        "só que aplicada às vidas em utilização de cada prestador — mostra se aquele "
-                        "prestador aplica esse procedimento mais ou menos do que a média nacional "
-                        "previa pros pacientes dele. Prestadores com poucas vidas/procedimentos podem "
-                        "ter CS instável — olhe o volume antes de tirar conclusão de um CS isolado."
-                    )
             # ---- dispersão CS × volume: onde estão as severidades (outliers) ----
             # Substitui os gráficos de barra/evolução mensal desta aba (removidos a pedido).
             # Objetivo: achar procedimentos, prestadores e cidades com CS alto que sejam um
