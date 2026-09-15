@@ -694,6 +694,14 @@ elif st.session_state.pagina == "severidade":
     # bloco de Informações Técnicas que as explica ficam ocultos (não apagados) — troque pra
     # True pra reexibir os dois juntos.
     MOSTRAR_ABAS_OFICIAIS_EXTRAS = False
+    # Quadro "Filtros" do topo da página (Mês/Região/Plano/UF/Especialidade/Cluster/Cidade +
+    # volume mínimo) fica oculto — Mês/Plano/Especialidade continuam funcionando do mesmo
+    # jeito (mesmo efeito sobre df_filtrado/usuarios_filtrado), só que os campos aparecem
+    # agora logo abaixo do título "Coeficiente de Severidade"; Região/UF/Cluster/Cidade da
+    # página ficam sem filtro próprio (já têm equivalente dentro da aba Coeficiente de
+    # Severidade) e o volume mínimo volta pro padrão antigo (30). Troque pra True pra
+    # restaurar o quadro original (os 7 campos + slider) do jeito que era.
+    MOSTRAR_FILTROS_TOPO = False
     col_titulo_sev, col_atualizar_sev = st.columns([5, 1])
     with col_titulo_sev:
         st.subheader("🕵️ Severidade")
@@ -755,34 +763,52 @@ elif st.session_state.pagina == "severidade":
     if aviso_carga:
         st.warning(aviso_carga)
     # ---------- filtros ----------
-    with st.container(border=True):
-        st.markdown("**Filtros**")
-        fc1, fc2, fc3, fc4, fc5, fc6, fc7 = st.columns(7)
-        with fc1:
-            f_mes = st.multiselect("Mês", options=sorted(agregado["MES"].dropna().unique(), reverse=True))
-        with fc2:
-            f_regiao = st.multiselect("Região", options=sorted(agregado["REGIAO"].dropna().unique()))
-        with fc3:
-            f_plano = st.multiselect("Plano", options=sorted(agregado["NR_PLANO"].dropna().unique()))
-        with fc4:
-            f_uf = st.multiselect("UF", options=sorted(agregado["UF"].dropna().unique()))
-        with fc5:
-            f_especialidade = st.multiselect("Especialidade", options=sorted(agregado["ESPECIALIDADE"].dropna().unique()))
-        with fc6:
-            f_cluster = st.multiselect("Cluster", options=sorted(agregado["CLUSTER"].dropna().unique()))
-        with fc7:
-            # Cidade filtrada pela(s) UF(s) selecionada(s) acima — sem UF selecionada, mostra
-            # todas as cidades. O campo já vem com busca por digitação (padrão do multiselect).
-            opcoes_cidade = sorted(
-                (agregado[agregado["UF"].isin(f_uf)] if f_uf else agregado)["CIDADE_PRESTADOR"].dropna().unique()
+    # Opções sempre calculadas (servem tanto pro quadro original, se reativado, quanto pros
+    # campos de Mês/Plano/Especialidade agora dentro da aba Coeficiente de Severidade).
+    opcoes_mes_temp = sorted(agregado["MES"].dropna().unique(), reverse=True)
+    opcoes_plano_temp = sorted(agregado["NR_PLANO"].dropna().unique())
+    opcoes_especialidade_temp = sorted(agregado["ESPECIALIDADE"].dropna().unique())
+    # Lidos direto do session_state (e não via widget) porque os campos de Mês/Plano/
+    # Especialidade agora só são desenhados (st.multiselect) lá dentro da aba, depois de
+    # df_filtrado já ter sido montado aqui — o Streamlit sincroniza o session_state com a
+    # última interação do usuário antes do script rodar de novo, então ler pela key já pega
+    # o valor atual mesmo antes do widget em si aparecer no código.
+    f_mes = st.session_state.get("temp_filtro_mes", [])
+    f_plano = st.session_state.get("temp_filtro_plano", [])
+    f_especialidade = st.session_state.get("temp_filtro_especialidade", [])
+    # Região/UF/Cluster/Cidade da página ficam sem filtro próprio aqui — já têm equivalente
+    # dentro da aba Coeficiente de Severidade, que filtra em cima do resultado destes.
+    f_regiao, f_uf, f_cluster, f_cidade = [], [], [], []
+    volume_minimo = 30
+    if MOSTRAR_FILTROS_TOPO:
+        with st.container(border=True):
+            st.markdown("**Filtros**")
+            fc1, fc2, fc3, fc4, fc5, fc6, fc7 = st.columns(7)
+            with fc1:
+                f_mes = st.multiselect("Mês", options=opcoes_mes_temp)
+            with fc2:
+                f_regiao = st.multiselect("Região", options=sorted(agregado["REGIAO"].dropna().unique()))
+            with fc3:
+                f_plano = st.multiselect("Plano", options=opcoes_plano_temp)
+            with fc4:
+                f_uf = st.multiselect("UF", options=sorted(agregado["UF"].dropna().unique()))
+            with fc5:
+                f_especialidade = st.multiselect("Especialidade", options=opcoes_especialidade_temp)
+            with fc6:
+                f_cluster = st.multiselect("Cluster", options=sorted(agregado["CLUSTER"].dropna().unique()))
+            with fc7:
+                # Cidade filtrada pela(s) UF(s) selecionada(s) acima — sem UF selecionada, mostra
+                # todas as cidades. O campo já vem com busca por digitação (padrão do multiselect).
+                opcoes_cidade = sorted(
+                    (agregado[agregado["UF"].isin(f_uf)] if f_uf else agregado)["CIDADE_PRESTADOR"].dropna().unique()
+                )
+                if "f_cidade" in st.session_state:
+                    st.session_state["f_cidade"] = [c for c in st.session_state["f_cidade"] if c in opcoes_cidade]
+                f_cidade = st.multiselect("Cidade", options=opcoes_cidade, key="f_cidade")
+            volume_minimo = st.slider(
+                "Volume mínimo de procedimentos para considerar uma variação relevante",
+                min_value=1, max_value=200, value=30,
             )
-            if "f_cidade" in st.session_state:
-                st.session_state["f_cidade"] = [c for c in st.session_state["f_cidade"] if c in opcoes_cidade]
-            f_cidade = st.multiselect("Cidade", options=opcoes_cidade, key="f_cidade")
-        volume_minimo = st.slider(
-            "Volume mínimo de procedimentos para considerar uma variação relevante",
-            min_value=1, max_value=200, value=30,
-        )
     df_filtrado = aplicar_filtros(
         agregado,
         meses=f_mes or None, ufs=f_uf or None, regioes=f_regiao or None,
@@ -1397,6 +1423,20 @@ elif st.session_state.pagina == "severidade":
             "QP = qtd de procedimentos"
         )
 
+        if not MOSTRAR_FILTROS_TOPO:
+            # Mês/Plano/Especialidade do quadro de Filtros do topo (hoje oculto) — mesma
+            # funcionalidade de antes (afetam df_filtrado/usuarios_filtrado, a página toda),
+            # só que os campos agora aparecem aqui. O valor já foi lido do session_state mais
+            # acima (antes de df_filtrado ser montado); declarar o widget aqui só sincroniza a
+            # próxima interação do usuário, não afeta o resultado já calculado nesta rodada.
+            fmt1, fmt2, fmt3 = st.columns(3)
+            with fmt1:
+                st.multiselect("Mês", options=opcoes_mes_temp, key="temp_filtro_mes")
+            with fmt2:
+                st.multiselect("Plano", options=opcoes_plano_temp, key="temp_filtro_plano")
+            with fmt3:
+                st.multiselect("Especialidade", options=opcoes_especialidade_temp, key="temp_filtro_especialidade")
+
         # Mapa código -> nome do procedimento, dentro dos filtros ativos, para TODOS os
         # procedimentos presentes (1 código = 1 nome, assumindo que cada CD_PROCEDIMENTO tem
         # uma única NOME_PROCEDIMENTO associada — é assim que o resto do painel já trata
@@ -1438,25 +1478,25 @@ elif st.session_state.pagina == "severidade":
             ) = st.columns(6)
             with fc_proc_temp:
                 proc_sel_temp = st.selectbox(
-                    "Filtrar por procedimento", opcoes_proc_temp, key="temp_filtro_procedimento"
+                    "Procedimento", opcoes_proc_temp, key="temp_filtro_procedimento"
                 )
             with fc_prest_temp:
                 prest_sel_temp = st.selectbox(
-                    "Filtrar por prestador", opcoes_prestador_temp, key="temp_filtro_prestador"
+                    "Prestador", opcoes_prestador_temp, key="temp_filtro_prestador"
                 )
             with fc_uf_temp:
-                uf_sel_temp = st.selectbox("Filtrar por UF", opcoes_uf_temp, key="temp_filtro_uf")
+                uf_sel_temp = st.selectbox("UF", opcoes_uf_temp, key="temp_filtro_uf")
             with fc_regiao_temp:
                 regiao_sel_temp = st.selectbox(
-                    "Filtrar por região", opcoes_regiao_temp, key="temp_filtro_regiao"
+                    "Região", opcoes_regiao_temp, key="temp_filtro_regiao"
                 )
             with fc_cidade_temp:
                 cidade_sel_temp = st.selectbox(
-                    "Filtrar por cidade", opcoes_cidade_temp, key="temp_filtro_cidade"
+                    "Cidade", opcoes_cidade_temp, key="temp_filtro_cidade"
                 )
             with fc_cluster_temp:
                 cluster_sel_temp = st.selectbox(
-                    "Filtrar por cluster", opcoes_cluster_temp, key="temp_filtro_cluster"
+                    "Cluster", opcoes_cluster_temp, key="temp_filtro_cluster"
                 )
 
             # Sem nenhum dos 6 filtros desta aba aplicado, o corte comparado tende a se
