@@ -1376,8 +1376,43 @@ elif st.session_state.pagina == "severidade":
         if not nomes_temp:
             st.info("Nenhum dos códigos selecionados apareceu nos filtros atuais.")
         else:
-            df_temp = df_filtrado[df_filtrado["CD_PROCEDIMENTO"].isin(codigos_temp)]
-            usuarios_temp = usuarios_filtrado[usuarios_filtrado["NOME_PROCEDIMENTO"].isin(nomes_temp)]
+            df_temp_base = df_filtrado[df_filtrado["CD_PROCEDIMENTO"].isin(codigos_temp)]
+
+            # ---- filtros extras só desta aba: procedimento e prestador ----
+            opcoes_proc_temp = ["Todos"] + [
+                f"{cod} — {mapa_cod_nome_temp[cod]}" for cod in codigos_temp if cod in mapa_cod_nome_temp
+            ]
+            if "NOME_PRESTADOR" in df_temp_base.columns:
+                opcoes_prestador_temp = ["Todos"] + sorted(
+                    n for n in df_temp_base["NOME_PRESTADOR"].dropna().unique().tolist() if str(n).strip()
+                )
+            else:
+                opcoes_prestador_temp = ["Todos"]
+
+            fc_proc_temp, fc_prest_temp = st.columns(2)
+            with fc_proc_temp:
+                proc_sel_temp = st.selectbox(
+                    "Filtrar por procedimento", opcoes_proc_temp, key="temp_filtro_procedimento"
+                )
+            with fc_prest_temp:
+                prest_sel_temp = st.selectbox(
+                    "Filtrar por prestador", opcoes_prestador_temp, key="temp_filtro_prestador"
+                )
+
+            # Aplica os dois filtros extras (além dos filtros do topo da página, já embutidos em
+            # df_temp_base) por cima da base dos códigos selecionados.
+            df_temp = df_temp_base
+            cod_sel_temp = None
+            if proc_sel_temp != "Todos":
+                cod_sel_temp = int(proc_sel_temp.split(" — ")[0])
+                df_temp = df_temp[df_temp["CD_PROCEDIMENTO"] == cod_sel_temp]
+            if prest_sel_temp != "Todos":
+                df_temp = df_temp[df_temp["NOME_PRESTADOR"] == prest_sel_temp]
+
+            nomes_temp_ativos = df_temp["NOME_PROCEDIMENTO"].unique().tolist()
+            usuarios_temp = usuarios_filtrado[usuarios_filtrado["NOME_PROCEDIMENTO"].isin(nomes_temp_ativos)]
+            if prest_sel_temp != "Todos" and "NOME_PRESTADOR" in usuarios_temp.columns:
+                usuarios_temp = usuarios_temp[usuarios_temp["NOME_PRESTADOR"] == prest_sel_temp]
 
             # ---- métricas gerais (os códigos selecionados somados, sem contar a mesma vida 2x) ----
             _qtd_geral_temp = df_temp["qtd_procedimentos"].sum()
@@ -1395,14 +1430,14 @@ elif st.session_state.pagina == "severidade":
 
             st.divider()
 
-            # ---- ranking por código (com FASE) ----
-            # Calcula sobre TODA a base filtrada (mesmo universo da aba "Ranking de Severidade")
-            # e só depois recorta para os códigos selecionados — o "peso do grupo" abaixo usa
-            # esse total geral como denominador, não a soma só dos códigos selecionados aqui.
-            rank_geral_temp = ranking_severidade(
-                df_filtrado, "NOME_PROCEDIMENTO", top_n=1_000_000, usuarios=usuarios_filtrado
-            )
-            rank_temp = rank_geral_temp[rank_geral_temp["NOME_PROCEDIMENTO"].isin(nomes_temp)].copy()
+            # ---- ranking por código ----
+            # Calculado direto sobre df_temp/usuarios_temp, que já vêm com os filtros do topo da
+            # página + os dois filtros extras desta aba (procedimento e prestador) aplicados —
+            # não usa mais "peso do grupo" (era só usado pelo FASE oficial, que esta aba não
+            # exibe mais), então não precisa mais calcular sobre a base toda antes de recortar.
+            rank_temp = ranking_severidade(
+                df_temp, "NOME_PROCEDIMENTO", top_n=1_000_000, usuarios=usuarios_temp
+            ).copy()
             nome_para_codigo_temp = {v: k for k, v in mapa_cod_nome_temp.items()}
             rank_temp["CD_PROCEDIMENTO"] = rank_temp["NOME_PROCEDIMENTO"].map(nome_para_codigo_temp)
             # Lista de compreensão em vez de concatenar Series com "+": como
@@ -1532,35 +1567,108 @@ elif st.session_state.pagina == "severidade":
             # Streamlit desenha o conteúdo das células em canvas (glide-data-grid), então CSS de
             # fonte/alinhamento não alcança o texto de dentro das células — só assim dá pra
             # garantir fonte menor e valores centralizados de verdade. Classe própria (não é um
-            # <style> genérico), então não mexe em nenhuma outra tabela do painel.
-            _cabecalho_grade_cs = "".join(
-                f"<th>{html.escape(str(c))}</th>" for c in exib_rank_temp.columns
-            )
-            _linhas_grade_cs = "".join(
-                "<tr>" + "".join(f"<td>{html.escape(str(v))}</td>" for v in linha) + "</tr>"
-                for linha in exib_rank_temp.itertuples(index=False, name=None)
-            )
+            # <style> genérico), então não mexe em nenhuma outra tabela do painel — reaproveitada
+            # (via _tabela_html_temp) pela grade de prestadores logo abaixo também.
             st.markdown(
-                f"""
+                """
                 <style>
-                .grade-cs-temp-wrap {{ overflow-x: auto; }}
-                .grade-cs-temp {{ border-collapse: collapse; width: 100%; font-size: 12px; }}
+                .grade-cs-temp-wrap { overflow-x: auto; }
+                .grade-cs-temp { border-collapse: collapse; width: 100%; font-size: 12px; }
                 .grade-cs-temp th, .grade-cs-temp td,
-                .grade-cs-temp th:first-child, .grade-cs-temp td:first-child {{
+                .grade-cs-temp th:first-child, .grade-cs-temp td:first-child {
                     text-align: center !important; padding: 4px 8px; white-space: nowrap;
                     border-bottom: 1px solid rgba(128, 128, 128, 0.3);
-                }}
-                .grade-cs-temp th {{ font-weight: 600; }}
+                }
+                .grade-cs-temp th { font-weight: 600; }
                 </style>
-                <div class="grade-cs-temp-wrap">
-                <table class="grade-cs-temp">
-                <thead><tr>{_cabecalho_grade_cs}</tr></thead>
-                <tbody>{_linhas_grade_cs}</tbody>
-                </table>
-                </div>
                 """,
                 unsafe_allow_html=True,
             )
+
+            def _tabela_html_temp(df_exibicao):
+                cabecalho = "".join(f"<th>{html.escape(str(c))}</th>" for c in df_exibicao.columns)
+                linhas = "".join(
+                    "<tr>" + "".join(f"<td>{html.escape(str(v))}</td>" for v in linha) + "</tr>"
+                    for linha in df_exibicao.itertuples(index=False, name=None)
+                )
+                st.markdown(
+                    f"""
+                    <div class="grade-cs-temp-wrap">
+                    <table class="grade-cs-temp">
+                    <thead><tr>{cabecalho}</tr></thead>
+                    <tbody>{linhas}</tbody>
+                    </table>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+            _tabela_html_temp(exib_rank_temp)
+
+            # ---- prestadores do procedimento selecionado, com FASE/FASP/CS por prestador ----
+            # Só aparece quando um procedimento específico está selecionado no filtro acima (com
+            # "Todos" não faz sentido — a tabela ficaria com todo mundo que atendeu qualquer um
+            # dos 13 códigos misturado). Também não aparece se um prestador específico já estiver
+            # selecionado, porque aí a grade principal acima já é a linha desse único prestador —
+            # mostrar de novo seria redundante.
+            if cod_sel_temp is not None and prest_sel_temp == "Todos":
+                st.divider()
+                nome_proc_sel_temp = mapa_cod_nome_temp.get(cod_sel_temp)
+                st.markdown(f"**Prestadores — {cod_sel_temp} — {nome_proc_sel_temp}**")
+
+                rank_prestador_temp = ranking_severidade(
+                    df_temp, "CD_PRESTADOR", top_n=1_000_000, usuarios=usuarios_temp
+                ).copy()
+                if rank_prestador_temp.empty:
+                    st.info("Nenhum prestador encontrado para esse procedimento nos filtros atuais.")
+                else:
+                    # Mesma taxa nacional já usada na grade principal (constante por
+                    # procedimento) — só muda a base de "vidas em utilização", que aqui é por
+                    # prestador em vez de por corte inteiro.
+                    _qpn_prest, _qun_prest = _base_nacional_temp(nome_proc_sel_temp)
+                    _taxa_nac_prest = (_qpn_prest / _qun_prest) if _qun_prest else float("nan")
+                    rank_prestador_temp["fase_esperado"] = _taxa_nac_prest * rank_prestador_temp["qtd_usuarios"]
+                    rank_prestador_temp["fasp_praticado"] = rank_prestador_temp["qtd_procedimentos"]
+                    rank_prestador_temp["cs"] = (
+                        rank_prestador_temp["fasp_praticado"] / rank_prestador_temp["fase_esperado"]
+                    ) * 10
+                    rank_prestador_temp = rank_prestador_temp.sort_values("cs", ascending=False)
+
+                    _col_nome_prest = (
+                        "NOME_PRESTADOR" if "NOME_PRESTADOR" in rank_prestador_temp.columns else "CD_PRESTADOR"
+                    )
+                    rank_prestador_temp["rotulo_prestador"] = [
+                        str(nome) if pd.notna(nome) and str(nome).strip() else f"Prestador {int(cod)}"
+                        for cod, nome in zip(
+                            rank_prestador_temp["CD_PRESTADOR"], rank_prestador_temp[_col_nome_prest]
+                        )
+                    ]
+
+                    exib_prestador_temp = rank_prestador_temp.copy()
+                    exib_prestador_temp["qtd_procedimentos"] = exib_prestador_temp["qtd_procedimentos"].map(fmt_int)
+                    exib_prestador_temp["qtd_usuarios"] = exib_prestador_temp["qtd_usuarios"].map(fmt_int)
+                    exib_prestador_temp["fase_esperado"] = exib_prestador_temp["fase_esperado"].map(fmt_float2)
+                    exib_prestador_temp["fasp_praticado"] = exib_prestador_temp["fasp_praticado"].map(fmt_int)
+                    exib_prestador_temp["cs"] = exib_prestador_temp["cs"].map(_fmt_cs_temp)
+                    exib_prestador_temp = exib_prestador_temp[[
+                        "rotulo_prestador", "qtd_procedimentos", "qtd_usuarios",
+                        "fase_esperado", "fasp_praticado", "cs",
+                    ]].rename(columns={
+                        "rotulo_prestador": "Prestador",
+                        "qtd_procedimentos": "Qtde proced",
+                        "qtd_usuarios": "Qtd vidas",
+                        "fase_esperado": "FASE",
+                        "fasp_praticado": "FASP",
+                        "cs": "CS",
+                    })
+                    _tabela_html_temp(exib_prestador_temp)
+                    st.caption(
+                        "FASE/FASP/CS aqui usam a mesma taxa nacional do procedimento (constante), "
+                        "só que aplicada às vidas em utilização de cada prestador — mostra se aquele "
+                        "prestador aplica esse procedimento mais ou menos do que a média nacional "
+                        "previa pros pacientes dele. Prestadores com poucas vidas/procedimentos podem "
+                        "ter CS instável — olhe o volume antes de tirar conclusão de um CS isolado."
+                    )
             # ---- gráficos interativos: qtd de procedimentos e qtd de vidas por código ----
             col_qtd_temp, col_vidas_temp = st.columns(2)
             with col_qtd_temp:
