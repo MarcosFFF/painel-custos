@@ -1722,6 +1722,7 @@ elif st.session_state.pagina == "severidade":
                 }
                 .grade-cs-temp th:first-child, .grade-cs-temp td:first-child {
                     text-align: left !important;
+                    max-width: 260px; overflow: hidden; text-overflow: ellipsis;
                 }
                 .grade-cs-temp th { font-weight: 600; }
                 </style>
@@ -1731,10 +1732,16 @@ elif st.session_state.pagina == "severidade":
 
             def _tabela_html_temp(df_exibicao, scroll=False):
                 cabecalho = "".join(f"<th>{html.escape(str(c))}</th>" for c in df_exibicao.columns)
-                linhas = "".join(
-                    "<tr>" + "".join(f"<td>{html.escape(str(v))}</td>" for v in linha) + "</tr>"
-                    for linha in df_exibicao.itertuples(index=False, name=None)
-                )
+                def _linha_html(linha):
+                    celulas = []
+                    for i, v in enumerate(linha):
+                        texto = html.escape(str(v))
+                        # 1ª coluna trunca com "..." (max-width no CSS) — title= mostra o
+                        # texto inteiro ao passar o mouse, já que a célula corta visualmente.
+                        titulo_attr = f' title="{texto}"' if i == 0 else ""
+                        celulas.append(f"<td{titulo_attr}>{texto}</td>")
+                    return "<tr>" + "".join(celulas) + "</tr>"
+                linhas = "".join(_linha_html(linha) for linha in df_exibicao.itertuples(index=False, name=None))
                 classe_wrap = "grade-cs-temp-wrap-scroll" if scroll else "grade-cs-temp-wrap"
                 st.markdown(
                     f"""
@@ -1948,7 +1955,7 @@ elif st.session_state.pagina == "severidade":
                     )
                     fig.add_hline(y=10, line_dash="dash", line_color="#888")
                     fig.update_layout(
-                        height=420, margin=dict(l=10, r=10, t=40, b=10),
+                        height=280, margin=dict(l=10, r=10, t=40, b=10),
                         coloraxis_showscale=False, xaxis_title="Qtd vidas (escala log)", yaxis_title="CS",
                     )
                     st.plotly_chart(fig, use_container_width=True)
@@ -1984,3 +1991,41 @@ elif st.session_state.pagina == "severidade":
                         df_disp_cidade_temp, "rotulo", "Cidades",
                         hover_extra=["UF", "CLUSTER"],
                     )
+
+                # ---- gráficos fixos de Região, UF, Cluster e Especialidade ----
+                # Quando o próprio filtro dessa dimensão está acionado (um valor específico
+                # escolhido, em vez de "Todos"/nenhum selecionado), não faz sentido mostrar a
+                # dispersão dela — o corte já está fixo num único valor. Nesse caso o gráfico
+                # fica em branco (nem título, nem "sem dados"); os outros 3 continuam batendo
+                # normal, já que já vêm calculados em cima de df_temp/usuarios_temp, que já
+                # respeitam esse (e qualquer outro) filtro ativo.
+                regiao_ativo_temp = regiao_sel_temp != "Todos"
+                uf_ativo_temp = uf_sel_temp != "Todos"
+                cluster_ativo_temp = cluster_sel_temp != "Todos"
+                especialidade_ativo_temp = bool(f_especialidade)
+
+                col_disp_regiao, col_disp_uf, col_disp_cluster, col_disp_esp = st.columns(4)
+                with col_disp_regiao:
+                    if not regiao_ativo_temp and "REGIAO" in df_temp.columns:
+                        df_disp_regiao_temp = _severidade_agregada_temp("REGIAO")
+                        if not df_disp_regiao_temp.empty:
+                            df_disp_regiao_temp["rotulo"] = df_disp_regiao_temp["REGIAO"].astype(str)
+                        _grafico_dispersao_cs_temp(df_disp_regiao_temp, "rotulo", "Região")
+                with col_disp_uf:
+                    if not uf_ativo_temp and "UF" in df_temp.columns:
+                        df_disp_uf_temp = _severidade_agregada_temp("UF")
+                        if not df_disp_uf_temp.empty:
+                            df_disp_uf_temp["rotulo"] = df_disp_uf_temp["UF"].astype(str)
+                        _grafico_dispersao_cs_temp(df_disp_uf_temp, "rotulo", "UF")
+                with col_disp_cluster:
+                    if not cluster_ativo_temp and "CLUSTER" in df_temp.columns:
+                        df_disp_cluster_temp = _severidade_agregada_temp("CLUSTER")
+                        if not df_disp_cluster_temp.empty:
+                            df_disp_cluster_temp["rotulo"] = df_disp_cluster_temp["CLUSTER"].astype(str)
+                        _grafico_dispersao_cs_temp(df_disp_cluster_temp, "rotulo", "Cluster")
+                with col_disp_esp:
+                    if not especialidade_ativo_temp and "ESPECIALIDADE" in df_temp.columns:
+                        df_disp_esp_temp = _severidade_agregada_temp("ESPECIALIDADE")
+                        if not df_disp_esp_temp.empty:
+                            df_disp_esp_temp["rotulo"] = df_disp_esp_temp["ESPECIALIDADE"].astype(str)
+                        _grafico_dispersao_cs_temp(df_disp_esp_temp, "rotulo", "Especialidade")
