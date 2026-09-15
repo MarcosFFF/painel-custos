@@ -752,10 +752,20 @@ elif st.session_state.pagina == "severidade":
     # ---------- filtros ----------
     with st.container(border=True):
         st.markdown("**Filtros**")
-        fc1, fc2, fc3 = st.columns(3)
+        fc1, fc2, fc3, fc4, fc5, fc6, fc7 = st.columns(7)
         with fc1:
             f_mes = st.multiselect("Mês", options=sorted(agregado["MES"].dropna().unique(), reverse=True))
+        with fc2:
+            f_regiao = st.multiselect("Região", options=sorted(agregado["REGIAO"].dropna().unique()))
+        with fc3:
+            f_plano = st.multiselect("Plano", options=sorted(agregado["NR_PLANO"].dropna().unique()))
+        with fc4:
             f_uf = st.multiselect("UF", options=sorted(agregado["UF"].dropna().unique()))
+        with fc5:
+            f_especialidade = st.multiselect("Especialidade", options=sorted(agregado["ESPECIALIDADE"].dropna().unique()))
+        with fc6:
+            f_cluster = st.multiselect("Cluster", options=sorted(agregado["CLUSTER"].dropna().unique()))
+        with fc7:
             # Cidade filtrada pela(s) UF(s) selecionada(s) acima — sem UF selecionada, mostra
             # todas as cidades. O campo já vem com busca por digitação (padrão do multiselect).
             opcoes_cidade = sorted(
@@ -764,12 +774,6 @@ elif st.session_state.pagina == "severidade":
             if "f_cidade" in st.session_state:
                 st.session_state["f_cidade"] = [c for c in st.session_state["f_cidade"] if c in opcoes_cidade]
             f_cidade = st.multiselect("Cidade", options=opcoes_cidade, key="f_cidade")
-        with fc2:
-            f_regiao = st.multiselect("Região", options=sorted(agregado["REGIAO"].dropna().unique()))
-            f_especialidade = st.multiselect("Especialidade", options=sorted(agregado["ESPECIALIDADE"].dropna().unique()))
-        with fc3:
-            f_plano = st.multiselect("Plano", options=sorted(agregado["NR_PLANO"].dropna().unique()))
-            f_cluster = st.multiselect("Cluster", options=sorted(agregado["CLUSTER"].dropna().unique()))
         volume_minimo = st.slider(
             "Volume mínimo de procedimentos para considerar uma variação relevante",
             min_value=1, max_value=200, value=30,
