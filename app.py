@@ -690,6 +690,10 @@ if st.session_state.pagina == "projecao":
 # PÁGINA: SEVERIDADE
 # ============================================================
 elif st.session_state.pagina == "severidade":
+    # Abas oficiais antigas (Ranking/Evolução mensal/Ofensores/Desvios de Solicitações) e o
+    # bloco de Informações Técnicas que as explica ficam ocultos (não apagados) — troque pra
+    # True pra reexibir os dois juntos.
+    MOSTRAR_ABAS_OFICIAIS_EXTRAS = False
     col_titulo_sev, col_atualizar_sev = st.columns([5, 1])
     with col_titulo_sev:
         st.subheader("🕵️ Severidade")
@@ -697,52 +701,53 @@ elif st.session_state.pagina == "severidade":
         if st.button("🔄 Recarregar", use_container_width=True):
             carregar_base_severidade.clear()
             st.rerun()
-    with st.expander("ℹ️ Informações Técnicas - Aba Severidade"):
-        st.markdown(
-            "A aba Severidade mede padrão de utilização — não custo.\n\n"
-            "**Objetivo:** identificar onde a utilização foge do esperado (especialidade, região, "
-            "procedimento ou prestador).\n\n"
-            "**A pergunta que a aba responde:** Esse grupo está usando mais do que deveria, e isso é "
-            "relevante em volume ou é ruído estatístico de uma amostra pequena?\n\n"
-            "---\n\n"
-            "**FASE (Fator de Severidade):** é o produto de três componentes, calculado para qualquer "
-            "grupo (uma especialidade, uma UF, um procedimento, um prestador...):\n\n"
-            "**FASE = Frequência × Intensidade × Peso do grupo**\n\n"
-            "- **Frequência:** Procedimentos ÷ Vidas *(quantos procedimentos por paciente distinto)*\n"
-            "- **Intensidade:** Procedimentos ÷ Uso *(quantos procedimentos reais acontecem para cada "
-            "unidade de 'uso' (peso do procedimento) consumida)*\n"
-            "- **Peso do grupo:** (Procedimentos do grupo ÷ Procedimentos totais) × 100 *(relevância do "
-            "grupo dentro da base — filtra ruído de amostra pequena)*\n\n"
-            "FASE só faz sentido em ranking comparativo: quanto maior, mais severo em relação aos outros "
-            "grupos do mesmo filtro (um grupo minúsculo não aparece como severo só por ter uma métrica "
-            "bruta alta).\n\n"
-            "Um procedimento caro não é, por si só, sinal de má utilização — e um procedimento barato "
-            "usado em excesso pode ser um problema maior.\n\n"
-            "---\n\n"
-            "A lista de prestadores exibida respeita os filtros ativos (UF, especialidade, cidade). Isso "
-            "evita comparar um prestador com uma \"média\" que já foi recortada artificialmente pelo "
-            "filtro.\n\n"
-            "Todas as comparações mês a mês (comparação mensal, resumo, alerta de qtde+valor) usam o "
-            "mesmo período do mês nos dois lados: se o mês mais recente só tem dados até o dia 07, o mês "
-            "anterior entra na conta também só até o dia 07 — para não comparar um mês fechado inteiro "
-            "com um mês ainda em andamento.\n\n"
-            "---\n\n"
-            "**Volume mínimo de procedimentos para considerar uma variação relevante.**\n\n"
-            "Padrão: 30\n"
-            "Evita que um grupo com pouquíssimos procedimentos apareça com uma variação % gigante.\n"
-            "Ele afeta especificamente dois pontos do painel:\n\n"
-            "- **Aba Ofensores**\n"
-            "- **Aba Resumo**\n\n"
-            "**Não** afeta o Ranking de Severidade (FASE)\n\n"
-            "Se colocar 1: Risco: ruído estatístico.\n"
-            "**Com 30 (padrão):** um equilíbrio — filtra o ruído de grupos muito pequenos, mas ainda "
-            "inclui volume moderado.\n"
-            "**Com 100:** Fica mais rigoroso. Reduz falso positivo, mas pode esconder um "
-            "desvio real que ainda está com volume moderado.\n"
-            "**Com 200:** Bem restritivo — só os maiores grupos aparecem. Bom para focar nos "
-            "pode deixar passar despercebido um grupo médio que está crescendo rápido mas ainda não bateu esse "
-            "patamar de volume."
-        )
+    if MOSTRAR_ABAS_OFICIAIS_EXTRAS:
+        with st.expander("ℹ️ Informações Técnicas - Aba Severidade"):
+            st.markdown(
+                "A aba Severidade mede padrão de utilização — não custo.\n\n"
+                "**Objetivo:** identificar onde a utilização foge do esperado (especialidade, região, "
+                "procedimento ou prestador).\n\n"
+                "**A pergunta que a aba responde:** Esse grupo está usando mais do que deveria, e isso é "
+                "relevante em volume ou é ruído estatístico de uma amostra pequena?\n\n"
+                "---\n\n"
+                "**FASE (Fator de Severidade):** é o produto de três componentes, calculado para qualquer "
+                "grupo (uma especialidade, uma UF, um procedimento, um prestador...):\n\n"
+                "**FASE = Frequência × Intensidade × Peso do grupo**\n\n"
+                "- **Frequência:** Procedimentos ÷ Vidas *(quantos procedimentos por paciente distinto)*\n"
+                "- **Intensidade:** Procedimentos ÷ Uso *(quantos procedimentos reais acontecem para cada "
+                "unidade de 'uso' (peso do procedimento) consumida)*\n"
+                "- **Peso do grupo:** (Procedimentos do grupo ÷ Procedimentos totais) × 100 *(relevância do "
+                "grupo dentro da base — filtra ruído de amostra pequena)*\n\n"
+                "FASE só faz sentido em ranking comparativo: quanto maior, mais severo em relação aos outros "
+                "grupos do mesmo filtro (um grupo minúsculo não aparece como severo só por ter uma métrica "
+                "bruta alta).\n\n"
+                "Um procedimento caro não é, por si só, sinal de má utilização — e um procedimento barato "
+                "usado em excesso pode ser um problema maior.\n\n"
+                "---\n\n"
+                "A lista de prestadores exibida respeita os filtros ativos (UF, especialidade, cidade). Isso "
+                "evita comparar um prestador com uma \"média\" que já foi recortada artificialmente pelo "
+                "filtro.\n\n"
+                "Todas as comparações mês a mês (comparação mensal, resumo, alerta de qtde+valor) usam o "
+                "mesmo período do mês nos dois lados: se o mês mais recente só tem dados até o dia 07, o mês "
+                "anterior entra na conta também só até o dia 07 — para não comparar um mês fechado inteiro "
+                "com um mês ainda em andamento.\n\n"
+                "---\n\n"
+                "**Volume mínimo de procedimentos para considerar uma variação relevante.**\n\n"
+                "Padrão: 30\n"
+                "Evita que um grupo com pouquíssimos procedimentos apareça com uma variação % gigante.\n"
+                "Ele afeta especificamente dois pontos do painel:\n\n"
+                "- **Aba Ofensores**\n"
+                "- **Aba Resumo**\n\n"
+                "**Não** afeta o Ranking de Severidade (FASE)\n\n"
+                "Se colocar 1: Risco: ruído estatístico.\n"
+                "**Com 30 (padrão):** um equilíbrio — filtra o ruído de grupos muito pequenos, mas ainda "
+                "inclui volume moderado.\n"
+                "**Com 100:** Fica mais rigoroso. Reduz falso positivo, mas pode esconder um "
+                "desvio real que ainda está com volume moderado.\n"
+                "**Com 200:** Bem restritivo — só os maiores grupos aparecem. Bom para focar nos "
+                "pode deixar passar despercebido um grupo médio que está crescendo rápido mas ainda não bateu esse "
+                "patamar de volume."
+            )
     agregado, base_usuarios, aviso_carga = carregar_base_severidade(".")
     if agregado is None:
         st.error(f"Não consegui carregar os dados de severidade: {aviso_carga}")
@@ -803,7 +808,6 @@ elif st.session_state.pagina == "severidade":
     m4.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
     m5.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
     st.divider()
-    MOSTRAR_ABAS_OFICIAIS_EXTRAS = False  # abas oficiais antigas ficam ocultas (não apagadas) — troque pra True pra reexibi-las
     _labels_abas_temp = ["Coeficiente de Severidade", "Resumo"]
     if MOSTRAR_ABAS_OFICIAIS_EXTRAS:
         _labels_abas_temp += ["Ranking de Severidade", "Evolução mensal", "Ofensores", "Desvios de Solicitações"]
