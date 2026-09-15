@@ -1346,7 +1346,8 @@ elif st.session_state.pagina == "severidade":
             f"Códigos: {', '.join(str(c) for c in codigos_temp)}. Aba temporária, só para consulta "
             "pontual desses códigos — respeita os filtros ativos no topo da página (mês, UF, "
             "especialidade etc.), igual às demais abas. **Métricas calculadas só aqui, com regra "
-            "própria desta aba** (FASE esperado / FASP praticado / CS) — não é o FASE oficial das "
+            "própria desta aba** (FASE - Fator de Severidade Esperado / FASP - Fator de "
+            "Severidade Praticado / CS - Coeficiente de Severidade) — não é o FASE oficial das "
             "outras abas (Ranking de Severidade, Ofensores etc.), que continua usando "
             "Frequência × Intensidade × Peso do grupo, sem alteração."
         )
@@ -1469,9 +1470,6 @@ elif st.session_state.pagina == "severidade":
                     return "—"
                 return f"({fmt_int(qpn)} ÷ {fmt_int(qun)}) × {fmt_int(qu_corte)}"
 
-            def _calculo_fasp_temp(qp_corte):
-                return f"{fmt_int(qp_corte)} (observado direto no corte)"
-
             def _calculo_cs_temp(fasp, fase):
                 if not fase or pd.isna(fase):
                     return "—"
@@ -1483,7 +1481,9 @@ elif st.session_state.pagina == "severidade":
                     rank_temp["qtd_procedimentos_nacional"], rank_temp["qtd_vidas_nacional"], rank_temp["qtd_usuarios"]
                 )
             ]
-            rank_temp["calculo_fasp"] = [_calculo_fasp_temp(qp) for qp in rank_temp["fasp_praticado"]]
+            # Sem coluna "Cálculo do FASP" — o valor do FASP É o número observado, direto, sem
+            # conta nenhuma (já dito uma vez na legenda), então não tem "continha" pra mostrar
+            # de novo em toda linha — a coluna "FASP" abaixo já mostra o valor.
             rank_temp["calculo_cs"] = [
                 _calculo_cs_temp(fasp, fase)
                 for fasp, fase in zip(rank_temp["fasp_praticado"], rank_temp["fase_esperado"])
@@ -1505,7 +1505,7 @@ elif st.session_state.pagina == "severidade":
                 "rotulo", "qtd_procedimentos", "qtd_usuarios", "quantidade_uso",
                 "uso_por_procedimento", "uso_por_vida",
                 "calculo_fase_esperado", "fase_esperado",
-                "calculo_fasp", "fasp_praticado",
+                "fasp_praticado",
                 "calculo_cs", "cs",
             ]].rename(columns={
                 "rotulo": "Procedimento",
@@ -1514,14 +1514,35 @@ elif st.session_state.pagina == "severidade":
                 "quantidade_uso": "Soma de uso",
                 "uso_por_procedimento": "Uso/procedimento",
                 "uso_por_vida": "Uso/vida",
-                "calculo_fase_esperado": "Cálculo do FASE (esperado)",
-                "fase_esperado": "FASE (esperado)",
-                "calculo_fasp": "Cálculo do FASP (praticado)",
-                "fasp_praticado": "FASP (praticado)",
+                "calculo_fase_esperado": "Cálculo do FASE",
+                "fase_esperado": "FASE",
+                "fasp_praticado": "FASP",
                 "calculo_cs": "Cálculo do CS",
-                "cs": "CS (Coeficiente de Severidade)",
+                "cs": "CS",
             })
-            st.dataframe(exib_rank_temp, hide_index=True, use_container_width=True)
+            # Fonte menor só nesta grade (não mexe nas outras abas) — marcador invisível +
+            # seletor CSS ":has()" pra achar só o quadro de dados que vem logo a seguir, em vez
+            # de um <style> genérico que encolheria todas as tabelas do painel.
+            st.markdown('<div id="marcador-grade-cs"></div>', unsafe_allow_html=True)
+            st.markdown(
+                """
+                <style>
+                div:has(> #marcador-grade-cs) + div [data-testid="stDataFrame"] * {
+                    font-size: 12px !important;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.dataframe(
+                exib_rank_temp,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Cálculo do FASE": st.column_config.TextColumn(width="small"),
+                    "Cálculo do CS": st.column_config.TextColumn(width="small"),
+                },
+            )
             st.caption(
                 "**FASE (esperado)** = quanto este corte deveria ter de procedimentos se seguisse "
                 "a taxa nacional desse procedimento (qtd procedimentos ÷ qtd vidas, sobre a base "
