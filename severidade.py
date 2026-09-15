@@ -617,6 +617,29 @@ def _dia_corte_mes(df, mes):
     if dias.empty:
         return None
     return int(dias.max())
+def _dia_corte_por_grupo(df, mes, coluna):
+    """
+    Como _dia_corte_mes, mas um valor POR GRUPO de `coluna` (ex.: um valor por
+    especialidade), em vez de um único valor pra base toda.
+
+    Por que: se o corte for calculado uma vez só pra base inteira e aplicado a
+    todo mundo, um grupo cujo mês atual ainda está mais incompleto que a média
+    (ex.: uma especialidade com solicitações demorando mais pra entrar na base,
+    por auditoria) acaba comparado, no mês anterior, com uma janela de dias
+    MAIOR do que a janela real que ele tem no mês atual — o resultado é uma
+    "queda" artificial (mês anterior conta mais dias, mês atual conta menos).
+    Cortando por grupo, cada um é comparado só até o SEU PRÓPRIO último dia
+    com dado no mês atual, sem essa distorção.
+
+    Retorna uma Series indexada por `coluna` com o dia de corte de cada grupo
+    (grupos que não aparecem no mês atual simplesmente não entram na Series).
+    """
+    if "DIA" not in df.columns or coluna not in df.columns:
+        return pd.Series(dtype="float64")
+    sub = df.loc[df["MES"] == mes, [coluna, "DIA"]].dropna()
+    if sub.empty:
+        return pd.Series(dtype="float64")
+    return sub.groupby(coluna, observed=True)["DIA"].max()
 @st.cache_data(show_spinner=False)
 def comparacao_mensal(df, coluna, volume_minimo=30, usuarios=None):
     """Compara o último mês vs o anterior por coluna (volume e uso), respeitando volume mínimo.
@@ -673,10 +696,14 @@ def _variacao_pct_uso(df, coluna, volume_minimo, top_n, usuarios=None):
     uso > 0 no mês anterior — evita que um grupo minúsculo mostre uma
     variação % gigante e sem significado.
 
-    Comparação por MESMO período: o mês anterior só entra com os dias até o
-    maior DIA presente no mês atual (ex.: mês atual só tem dados até dia 07 ->
-    mês anterior também entra só até o dia 07), em vez de mês fechado inteiro
-    vs mês em andamento.
+    Comparação por MESMO período, calculada POR GRUPO (ver _dia_corte_por_grupo):
+    cada grupo de `coluna` só entra no mês anterior com os dias até o SEU
+    PRÓPRIO maior DIA presente no mês atual — não um único corte igual pra
+    todos os grupos. Isso evita que um grupo cujo mês atual está mais
+    incompleto que a média (ex.: especialidade com solicitação/auditoria mais
+    lenta) seja comparado com uma janela do mês anterior mais longa do que a
+    dele mesmo, o que gera uma "queda" que na verdade é só um mês atual com
+    menos dias de dado ainda.
 
     Também traz qtd_usuarios_atual/anterior (vidas — pacientes distintos de
     verdade, calculados a partir de `usuarios`, sem contar o mesmo paciente
@@ -684,11 +711,12 @@ def _variacao_pct_uso(df, coluna, volume_minimo, top_n, usuarios=None):
     """
     meses_ord = sorted(df["MES"].dropna().unique())
     ultimo, penult = meses_ord[-1], meses_ord[-2]
-    dia_corte = _dia_corte_mes(df, ultimo)
+    dia_corte_grupo = _dia_corte_por_grupo(df, ultimo, coluna)
     df_ultimo = df[df["MES"] == ultimo]
     df_penult = df[df["MES"] == penult]
-    if dia_corte is not None:
-        df_penult = df_penult[df_penult["DIA"] <= dia_corte]
+    if not dia_corte_grupo.empty:
+        corte_penult = df_penult[coluna].map(dia_corte_grupo)
+        df_penult = df_penult[df_penult["DIA"].notna() & corte_penult.notna() & (df_penult["DIA"] <= corte_penult)]
     atual = df_ultimo.groupby(coluna, dropna=False, observed=True).agg(
         qtd_procedimentos_atual=("qtd_procedimentos", "sum"),
         soma_uso_atual=("soma_uso", "sum"),
@@ -700,8 +728,11 @@ def _variacao_pct_uso(df, coluna, volume_minimo, top_n, usuarios=None):
     if usuarios is not None:
         usu_ultimo = usuarios[usuarios["MES"] == ultimo]
         usu_penult = usuarios[usuarios["MES"] == penult]
-        if dia_corte is not None and "DIA" in usuarios.columns:
-            usu_penult = usu_penult[usu_penult["DIA"] <= dia_corte]
+        if not dia_corte_grupo.empty and "DIA" in usuarios.columns and coluna in usuarios.columns:
+            corte_usu_penult = usu_penult[coluna].map(dia_corte_grupo)
+            usu_penult = usu_penult[
+                usu_penult["DIA"].notna() & corte_usu_penult.notna() & (usu_penult["DIA"] <= corte_usu_penult)
+            ]
         vidas_atual = vidas_por(usu_ultimo, coluna).rename(columns={"qtd_usuarios": "qtd_usuarios_atual"})
         vidas_anterior = vidas_por(usu_penult, coluna).rename(columns={"qtd_usuarios": "qtd_usuarios_anterior"})
         atual = atual.merge(vidas_atual, on=coluna, how="left")
@@ -737,15 +768,15 @@ def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, t
     que causaram essa subida; 20 prestadores que mais subiram, com
     cidade/UF/cluster/especialidade e os procedimentos responsáveis.
 
-    Comparação por MESMO período (ver _variacao_pct_uso): se o mês mais
-    recente só tem dados até um certo dia do mês, o mês anterior usado na
-    comparação também é cortado nesse mesmo dia.
+    Comparação por MESMO período, calculada POR GRUPO (ver _variacao_pct_uso
+    / _dia_corte_por_grupo): cada especialidade/UF/prestador é cortado no mês
+    anterior até o SEU PRÓPRIO último dia com dado no mês atual — não um único
+    dia de corte igual pra base toda.
     """
     if "MES" not in df.columns or df["MES"].dropna().nunique() < 2:
         return None, "Dados insuficientes para comparação (necessário ≥ 2 meses)."
     meses_ord = sorted(df["MES"].dropna().unique())
     ultimo, penult = meses_ord[-1], meses_ord[-2]
-    dia_corte = _dia_corte_mes(df, ultimo)
 
     especialidades = _variacao_pct_uso(df, "ESPECIALIDADE", volume_minimo, top_especialidades, usuarios=usuarios)
     detalhes_especialidade = {
@@ -787,7 +818,7 @@ def resumo_comparativo(df, volume_minimo=30, top_especialidades=5, top_ufs=10, t
         "ufs": ufs, "detalhes_uf": detalhes_uf,
         "prestadores": prestadores, "detalhes_prestador": detalhes_prestador,
     }
-    periodo_msg = f", ambos até o dia {dia_corte:02d}" if dia_corte is not None else ""
+    periodo_msg = ", cada grupo comparado até o seu próprio último dia com dado no mês atual"
     msg = (f"Comparando {ultimo} vs {penult}{periodo_msg}, por variação % de uso. "
            f"Só entram grupos com volume ≥ {volume_minimo} procedimentos em ambos os meses.")
     return resultado, msg
