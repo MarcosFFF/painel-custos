@@ -727,13 +727,20 @@ elif st.session_state.pagina == "severidade":
     # bloco de Informações Técnicas que as explica ficam ocultos (não apagados) — troque pra
     # True pra reexibir os dois juntos.
     MOSTRAR_ABAS_OFICIAIS_EXTRAS = False
+    # Aba "Coeficiente de Severidade" (cobre TODOS os procedimentos, sem a lista fixa de 13
+    # códigos) fica oculta, não apagada — troque pra True pra reexibi-la. Com ela oculta, a
+    # aba "🧪 Temp: procedimentos selecionados" (Temporária) passa a ser a primeira e ganha
+    # os filtros de Mês/Plano/Especialidade que antes só apareciam na Coeficiente de
+    # Severidade (ver MOSTRAR_FILTROS_TOPO logo abaixo).
+    MOSTRAR_ABA_CS_TEMP = False
     # Quadro "Filtros" do topo da página (Mês/Região/Plano/UF/Especialidade/Cluster/Cidade +
     # volume mínimo) fica oculto — Mês/Plano/Especialidade continuam funcionando do mesmo
     # jeito (mesmo efeito sobre df_filtrado/usuarios_filtrado), só que os campos aparecem
-    # agora logo abaixo do título "Coeficiente de Severidade"; Região/UF/Cluster/Cidade da
-    # página ficam sem filtro próprio (já têm equivalente dentro da aba Coeficiente de
-    # Severidade) e o volume mínimo volta pro padrão antigo (30). Troque pra True pra
-    # restaurar o quadro original (os 7 campos + slider) do jeito que era.
+    # agora dentro da aba "🧪 Temp: procedimentos selecionados" (Temporária); Região/UF/
+    # Cluster/Cidade da página ficam sem filtro próprio (já têm equivalente dentro das abas
+    # de Coeficiente de Severidade/Temporária) e o volume mínimo volta pro padrão antigo
+    # (30). Troque pra True pra restaurar o quadro original (os 7 campos + slider) do jeito
+    # que era.
     MOSTRAR_FILTROS_TOPO = False
     col_titulo_sev, col_atualizar_sev = st.columns([5, 1])
     with col_titulo_sev:
@@ -892,19 +899,27 @@ elif st.session_state.pagina == "severidade":
     m4.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
     m5.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
     st.divider()
+    # Sequência das abas: Temporária, Resumo, Projeção — "Coeficiente de Severidade" fica
+    # fora da lista (oculta) a menos que MOSTRAR_ABA_CS_TEMP seja religado.
     _labels_abas_temp = [
-        "Coeficiente de Severidade", "Resumo", "🧪 Temp: procedimentos selecionados",
-        "📍 Projeção de Credenciamento",
+        "🧪 Temp: procedimentos selecionados", "Resumo", "📍 Projeção de Credenciamento",
     ]
+    if MOSTRAR_ABA_CS_TEMP:
+        _labels_abas_temp.append("Coeficiente de Severidade")
     if MOSTRAR_ABAS_OFICIAIS_EXTRAS:
         _labels_abas_temp += ["Ranking de Severidade", "Evolução mensal", "Ofensores", "Desvios de Solicitações"]
     _abas_criadas_temp = st.tabs(_labels_abas_temp)
-    tab_temp, tab_resumo, tab_temp_legado, tab_credenciamento = (
-        _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2], _abas_criadas_temp[3]
+    tab_temp_legado, tab_resumo, tab_credenciamento = (
+        _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2]
     )
+    _prox_idx_aba_temp = 3
+    if MOSTRAR_ABA_CS_TEMP:
+        tab_temp = _abas_criadas_temp[_prox_idx_aba_temp]
+        _prox_idx_aba_temp += 1
     if MOSTRAR_ABAS_OFICIAIS_EXTRAS:
         tab_rank, tab_evolucao, tab_ofensores, tab_desvios = (
-            _abas_criadas_temp[4], _abas_criadas_temp[5], _abas_criadas_temp[6], _abas_criadas_temp[7]
+            _abas_criadas_temp[_prox_idx_aba_temp], _abas_criadas_temp[_prox_idx_aba_temp + 1],
+            _abas_criadas_temp[_prox_idx_aba_temp + 2], _abas_criadas_temp[_prox_idx_aba_temp + 3],
         )
     # Lista de códigos original da aba temporária, de antes dela ter virado "Coeficiente de
     # Severidade" (que hoje cobre todos os procedimentos) — volta como uma aba própria, sem
@@ -917,9 +932,10 @@ elif st.session_state.pagina == "severidade":
     # procedimentos, sufixo pra deixar as keys dos widgets únicas por aba) — o corpo da aba
     # (logo abaixo) roda uma vez por item desta lista, reaproveitando o mesmo código pras duas.
     _config_abas_cs_temp = [
-        (tab_temp, "Coeficiente de Severidade", None, ""),
         (tab_temp_legado, "🧪 Temp: procedimentos selecionados", CODIGOS_TEMP_LEGADO, "_legado"),
     ]
+    if MOSTRAR_ABA_CS_TEMP:
+        _config_abas_cs_temp.append((tab_temp, "Coeficiente de Severidade", None, ""))
     if MOSTRAR_ABAS_OFICIAIS_EXTRAS:
         # ---------- RANKING DE SEVERIDADE (FASE — só gráficos, sem tabelas) ----------
         JANELA_5_BARRAS = 300  # altura fixa (px) que mostra ~5 barras; o resto rola dentro do quadro
@@ -2014,14 +2030,16 @@ elif st.session_state.pagina == "severidade":
                 "comparado se aproxima da própria base nacional e o CS fica pouco informativo."
             )
 
-            if not MOSTRAR_FILTROS_TOPO and _codigos_restritos_temp is None:
+            if not MOSTRAR_FILTROS_TOPO and _sufixo_aba_temp == "_legado":
                 # Mês/Plano/Especialidade do quadro de Filtros do topo (hoje oculto) — mesma
                 # funcionalidade de antes (afetam df_filtrado/usuarios_filtrado, a página toda),
-                # só que os campos agora aparecem aqui. O valor já foi lido do session_state mais
-                # acima (antes de df_filtrado ser montado); declarar o widget aqui só sincroniza a
+                # só que os campos agora aparecem aqui, dentro da aba "🧪 Temp: procedimentos
+                # selecionados" (Temporária). O valor já foi lido do session_state mais acima
+                # (antes de df_filtrado ser montado); declarar o widget aqui só sincroniza a
                 # próxima interação do usuário, não afeta o resultado já calculado nesta rodada.
-                # Só desenhado na aba sem restrição de código (evita campo duplicado — Mês/Plano/
-                # Especialidade são únicos pra página toda, não por aba).
+                # Desenhado só na aba Temporária (identificada pelo sufixo "_legado") — evita
+                # campo duplicado, já que Mês/Plano/Especialidade são únicos pra página toda,
+                # não por aba (mesmo se "Coeficiente de Severidade" for religada ao lado dela).
                 fmt1, fmt2, fmt3 = st.columns(3)
                 with fmt1:
                     st.multiselect("Mês", options=opcoes_mes_temp, key="temp_filtro_mes")
