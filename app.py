@@ -1693,6 +1693,25 @@ elif st.session_state.pagina == "severidade":
                 rank_temp["qp_praticado"] = rank_temp["qtd_procedimentos"]
                 rank_temp["cs"] = (rank_temp["qp_praticado"] / rank_temp["fase_esperado"]) * 10
 
+                # ---- CS Geral: mesmo cálculo, mas sem os filtros de Procedimento/Prestador/
+                # UF/Região/Cidade/Cluster desta aba (só com os filtros de página — Mês/Plano/
+                # Especialidade/Período) — referência fixa pra comparar ao lado do CS já
+                # filtrado, sem precisar tirar o filtro pra ver o "antes".
+                usuarios_geral_temp = usuarios_filtrado[usuarios_filtrado["NOME_PROCEDIMENTO"].isin(nomes_temp)]
+                rank_geral_temp = ranking_severidade(
+                    df_temp_base, "NOME_PROCEDIMENTO", top_n=1_000_000, usuarios=usuarios_geral_temp
+                ).copy()
+                rank_geral_temp = rank_geral_temp.merge(nacional_temp_flat, on="NOME_PROCEDIMENTO", how="left")
+                rank_geral_temp["fase_esperado_geral"] = (
+                    rank_geral_temp["qtd_procedimentos_nacional"] / rank_geral_temp["qtd_vidas_nacional"]
+                ) * rank_geral_temp["qtd_usuarios"]
+                rank_geral_temp["cs_geral"] = (
+                    rank_geral_temp["qtd_procedimentos"] / rank_geral_temp["fase_esperado_geral"]
+                ) * 10
+                rank_temp = rank_temp.merge(
+                    rank_geral_temp[["NOME_PROCEDIMENTO", "cs_geral"]], on="NOME_PROCEDIMENTO", how="left"
+                )
+
                 # ---- coluna com o CS formatado com 3 casas decimais (padrão fmt_float2 usa só 2) ----
                 def _fmt_cs_temp(v):
                     if v is None or (isinstance(v, float) and pd.isna(v)):
@@ -1737,6 +1756,10 @@ elif st.session_state.pagina == "severidade":
                 exib_rank_temp["uso_por_vida"] = exib_rank_temp["uso_por_vida"].map(fmt_float2)
                 exib_rank_temp["fase_esperado"] = exib_rank_temp["fase_esperado"].map(fmt_float2)
                 exib_rank_temp["qp_praticado"] = exib_rank_temp["qp_praticado"].map(fmt_int)
+                # CS Geral é sempre a referência "sem os filtros desta aba" — mostra o valor de
+                # verdade mesmo quando nenhum_filtro_temp é True (nesse caso ele só coincide
+                # com o CS ao lado, já que os dois corte ficam iguais).
+                exib_rank_temp["cs_geral"] = exib_rank_temp["cs_geral"].map(_fmt_cs_temp)
                 if nenhum_filtro_temp:
                     exib_rank_temp["cs"] = "—"
                     exib_rank_temp["calculo_cs"] = "—"
@@ -1747,7 +1770,7 @@ elif st.session_state.pagina == "severidade":
                     "uso_por_procedimento", "uso_por_vida",
                     "calculo_fase_esperado", "fase_esperado",
                     "calculo_qp", "qp_praticado",
-                    "calculo_cs", "cs",
+                    "calculo_cs", "cs", "cs_geral",
                 ]].rename(columns={
                     "rotulo": "Procedimento",
                     "qtd_procedimentos": "Qtde proced",
@@ -1761,6 +1784,7 @@ elif st.session_state.pagina == "severidade":
                     "qp_praticado": "QP",
                     "calculo_cs": "Cálculo do CS",
                     "cs": "CS",
+                    "cs_geral": "CS Geral",
                 })
                 # Grade montada como tabela HTML própria, em vez de st.dataframe: o widget padrão do
                 # Streamlit desenha o conteúdo das células em canvas (glide-data-grid), então CSS de
@@ -1854,6 +1878,24 @@ elif st.session_state.pagina == "severidade":
                             )
                         ]
 
+                        # ---- Cidade/UF/Cluster de cada prestador (moda — mesmo critério do hover
+                        # dos gráficos de dispersão) — só informativo, não entra em nenhuma conta. ----
+                        _colunas_info_prest_temp = [
+                            c for c in ("CIDADE_PRESTADOR", "UF", "CLUSTER") if c in df_temp.columns
+                        ]
+                        if _colunas_info_prest_temp:
+                            _info_extra_prest_temp = df_temp.groupby("CD_PRESTADOR", observed=True).agg(**{
+                                c: (c, lambda x: x.mode().iloc[0] if not x.mode().empty else "—")
+                                for c in _colunas_info_prest_temp
+                            }).reset_index()
+                            rank_prestador_temp = rank_prestador_temp.merge(
+                                _info_extra_prest_temp, on="CD_PRESTADOR", how="left"
+                            )
+                        for c in ("CIDADE_PRESTADOR", "UF", "CLUSTER"):
+                            if c not in rank_prestador_temp.columns:
+                                rank_prestador_temp[c] = "—"
+                            rank_prestador_temp[c] = rank_prestador_temp[c].fillna("—")
+
                         # Mesmas "continhas" da grade principal, agora reaproveitadas aqui — cada
                         # prestador funciona como um "corte" à parte, mas comparado com a mesma taxa
                         # nacional desse procedimento.
@@ -1881,13 +1923,16 @@ elif st.session_state.pagina == "severidade":
                         exib_prestador_temp["qp_praticado"] = exib_prestador_temp["qp_praticado"].map(fmt_int)
                         exib_prestador_temp["cs"] = exib_prestador_temp["cs"].map(_fmt_cs_temp)
                         exib_prestador_temp = exib_prestador_temp[[
-                            "rotulo_prestador", "qtd_procedimentos", "qtd_usuarios", "quantidade_uso",
+                            "rotulo_prestador", "CIDADE_PRESTADOR", "UF", "CLUSTER",
+                            "qtd_procedimentos", "qtd_usuarios", "quantidade_uso",
                             "uso_por_procedimento", "uso_por_vida",
                             "calculo_fase_esperado", "fase_esperado",
                             "calculo_qp", "qp_praticado",
                             "calculo_cs", "cs",
                         ]].rename(columns={
                             "rotulo_prestador": "Prestador",
+                            "CIDADE_PRESTADOR": "Cidade",
+                            "CLUSTER": "Cluster",
                             "qtd_procedimentos": "Qtde proced",
                             "qtd_usuarios": "Qtd vidas",
                             "quantidade_uso": "Soma de uso",
