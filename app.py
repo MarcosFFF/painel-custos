@@ -1549,6 +1549,26 @@ elif st.session_state.pagina == "severidade":
                     st.markdown(
                         f"📍 **{_cidade_ativa_temp} / {_uf_ativa_temp}** · Cluster **{_cluster_ativo_temp}**"
                     )
+                    # ---- aviso de escopo: CMP/menor valor/CS aqui só enxergam o que estiver
+                    # dentro dos filtros de página ativos agora (Mês/Plano/Especialidade +
+                    # Período do mês) — se algum estiver restringindo, os números batem com
+                    # esse recorte, não com a base inteira. ----
+                    _filtros_ativos_temp = []
+                    if f_mes:
+                        _filtros_ativos_temp.append(f"Mês: {', '.join(f_mes)}")
+                    if f_plano:
+                        _filtros_ativos_temp.append(f"Plano: {', '.join(str(p) for p in f_plano)}")
+                    if f_especialidade:
+                        _filtros_ativos_temp.append(f"Especialidade: {', '.join(f_especialidade)}")
+                    if modo_periodo_temp == "Escolher dias":
+                        _filtros_ativos_temp.append(f"Dias: {dia_ini_temp} a {dia_fim_temp}")
+                    if _filtros_ativos_temp:
+                        st.warning(
+                            "⚠️ Filtro(s) de página ativo(s) — CMP, menor valor e CS abaixo refletem "
+                            "só esse recorte, não a base inteira: " + " · ".join(_filtros_ativos_temp)
+                        )
+                    else:
+                        st.caption("Nenhum filtro de página ativo (Mês/Plano/Especialidade/Dias) — usando a base inteira.")
 
                     # ---- taxa nacional por procedimento (mesma referência do FASE usado no
                     # resto do painel — reaproveita calcular_media_nacional(), não mexe em
@@ -1616,12 +1636,20 @@ elif st.session_state.pagina == "severidade":
                             # melhor caso real observado, não uma média/mediana). Continua vindo do
                             # Cluster inteiro (referência de negociação), mesmo quando a cidade
                             # escolhida ainda não tiver prestador — só não aparece na tela nesse
-                            # caso (ver _tem_prestador_temp mais abaixo). ----
-                            _menor_valor_temp = _base_prest_temp.groupby(
+                            # caso (ver _tem_prestador_temp mais abaixo). Usa idxmin (não só min())
+                            # pra também guardar QUAL prestador/cidade bateu esse valor — dá pra
+                            # auditar no hover da grade, em vez de confiar cegamente no número. ----
+                            _idx_menor_valor_temp = _base_prest_temp.groupby(
                                 _grupo_esp_proc_temp, observed=True
-                            )["valor_unitario_prestador"].min().reset_index().rename(
-                                columns={"valor_unitario_prestador": "menor_valor"}
-                            )
+                            )["valor_unitario_prestador"].idxmin()
+                            _menor_valor_temp = _base_prest_temp.loc[_idx_menor_valor_temp, [
+                                "ESPECIALIDADE", "NOME_PROCEDIMENTO", "valor_unitario_prestador",
+                                "CD_PRESTADOR", "CIDADE_PRESTADOR",
+                            ]].rename(columns={
+                                "valor_unitario_prestador": "menor_valor",
+                                "CD_PRESTADOR": "menor_valor_prestador",
+                                "CIDADE_PRESTADOR": "menor_valor_cidade",
+                            })
 
                             # ---- o que já é praticado NA CIDADE escolhida (qtde de prestadores,
                             # CS e CMP) — sem fallback pro Cluster: procedimento sem prestador na
@@ -1656,7 +1684,8 @@ elif st.session_state.pagina == "severidade":
                                 .merge(_qtd_prest_cidade_temp, on=_grupo_esp_proc_temp, how="left")
                                 .merge(_cs_cidade_temp[_grupo_esp_proc_temp + ["cs_praticado_cidade"]],
                                        on=_grupo_esp_proc_temp, how="left")
-                                .merge(_cmp_cidade_temp[_grupo_esp_proc_temp + ["cmp_cidade"]],
+                                .merge(_cmp_cidade_temp[_grupo_esp_proc_temp
+                                                          + ["cmp_cidade", "_valor_soma_cidade", "_qtd_soma_cidade"]],
                                        on=_grupo_esp_proc_temp, how="left")
                             )
                             _grade_cred_temp["qtd_prestadores_cidade"] = (
@@ -1718,6 +1747,24 @@ elif st.session_state.pagina == "severidade":
                                     s = f"{v:,.3f}"
                                     return s.replace(",", "§").replace(".", ",").replace("§", ".")
 
+                                # ---- detalhe do cálculo (hover da coluna Valor unit. projetado) —
+                                # pra dar pra auditar o número (valor total/qtde que formaram o CMP
+                                # e quem/onde bateu o menor valor), sem precisar confiar às cegas.
+                                # Só monta pra quem tem prestador na cidade (senão a célula é "—"). ----
+                                def _detalhe_valor_linha(row):
+                                    if not (row["qtd_prestadores_cidade"] > 0) or pd.isna(row["cmp"]):
+                                        return ""
+                                    return (
+                                        f"CMP = {fmt_brl(row['_valor_soma_cidade'])} ÷ "
+                                        f"{fmt_int(row['_qtd_soma_cidade'])} proced. = {fmt_brl(row['cmp'])}  |  "
+                                        f"Menor valor no Cluster = {fmt_brl(row['menor_valor'])} "
+                                        f"(prestador {fmt_int(row['menor_valor_prestador'])}, "
+                                        f"{row['menor_valor_cidade']})  |  "
+                                        f"Projetado = ({fmt_brl(row['cmp'])} + {fmt_brl(row['menor_valor'])}) ÷ 2 = "
+                                        f"{fmt_brl(row['valor_unitario_projetado'])}"
+                                    )
+                                _detalhe_valor_temp = _grade_exib_temp.apply(_detalhe_valor_linha, axis=1)
+
                                 _tabela_final_temp = pd.DataFrame({
                                     "Especialidade": _grade_exib_temp["ESPECIALIDADE"],
                                     "Procedimento": _grade_exib_temp["NOME_PROCEDIMENTO"],
@@ -1728,7 +1775,7 @@ elif st.session_state.pagina == "severidade":
                                     "Valor unit. projetado": _grade_exib_temp["valor_unitario_projetado"].map(fmt_brl),
                                 })
 
-                                def _tabela_html_cred_temp(df_exibicao, scroll=True):
+                                def _tabela_html_cred_temp(df_exibicao, scroll=True, tooltips_ultima_coluna=None):
                                     st.markdown("""
                                         <style>
                                         .grade-cred-temp-wrap-scroll {
@@ -1747,17 +1794,29 @@ elif st.session_state.pagina == "severidade":
                                         </style>
                                     """, unsafe_allow_html=True)
                                     cabecalho = "".join(f"<th>{html.escape(str(c))}</th>" for c in df_exibicao.columns)
+                                    _n_colunas_temp = len(df_exibicao.columns)
 
-                                    def _linha_html(linha):
+                                    def _linha_html(linha, tooltip_extra):
                                         celulas = []
                                         for i, v in enumerate(linha):
                                             texto = html.escape(str(v))
-                                            titulo_attr = f' title="{texto}"' if i < 2 else ""
+                                            if i < 2:
+                                                titulo_attr = f' title="{texto}"'
+                                            elif i == _n_colunas_temp - 1 and tooltip_extra:
+                                                titulo_attr = f' title="{html.escape(tooltip_extra)}"'
+                                            else:
+                                                titulo_attr = ""
                                             celulas.append(f"<td{titulo_attr}>{texto}</td>")
                                         return "<tr>" + "".join(celulas) + "</tr>"
 
+                                    _tooltips_temp = (
+                                        list(tooltips_ultima_coluna) if tooltips_ultima_coluna is not None
+                                        else [""] * len(df_exibicao)
+                                    )
                                     linhas = "".join(
-                                        _linha_html(linha) for linha in df_exibicao.itertuples(index=False, name=None)
+                                        _linha_html(linha, tt) for linha, tt in zip(
+                                            df_exibicao.itertuples(index=False, name=None), _tooltips_temp
+                                        )
                                     )
                                     classe_wrap = "grade-cred-temp-wrap-scroll" if scroll else "grade-cred-temp-wrap"
                                     st.markdown(
@@ -1767,9 +1826,13 @@ elif st.session_state.pagina == "severidade":
                                     )
 
                                 st.caption(
-                                    f"{len(_tabela_final_temp)} procedimento(s) no Cluster {_cluster_ativo_temp}."
+                                    f"{len(_tabela_final_temp)} procedimento(s) no Cluster {_cluster_ativo_temp}. "
+                                    "Passe o mouse sobre o valor projetado pra ver o detalhe do cálculo "
+                                    "(CMP, menor valor e de qual prestador ele veio)."
                                 )
-                                _tabela_html_cred_temp(_tabela_final_temp, scroll=True)
+                                _tabela_html_cred_temp(
+                                    _tabela_final_temp, scroll=True, tooltips_ultima_coluna=_detalhe_valor_temp
+                                )
     # ============================================================
     # COEFICIENTE DE SEVERIDADE (+ aba legada "🧪 Temp") — mesmo corpo de código rodado uma
     # vez por aba (ver _config_abas_cs_temp acima): "Coeficiente de Severidade" cobre TODOS
