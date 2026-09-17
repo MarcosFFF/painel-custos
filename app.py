@@ -1585,6 +1585,26 @@ elif st.session_state.pagina == "severidade":
                         "CLUSTER", "CIDADE_PRESTADOR", "UF", "ESPECIALIDADE", "NOME_PROCEDIMENTO", "CD_PRESTADOR",
                     ]
                     _base_cluster_temp = df_filtrado[df_filtrado["CLUSTER"] == _cluster_ativo_temp]
+                    # ---- código -> nome do prestador (pra exibir nome em vez de só código nos
+                    # detalhes de CMP/menor valor) — moda por CD_PRESTADOR, sem entrar no groupby
+                    # principal (evita duplicar linha se o nome tiver variação de grafia). ----
+                    if "NOME_PRESTADOR" in _base_cluster_temp.columns:
+                        _nomes_prest_cred_temp = _base_cluster_temp.groupby(
+                            "CD_PRESTADOR", observed=True
+                        )["NOME_PRESTADOR"].agg(
+                            lambda x: x.mode().iloc[0] if not x.mode().empty else None
+                        ).to_dict()
+                    else:
+                        _nomes_prest_cred_temp = {}
+
+                    def _nome_prestador_temp(cod):
+                        if cod is None or (isinstance(cod, float) and pd.isna(cod)):
+                            return "—"
+                        nome = _nomes_prest_cred_temp.get(cod)
+                        if nome is None or (isinstance(nome, float) and pd.isna(nome)) or not str(nome).strip():
+                            return f"Prestador {int(cod)}"
+                        return str(nome)
+
                     if _base_cluster_temp.empty:
                         st.info(
                             f"Nenhum procedimento praticado ainda no Cluster {_cluster_ativo_temp} "
@@ -1698,6 +1718,31 @@ elif st.session_state.pagina == "severidade":
                             _cmp_cidade_temp["cmp_cidade"] = (
                                 _cmp_cidade_temp["_valor_soma_cidade"] / _cmp_cidade_temp["_qtd_soma_cidade"]
                             )
+                            # ---- nomes dos prestadores que entraram no CMP da cidade (só
+                            # informativo, pra dar pra ver quem formou aquela média) ----
+                            _prestadores_cmp_cidade_temp = _base_cidade_valor_valido_temp.groupby(
+                                _grupo_esp_proc_temp, observed=True
+                            )["CD_PRESTADOR"].apply(
+                                lambda codigos: ", ".join(sorted({_nome_prestador_temp(c) for c in codigos}))
+                            ).reset_index().rename(columns={"CD_PRESTADOR": "prestadores_cmp_cidade"})
+
+                            # ---- MENOR VALOR DA CIDADE: mesmo critério do menor valor do Cluster
+                            # (só valor pago válido), mas restrito à cidade escolhida — pra comparar
+                            # lado a lado com o menor valor do Cluster inteiro. ----
+                            if _base_cidade_valor_valido_temp.empty:
+                                _menor_valor_cidade_temp = pd.DataFrame(
+                                    columns=_grupo_esp_proc_temp + ["menor_valor_da_cidade", "menor_valor_da_cidade_prestador"]
+                                )
+                            else:
+                                _idx_menor_cidade_temp = _base_cidade_valor_valido_temp.groupby(
+                                    _grupo_esp_proc_temp, observed=True
+                                )["valor_unitario_prestador"].idxmin()
+                                _menor_valor_cidade_temp = _base_cidade_valor_valido_temp.loc[_idx_menor_cidade_temp, [
+                                    "ESPECIALIDADE", "NOME_PROCEDIMENTO", "valor_unitario_prestador", "CD_PRESTADOR",
+                                ]].rename(columns={
+                                    "valor_unitario_prestador": "menor_valor_da_cidade",
+                                    "CD_PRESTADOR": "menor_valor_da_cidade_prestador",
+                                })
 
                             _grade_cred_temp = (
                                 _cs_ideal_temp
@@ -1708,6 +1753,8 @@ elif st.session_state.pagina == "severidade":
                                 .merge(_cmp_cidade_temp[_grupo_esp_proc_temp
                                                           + ["cmp_cidade", "_valor_soma_cidade", "_qtd_soma_cidade"]],
                                        on=_grupo_esp_proc_temp, how="left")
+                                .merge(_prestadores_cmp_cidade_temp, on=_grupo_esp_proc_temp, how="left")
+                                .merge(_menor_valor_cidade_temp, on=_grupo_esp_proc_temp, how="left")
                             )
                             _grade_cred_temp["qtd_prestadores_cidade"] = (
                                 _grade_cred_temp["qtd_prestadores_cidade"].fillna(0).astype(int)
@@ -1723,6 +1770,11 @@ elif st.session_state.pagina == "severidade":
                             _grade_cred_temp["cmp"] = _grade_cred_temp["cmp_cidade"].where(_tem_prestador_temp)
                             _grade_cred_temp["cs_ideal"] = _grade_cred_temp["cs_ideal"].where(_tem_prestador_temp)
                             _grade_cred_temp["cs_meta"] = _grade_cred_temp["cs_meta"].where(_tem_prestador_temp)
+                            _grade_cred_temp["menor_valor_da_cidade"] = _grade_cred_temp[
+                                "menor_valor_da_cidade"
+                            ].where(_tem_prestador_temp)
+                            _grade_cred_temp.loc[~_tem_prestador_temp, "menor_valor_da_cidade_prestador"] = None
+                            _grade_cred_temp.loc[~_tem_prestador_temp, "prestadores_cmp_cidade"] = None
                             # ---- Valor unit. projetado = (CMP + MENOR VALOR) / 2 — NaN se CMP for
                             # NaN (cidade sem prestador), propagando o "—" automaticamente. ----
                             _grade_cred_temp["valor_unitario_projetado"] = (
@@ -1879,7 +1931,7 @@ elif st.session_state.pagina == "severidade":
                                                 "por isso a linha aparece com \"—\" na tabela."
                                             )
                                         else:
-                                            dc1, dc2, dc3 = st.columns(3)
+                                            dc1, dc2, dc3, dc4 = st.columns(4)
                                             dc1.metric(
                                                 "CMP (na cidade)", fmt_brl(_linha_detalhe_temp["cmp"]),
                                                 help=(
@@ -1887,6 +1939,18 @@ elif st.session_state.pagina == "severidade":
                                                     f"{fmt_int(_linha_detalhe_temp['_qtd_soma_cidade'])} procedimentos"
                                                 ),
                                             )
+                                            _prestadores_cmp_txt_temp = _linha_detalhe_temp.get(
+                                                "prestadores_cmp_cidade"
+                                            )
+                                            if (
+                                                _prestadores_cmp_txt_temp is None
+                                                or (isinstance(_prestadores_cmp_txt_temp, float)
+                                                    and pd.isna(_prestadores_cmp_txt_temp))
+                                                or not str(_prestadores_cmp_txt_temp).strip()
+                                            ):
+                                                _prestadores_cmp_txt_temp = "—"
+                                            dc1.caption(f"Prestadores: {_prestadores_cmp_txt_temp}")
+
                                             dc2.metric(
                                                 "Menor valor (no Cluster)", fmt_brl(_linha_detalhe_temp["menor_valor"]),
                                                 help=(
@@ -1894,15 +1958,25 @@ elif st.session_state.pagina == "severidade":
                                                     f"{_linha_detalhe_temp['menor_valor_cidade']}"
                                                 ),
                                             )
+                                            dc2.caption(
+                                                f"Prestador: "
+                                                f"{_nome_prestador_temp(_linha_detalhe_temp['menor_valor_prestador'])} "
+                                                f"({_linha_detalhe_temp['menor_valor_cidade']})"
+                                            )
+
                                             dc3.metric(
+                                                "Menor valor (na cidade)",
+                                                fmt_brl(_linha_detalhe_temp["menor_valor_da_cidade"]),
+                                            )
+                                            dc3.caption(
+                                                f"Prestador: "
+                                                f"{_nome_prestador_temp(_linha_detalhe_temp['menor_valor_da_cidade_prestador'])}"
+                                            )
+
+                                            dc4.metric(
                                                 "Valor unit. projetado",
                                                 fmt_brl(_linha_detalhe_temp["valor_unitario_projetado"]),
-                                                help="(CMP + Menor valor) ÷ 2",
-                                            )
-                                            st.caption(
-                                                f"Prestador do menor valor: código "
-                                                f"{fmt_int(_linha_detalhe_temp['menor_valor_prestador'])}, "
-                                                f"cidade {_linha_detalhe_temp['menor_valor_cidade']}."
+                                                help="(CMP + Menor valor do Cluster) ÷ 2",
                                             )
     # ============================================================
     # COEFICIENTE DE SEVERIDADE (+ aba legada "🧪 Temp") — mesmo corpo de código rodado uma
