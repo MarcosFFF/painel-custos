@@ -821,6 +821,31 @@ elif st.session_state.pagina == "severidade":
         especialidades=f_especialidade or None, planos=f_plano or None, clusters=f_cluster or None,
         cidades=f_cidade or None,
     )
+    # ---------- período do mês (dia a dia) ----------
+    # Filtro de página, vale pra todas as abas (afeta df_filtrado/usuarios_filtrado antes de
+    # qualquer aba ler eles) — "Mês completo" não corta nada por dia; "Escolher dias" recorta
+    # pelo dia do mês (coluna DIA), útil pra comparar um pedaço específico de um mês em
+    # andamento sem esperar ele fechar.
+    col_periodo_modo_temp, col_periodo_dias_temp = st.columns([1, 2])
+    with col_periodo_modo_temp:
+        modo_periodo_temp = st.radio(
+            "Período do mês", ["Mês completo", "Escolher dias"],
+            horizontal=True, key="periodo_modo_temp",
+        )
+    if modo_periodo_temp == "Escolher dias":
+        with col_periodo_dias_temp:
+            dia_ini_temp, dia_fim_temp = st.slider(
+                "Intervalo de dias (dia tal ao dia tal)",
+                min_value=1, max_value=31, value=(1, 31), key="periodo_dias_temp",
+            )
+        if "DIA" in df_filtrado.columns:
+            df_filtrado = df_filtrado[
+                (df_filtrado["DIA"] >= dia_ini_temp) & (df_filtrado["DIA"] <= dia_fim_temp)
+            ]
+        if "DIA" in usuarios_filtrado.columns:
+            usuarios_filtrado = usuarios_filtrado[
+                (usuarios_filtrado["DIA"] >= dia_ini_temp) & (usuarios_filtrado["DIA"] <= dia_fim_temp)
+            ]
     if df_filtrado.empty:
         st.info("Nenhum dado para esses filtros.")
         st.stop()
@@ -834,15 +859,31 @@ elif st.session_state.pagina == "severidade":
     m4.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
     m5.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
     st.divider()
-    _labels_abas_temp = ["Coeficiente de Severidade", "Resumo"]
+    _labels_abas_temp = ["Coeficiente de Severidade", "Resumo", "🧪 Temp: procedimentos selecionados"]
     if MOSTRAR_ABAS_OFICIAIS_EXTRAS:
         _labels_abas_temp += ["Ranking de Severidade", "Evolução mensal", "Ofensores", "Desvios de Solicitações"]
     _abas_criadas_temp = st.tabs(_labels_abas_temp)
-    tab_temp, tab_resumo = _abas_criadas_temp[0], _abas_criadas_temp[1]
+    tab_temp, tab_resumo, tab_temp_legado = (
+        _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2]
+    )
     if MOSTRAR_ABAS_OFICIAIS_EXTRAS:
         tab_rank, tab_evolucao, tab_ofensores, tab_desvios = (
-            _abas_criadas_temp[2], _abas_criadas_temp[3], _abas_criadas_temp[4], _abas_criadas_temp[5]
+            _abas_criadas_temp[3], _abas_criadas_temp[4], _abas_criadas_temp[5], _abas_criadas_temp[6]
         )
+    # Lista de códigos original da aba temporária, de antes dela ter virado "Coeficiente de
+    # Severidade" (que hoje cobre todos os procedimentos) — volta como uma aba própria, sem
+    # tirar a de todos os procedimentos, com a mesma lista fixa de 13 códigos de origem.
+    CODIGOS_TEMP_LEGADO = [
+        9040, 110, 2035, 5314, 4500, 1064, 4425,
+        330, 550, 3015, 2025, 9010, 9030,
+    ]
+    # (tab_obj, título exibido, lista de códigos que restringe a aba — None = todos os
+    # procedimentos, sufixo pra deixar as keys dos widgets únicas por aba) — o corpo da aba
+    # (logo abaixo) roda uma vez por item desta lista, reaproveitando o mesmo código pras duas.
+    _config_abas_cs_temp = [
+        (tab_temp, "Coeficiente de Severidade", None, ""),
+        (tab_temp_legado, "🧪 Temp: procedimentos selecionados", CODIGOS_TEMP_LEGADO, "_legado"),
+    ]
     if MOSTRAR_ABAS_OFICIAIS_EXTRAS:
         # ---------- RANKING DE SEVERIDADE (FASE — só gráficos, sem tabelas) ----------
         JANELA_5_BARRAS = 300  # altura fixa (px) que mostra ~5 barras; o resto rola dentro do quadro
@@ -1408,624 +1449,706 @@ elif st.session_state.pagina == "severidade":
                                     )
                             st.markdown(texto)
     # ============================================================
-    # COEFICIENTE DE SEVERIDADE — agora para TODOS os procedimentos (antes era
-    # restrita a uma lista fixa de 13 códigos, `codigos_temp`; essa restrição
-    # foi removida a pedido, mas o cálculo interno continua o mesmo)
+    # COEFICIENTE DE SEVERIDADE (+ aba legada "🧪 Temp") — mesmo corpo de código rodado uma
+    # vez por aba (ver _config_abas_cs_temp acima): "Coeficiente de Severidade" cobre TODOS
+    # os procedimentos; "🧪 Temp" fica restrita aos 13 códigos originais (CODIGOS_TEMP_LEGADO).
     # ============================================================
-    with tab_temp:
-        st.markdown("#### Coeficiente de Severidade")
+    for _tab_obj_cs_temp, _titulo_aba_temp, _codigos_restritos_temp, _sufixo_aba_temp in _config_abas_cs_temp:
+        with _tab_obj_cs_temp:
+            st.markdown(f"#### {_titulo_aba_temp}")
 
-        st.caption(
-            "CS (Coeficiente de Severidade) = (QP ÷ FASE) × 10 (Se o resultado igual a 10 "
-            "significa que o corte praticou exatamente o esperado pela taxa nacional; acima "
-            "de 10, mais severo; abaixo de 10, menos severo.) Não considera valores em R$.  \n"
-            "FASE = (qtd procedimentos nacional ÷ qtd vidas nacional) × qtd vidas em utilização  \n"
-            "QP = qtd de procedimentos"
-        )
-
-        st.caption(
-            "Selecione ao menos um filtro acima (procedimento, prestador, UF, região, cidade "
-            "ou cluster) para ver a dispersão de severidade — sem nenhum filtro, o corte "
-            "comparado se aproxima da própria base nacional e o CS fica pouco informativo."
-        )
-
-        if not MOSTRAR_FILTROS_TOPO:
-            # Mês/Plano/Especialidade do quadro de Filtros do topo (hoje oculto) — mesma
-            # funcionalidade de antes (afetam df_filtrado/usuarios_filtrado, a página toda),
-            # só que os campos agora aparecem aqui. O valor já foi lido do session_state mais
-            # acima (antes de df_filtrado ser montado); declarar o widget aqui só sincroniza a
-            # próxima interação do usuário, não afeta o resultado já calculado nesta rodada.
-            fmt1, fmt2, fmt3 = st.columns(3)
-            with fmt1:
-                st.multiselect("Mês", options=opcoes_mes_temp, key="temp_filtro_mes")
-            with fmt2:
-                st.multiselect("Plano", options=opcoes_plano_temp, key="temp_filtro_plano")
-            with fmt3:
-                st.multiselect("Especialidade", options=opcoes_especialidade_temp, key="temp_filtro_especialidade")
-
-        # Mapa código -> nome do procedimento, dentro dos filtros ativos, para TODOS os
-        # procedimentos presentes (1 código = 1 nome, assumindo que cada CD_PROCEDIMENTO tem
-        # uma única NOME_PROCEDIMENTO associada — é assim que o resto do painel já trata
-        # "vidas" por procedimento, via NOME_PROCEDIMENTO).
-        mapa_cod_nome_temp = (
-            df_filtrado.dropna(subset=["CD_PROCEDIMENTO", "NOME_PROCEDIMENTO"])
-            .drop_duplicates("CD_PROCEDIMENTO")
-            .set_index("CD_PROCEDIMENTO")["NOME_PROCEDIMENTO"]
-            .to_dict()
-        )
-        codigos_temp = sorted(mapa_cod_nome_temp.keys())
-
-        nomes_temp = list(mapa_cod_nome_temp.values())
-
-        if not nomes_temp:
-            st.info("Nenhum procedimento encontrado nos filtros atuais.")
-        else:
-            df_temp_base = df_filtrado[df_filtrado["CD_PROCEDIMENTO"].isin(codigos_temp)]
-
-            # ---- filtros extras só desta aba: procedimento, prestador, UF, região, cidade e cluster ----
-            opcoes_proc_temp = ["Todos"] + [
-                f"{cod} — {mapa_cod_nome_temp[cod]}" for cod in codigos_temp if cod in mapa_cod_nome_temp
-            ]
-            def _opcoes_coluna_temp(coluna):
-                if coluna not in df_temp_base.columns:
-                    return ["Todos"]
-                return ["Todos"] + sorted(
-                    v for v in df_temp_base[coluna].dropna().unique().tolist() if str(v).strip()
-                )
-            opcoes_prestador_temp = _opcoes_coluna_temp("NOME_PRESTADOR")
-            opcoes_uf_temp = _opcoes_coluna_temp("UF")
-            opcoes_regiao_temp = _opcoes_coluna_temp("REGIAO")
-            opcoes_cidade_temp = _opcoes_coluna_temp("CIDADE_PRESTADOR")
-            opcoes_cluster_temp = _opcoes_coluna_temp("CLUSTER")
-
-            (
-                fc_proc_temp, fc_prest_temp, fc_uf_temp,
-                fc_regiao_temp, fc_cidade_temp, fc_cluster_temp,
-            ) = st.columns(6)
-            with fc_proc_temp:
-                proc_sel_temp = st.selectbox(
-                    "Procedimento", opcoes_proc_temp, key="temp_filtro_procedimento"
-                )
-            with fc_prest_temp:
-                prest_sel_temp = st.selectbox(
-                    "Prestador", opcoes_prestador_temp, key="temp_filtro_prestador"
-                )
-            with fc_uf_temp:
-                uf_sel_temp = st.selectbox("UF", opcoes_uf_temp, key="temp_filtro_uf")
-            with fc_regiao_temp:
-                regiao_sel_temp = st.selectbox(
-                    "Região", opcoes_regiao_temp, key="temp_filtro_regiao"
-                )
-            with fc_cidade_temp:
-                cidade_sel_temp = st.selectbox(
-                    "Cidade", opcoes_cidade_temp, key="temp_filtro_cidade"
-                )
-            with fc_cluster_temp:
-                cluster_sel_temp = st.selectbox(
-                    "Cluster", opcoes_cluster_temp, key="temp_filtro_cluster"
-                )
-
-            # Sem nenhum dos 6 filtros desta aba aplicado, o corte comparado tende a se
-            # aproximar da própria base nacional usada como referência — o CS fica pouco
-            # informativo (varia perto de 10 só por coincidência de escala, não por
-            # severidade real). Nesse caso o CS é exibido como "—" em vez do valor calculado.
-            nenhum_filtro_temp = (
-                proc_sel_temp == "Todos" and prest_sel_temp == "Todos" and uf_sel_temp == "Todos"
-                and regiao_sel_temp == "Todos" and cidade_sel_temp == "Todos" and cluster_sel_temp == "Todos"
+            st.caption(
+                "CS (Coeficiente de Severidade) = (QP ÷ FASE) × 10 (Se o resultado igual a 10 "
+                "significa que o corte praticou exatamente o esperado pela taxa nacional; acima "
+                "de 10, mais severo; abaixo de 10, menos severo.) Não considera valores em R$.  \n"
+                "FASE = (qtd procedimentos nacional ÷ qtd vidas nacional) × qtd vidas em utilização  \n"
+                "QP = qtd de procedimentos"
             )
 
-            # Aplica os filtros extras (além dos filtros do topo da página, já embutidos em
-            # df_temp_base) por cima da base dos códigos selecionados.
-            df_temp = df_temp_base
-            cod_sel_temp = None
-            if proc_sel_temp != "Todos":
-                cod_sel_temp = int(proc_sel_temp.split(" — ")[0])
-                df_temp = df_temp[df_temp["CD_PROCEDIMENTO"] == cod_sel_temp]
-            if prest_sel_temp != "Todos":
-                df_temp = df_temp[df_temp["NOME_PRESTADOR"] == prest_sel_temp]
-            if uf_sel_temp != "Todos" and "UF" in df_temp.columns:
-                df_temp = df_temp[df_temp["UF"] == uf_sel_temp]
-            if regiao_sel_temp != "Todos" and "REGIAO" in df_temp.columns:
-                df_temp = df_temp[df_temp["REGIAO"] == regiao_sel_temp]
-            if cidade_sel_temp != "Todos" and "CIDADE_PRESTADOR" in df_temp.columns:
-                df_temp = df_temp[df_temp["CIDADE_PRESTADOR"] == cidade_sel_temp]
-            if cluster_sel_temp != "Todos" and "CLUSTER" in df_temp.columns:
-                df_temp = df_temp[df_temp["CLUSTER"] == cluster_sel_temp]
-
-            nomes_temp_ativos = df_temp["NOME_PROCEDIMENTO"].unique().tolist()
-            usuarios_temp = usuarios_filtrado[usuarios_filtrado["NOME_PROCEDIMENTO"].isin(nomes_temp_ativos)]
-            if prest_sel_temp != "Todos" and "NOME_PRESTADOR" in usuarios_temp.columns:
-                usuarios_temp = usuarios_temp[usuarios_temp["NOME_PRESTADOR"] == prest_sel_temp]
-            if uf_sel_temp != "Todos" and "UF" in usuarios_temp.columns:
-                usuarios_temp = usuarios_temp[usuarios_temp["UF"] == uf_sel_temp]
-            if regiao_sel_temp != "Todos" and "REGIAO" in usuarios_temp.columns:
-                usuarios_temp = usuarios_temp[usuarios_temp["REGIAO"] == regiao_sel_temp]
-            if cidade_sel_temp != "Todos" and "CIDADE_PRESTADOR" in usuarios_temp.columns:
-                usuarios_temp = usuarios_temp[usuarios_temp["CIDADE_PRESTADOR"] == cidade_sel_temp]
-            if cluster_sel_temp != "Todos" and "CLUSTER" in usuarios_temp.columns:
-                usuarios_temp = usuarios_temp[usuarios_temp["CLUSTER"] == cluster_sel_temp]
-
-            # ---- métricas gerais (os códigos selecionados somados, sem contar a mesma vida 2x) ----
-            _qtd_geral_temp = df_temp["qtd_procedimentos"].sum()
-            _uso_geral_temp = df_temp["soma_uso"].sum()
-            _vidas_geral_temp = usuarios_temp["CD_USUARIO"].nunique()
-
-            mt1, mt2, mt3, mt4 = st.columns(4)
-            mt1.metric("Qtde de procedimentos", fmt_int(_qtd_geral_temp))
-            mt2.metric("Qtde de vidas", fmt_int(_vidas_geral_temp))
-            mt3.metric("Soma de uso", fmt_int(_uso_geral_temp))
-            mt4.metric(
-                "Uso por vida",
-                fmt_float2(_uso_geral_temp / _vidas_geral_temp) if _vidas_geral_temp else "—",
+            st.caption(
+                "Selecione ao menos um filtro acima (procedimento, prestador, UF, região, cidade "
+                "ou cluster) para ver a dispersão de severidade — sem nenhum filtro, o corte "
+                "comparado se aproxima da própria base nacional e o CS fica pouco informativo."
             )
 
-            st.divider()
+            if not MOSTRAR_FILTROS_TOPO and _codigos_restritos_temp is None:
+                # Mês/Plano/Especialidade do quadro de Filtros do topo (hoje oculto) — mesma
+                # funcionalidade de antes (afetam df_filtrado/usuarios_filtrado, a página toda),
+                # só que os campos agora aparecem aqui. O valor já foi lido do session_state mais
+                # acima (antes de df_filtrado ser montado); declarar o widget aqui só sincroniza a
+                # próxima interação do usuário, não afeta o resultado já calculado nesta rodada.
+                # Só desenhado na aba sem restrição de código (evita campo duplicado — Mês/Plano/
+                # Especialidade são únicos pra página toda, não por aba).
+                fmt1, fmt2, fmt3 = st.columns(3)
+                with fmt1:
+                    st.multiselect("Mês", options=opcoes_mes_temp, key="temp_filtro_mes")
+                with fmt2:
+                    st.multiselect("Plano", options=opcoes_plano_temp, key="temp_filtro_plano")
+                with fmt3:
+                    st.multiselect("Especialidade", options=opcoes_especialidade_temp, key="temp_filtro_especialidade")
 
-            # ---- ranking por código ----
-            # Calculado direto sobre df_temp/usuarios_temp, que já vêm com os filtros do topo da
-            # página + os dois filtros extras desta aba (procedimento e prestador) aplicados —
-            # não usa mais "peso do grupo" (era só usado pelo FASE oficial, que esta aba não
-            # exibe mais), então não precisa mais calcular sobre a base toda antes de recortar.
-            rank_temp = ranking_severidade(
-                df_temp, "NOME_PROCEDIMENTO", top_n=1_000_000, usuarios=usuarios_temp
-            ).copy()
-            nome_para_codigo_temp = {v: k for k, v in mapa_cod_nome_temp.items()}
-            rank_temp["CD_PROCEDIMENTO"] = rank_temp["NOME_PROCEDIMENTO"].map(nome_para_codigo_temp)
-            # Lista de compreensão em vez de concatenar Series com "+": como
-            # NOME_PROCEDIMENTO (e CD_PROCEDIMENTO depois do .map() logo acima) ficam em
-            # dtype category/arrow, o "+" vetorizado do pandas pode estourar TypeError
-            # ("operation 'add' not supported for dtype 'str' with dtype 'category'")
-            # dependendo da versão do pandas/pyarrow — inclusive .astype(str)/.map(str)
-            # sozinhos não bastam, porque Series.map em coluna category devolve outra
-            # category. Iterando com zip(), cada valor já sai como escalar Python comum,
-            # então o f-string nunca encosta em operação vetorizada de Series.
-            rank_temp["rotulo"] = [
-                f"{int(cod)} — {nome}"
-                for cod, nome in zip(rank_temp["CD_PROCEDIMENTO"], rank_temp["NOME_PROCEDIMENTO"])
-            ]
+            # Mapa código -> nome do procedimento, dentro dos filtros ativos. Sem restrição
+            # (_codigos_restritos_temp is None), cobre TODOS os procedimentos presentes; com
+            # restrição (a aba legada, com a lista fixa de 13 códigos de origem), só os códigos
+            # dessa lista que aparecerem nos filtros atuais (1 código = 1 nome, assumindo que cada
+            # CD_PROCEDIMENTO tem uma única NOME_PROCEDIMENTO associada — é assim que o resto do
+            # painel já trata "vidas" por procedimento, via NOME_PROCEDIMENTO).
+            mapa_cod_nome_temp = (
+                df_filtrado.dropna(subset=["CD_PROCEDIMENTO", "NOME_PROCEDIMENTO"])
+                .drop_duplicates("CD_PROCEDIMENTO")
+                .set_index("CD_PROCEDIMENTO")["NOME_PROCEDIMENTO"]
+                .to_dict()
+            )
+            if _codigos_restritos_temp is not None:
+                codigos_ausentes_temp = [c for c in _codigos_restritos_temp if c not in mapa_cod_nome_temp]
+                mapa_cod_nome_temp = {
+                    c: mapa_cod_nome_temp[c] for c in _codigos_restritos_temp if c in mapa_cod_nome_temp
+                }
+                if codigos_ausentes_temp:
+                    st.caption(
+                        f"Códigos sem ocorrência nos filtros atuais: "
+                        f"{', '.join(str(c) for c in codigos_ausentes_temp)}."
+                    )
+            codigos_temp = sorted(mapa_cod_nome_temp.keys())
 
-            # ---- base nacional (sem filtro nenhum) por procedimento — referência do "esperado" ----
-            # Taxa nacional = qtd_procedimentos ÷ qtd_vidas, calculada sobre `agregado`/`base_usuarios`
-            # CRUS (sem nenhum filtro do topo da página) — "quantos procedimentos desse código o
-            # Brasil todo faz, por vida". Reaproveita calcular_media_nacional(), que já existe em
-            # severidade.py (usada em Desvios de Solicitações) — não mexe em severidade.py.
-            nacional_temp = calcular_media_nacional(
-                agregado, "NOME_PROCEDIMENTO", usuarios=base_usuarios
-            ).set_index("NOME_PROCEDIMENTO")
-            # Versão "achatada" (colunas já renomeadas), usada via merge em vez de laço linha a
-            # linha — com todos os procedimentos (em vez dos 13 fixos de antes), o laço python
-            # anterior ficaria lento; merge é vetorizado e escala bem mesmo com muitos códigos.
-            # Só as 3 colunas necessárias pro merge — calcular_media_nacional() também devolve
-            # "quantidade_uso" (entre outras), que colide com a coluna de mesmo nome que
-            # ranking_severidade() já põe em rank_temp; sem esse recorte, o merge renomeia as
-            # duas pra "quantidade_uso_x"/"quantidade_uso_y" e a coluna "quantidade_uso" some.
-            nacional_temp_flat = nacional_temp.reset_index()[
-                ["NOME_PROCEDIMENTO", "qtd_procedimentos", "qtd_usuarios"]
-            ].rename(columns={
-                "qtd_procedimentos": "qtd_procedimentos_nacional", "qtd_usuarios": "qtd_vidas_nacional",
-            })
+            nomes_temp = list(mapa_cod_nome_temp.values())
 
-            def _base_nacional_temp(nome_proc):
-                if nome_proc not in nacional_temp.index:
-                    return float("nan"), float("nan")
-                return (
-                    nacional_temp.loc[nome_proc, "qtd_procedimentos"],
-                    nacional_temp.loc[nome_proc, "qtd_usuarios"],
-                )
-
-            rank_temp = rank_temp.merge(nacional_temp_flat, on="NOME_PROCEDIMENTO", how="left")
-
-            # ---- FASE (esperado) / QP (praticado) / CS — regra só desta aba ----
-            # NÃO mexe em severidade.py: o FASE oficial (Frequência × Intensidade × Peso do
-            # grupo, em _fase()) continua do jeito que está no resto do painel.
-            #
-            #   FASE (esperado)  = (qtd_procedimentos nacional ÷ qtd_vidas nacional) × qtd_vidas
-            #                      em utilização deste corte — quantos procedimentos este corte
-            #                      "deveria" ter, seguindo a taxa nacional desse procedimento.
-            #   QP (praticado) = qtd_procedimentos realmente observados neste corte — direto,
-            #                      sem conta nenhuma.
-            #   CS (Coeficiente de Severidade) = (QP ÷ FASE) × 10 — 10,000 = praticado igual ao
-            #                      esperado pela taxa nacional; acima de 10, mais severo; abaixo
-            #                      de 10, menos severo. O ×10 só amplia a escala (a razão sozinha
-            #                      fica sempre bem perto de 1) — não muda a ordem entre os
-            #                      procedimentos.
-            rank_temp["fase_esperado"] = (
-                rank_temp["qtd_procedimentos_nacional"] / rank_temp["qtd_vidas_nacional"]
-            ) * rank_temp["qtd_usuarios"]
-            rank_temp["qp_praticado"] = rank_temp["qtd_procedimentos"]
-            rank_temp["cs"] = (rank_temp["qp_praticado"] / rank_temp["fase_esperado"]) * 10
-
-            # ---- coluna com o CS formatado com 3 casas decimais (padrão fmt_float2 usa só 2) ----
-            def _fmt_cs_temp(v):
-                if v is None or (isinstance(v, float) and pd.isna(v)):
-                    return "—"
-                s = f"{v:,.3f}"
-                return s.replace(",", "§").replace(".", ",").replace("§", ".")
-
-            # ---- colunas com a "continha" de cada um: FASE, QP e CS ----
-            def _calculo_fase_esperado_temp(qpn, qun, qu_corte):
-                if not qun or pd.isna(qun):
-                    return "—"
-                return f"({fmt_int(qpn)} ÷ {fmt_int(qun)}) × {fmt_int(qu_corte)}"
-
-            def _calculo_cs_temp(qp, fase):
-                if not fase or pd.isna(fase):
-                    return "—"
-                return f"({fmt_int(qp)} ÷ {fmt_float2(fase)}) × 10"
-
-            rank_temp["calculo_fase_esperado"] = [
-                _calculo_fase_esperado_temp(qpn, qun, qu)
-                for qpn, qun, qu in zip(
-                    rank_temp["qtd_procedimentos_nacional"], rank_temp["qtd_vidas_nacional"], rank_temp["qtd_usuarios"]
-                )
-            ]
-            # "Cálculo do QP" = o próprio valor observado — sem fórmula (o QP não é calculado
-            # a partir de outros números, é o número real do corte), mas mantido como coluna
-            # separada da "QP" por simetria com "Cálculo do FASE"/"Cálculo do CS".
-            rank_temp["calculo_qp"] = [fmt_int(qp) for qp in rank_temp["qp_praticado"]]
-            rank_temp["calculo_cs"] = [
-                _calculo_cs_temp(qp, fase)
-                for qp, fase in zip(rank_temp["qp_praticado"], rank_temp["fase_esperado"])
-            ]
-
-            # ---- ordena a grade por CS decrescente (do mais severo pro menos severo) ----
-            rank_temp = rank_temp.sort_values("cs", ascending=False)
-
-            exib_rank_temp = rank_temp.copy()
-            exib_rank_temp["qtd_procedimentos"] = exib_rank_temp["qtd_procedimentos"].map(fmt_int)
-            exib_rank_temp["qtd_usuarios"] = exib_rank_temp["qtd_usuarios"].map(fmt_int)
-            exib_rank_temp["quantidade_uso"] = exib_rank_temp["quantidade_uso"].map(fmt_int)
-            exib_rank_temp["uso_por_procedimento"] = exib_rank_temp["uso_por_procedimento"].map(fmt_float2)
-            exib_rank_temp["uso_por_vida"] = exib_rank_temp["uso_por_vida"].map(fmt_float2)
-            exib_rank_temp["fase_esperado"] = exib_rank_temp["fase_esperado"].map(fmt_float2)
-            exib_rank_temp["qp_praticado"] = exib_rank_temp["qp_praticado"].map(fmt_int)
-            if nenhum_filtro_temp:
-                exib_rank_temp["cs"] = "—"
-                exib_rank_temp["calculo_cs"] = "—"
+            if not nomes_temp:
+                st.info("Nenhum procedimento encontrado nos filtros atuais.")
             else:
-                exib_rank_temp["cs"] = exib_rank_temp["cs"].map(_fmt_cs_temp)
-            exib_rank_temp = exib_rank_temp[[
-                "rotulo", "qtd_procedimentos", "qtd_usuarios", "quantidade_uso",
-                "uso_por_procedimento", "uso_por_vida",
-                "calculo_fase_esperado", "fase_esperado",
-                "calculo_qp", "qp_praticado",
-                "calculo_cs", "cs",
-            ]].rename(columns={
-                "rotulo": "Procedimento",
-                "qtd_procedimentos": "Qtde proced",
-                "qtd_usuarios": "Qtd vidas",
-                "quantidade_uso": "Soma de uso",
-                "uso_por_procedimento": "Uso/proced",
-                "uso_por_vida": "Uso/vida",
-                "calculo_fase_esperado": "Cálculo do FASE",
-                "fase_esperado": "FASE",
-                "calculo_qp": "Cálculo do QP",
-                "qp_praticado": "QP",
-                "calculo_cs": "Cálculo do CS",
-                "cs": "CS",
-            })
-            # Grade montada como tabela HTML própria, em vez de st.dataframe: o widget padrão do
-            # Streamlit desenha o conteúdo das células em canvas (glide-data-grid), então CSS de
-            # fonte/alinhamento não alcança o texto de dentro das células — só assim dá pra
-            # garantir fonte menor e valores centralizados de verdade. Classe própria (não é um
-            # <style> genérico), então não mexe em nenhuma outra tabela do painel — reaproveitada
-            # (via _tabela_html_temp) pela grade de prestadores logo abaixo também.
-            st.markdown(
-                """
-                <style>
-                .grade-cs-temp-wrap { overflow-x: auto; }
-                .grade-cs-temp-wrap-scroll { overflow-x: auto; overflow-y: auto; max-height: 165px; }
-                .grade-cs-temp { border-collapse: collapse; width: 100%; font-size: 12px; }
-                .grade-cs-temp th, .grade-cs-temp td {
-                    text-align: center !important; padding: 4px 8px; white-space: nowrap;
-                    border-bottom: 1px solid rgba(128, 128, 128, 0.3);
-                }
-                .grade-cs-temp th:first-child, .grade-cs-temp td:first-child {
-                    text-align: left !important;
-                    max-width: 260px; overflow: hidden; text-overflow: ellipsis;
-                }
-                .grade-cs-temp th { font-weight: 600; }
-                </style>
-                """,
-                unsafe_allow_html=True,
-            )
+                df_temp_base = df_filtrado[df_filtrado["CD_PROCEDIMENTO"].isin(codigos_temp)]
 
-            def _tabela_html_temp(df_exibicao, scroll=False):
-                cabecalho = "".join(f"<th>{html.escape(str(c))}</th>" for c in df_exibicao.columns)
-                def _linha_html(linha):
-                    celulas = []
-                    for i, v in enumerate(linha):
-                        texto = html.escape(str(v))
-                        # 1ª coluna trunca com "..." (max-width no CSS) — title= mostra o
-                        # texto inteiro ao passar o mouse, já que a célula corta visualmente.
-                        titulo_attr = f' title="{texto}"' if i == 0 else ""
-                        celulas.append(f"<td{titulo_attr}>{texto}</td>")
-                    return "<tr>" + "".join(celulas) + "</tr>"
-                linhas = "".join(_linha_html(linha) for linha in df_exibicao.itertuples(index=False, name=None))
-                classe_wrap = "grade-cs-temp-wrap-scroll" if scroll else "grade-cs-temp-wrap"
+                # ---- filtros extras só desta aba: procedimento, prestador, UF, região, cidade e cluster ----
+                opcoes_proc_temp = ["Todos"] + [
+                    f"{cod} — {mapa_cod_nome_temp[cod]}" for cod in codigos_temp if cod in mapa_cod_nome_temp
+                ]
+                def _opcoes_coluna_temp(coluna):
+                    if coluna not in df_temp_base.columns:
+                        return ["Todos"]
+                    return ["Todos"] + sorted(
+                        v for v in df_temp_base[coluna].dropna().unique().tolist() if str(v).strip()
+                    )
+                opcoes_prestador_temp = _opcoes_coluna_temp("NOME_PRESTADOR")
+                opcoes_uf_temp = _opcoes_coluna_temp("UF")
+                opcoes_regiao_temp = _opcoes_coluna_temp("REGIAO")
+                opcoes_cidade_temp = _opcoes_coluna_temp("CIDADE_PRESTADOR")
+                opcoes_cluster_temp = _opcoes_coluna_temp("CLUSTER")
+
+                (
+                    fc_proc_temp, fc_prest_temp, fc_uf_temp,
+                    fc_regiao_temp, fc_cidade_temp, fc_cluster_temp,
+                ) = st.columns(6)
+                with fc_proc_temp:
+                    proc_sel_temp = st.selectbox(
+                        "Procedimento", opcoes_proc_temp, key=f"temp_filtro_procedimento{_sufixo_aba_temp}"
+                    )
+                with fc_prest_temp:
+                    prest_sel_temp = st.selectbox(
+                        "Prestador", opcoes_prestador_temp, key=f"temp_filtro_prestador{_sufixo_aba_temp}"
+                    )
+                with fc_uf_temp:
+                    uf_sel_temp = st.selectbox(
+                        "UF", opcoes_uf_temp, key=f"temp_filtro_uf{_sufixo_aba_temp}"
+                    )
+                with fc_regiao_temp:
+                    regiao_sel_temp = st.selectbox(
+                        "Região", opcoes_regiao_temp, key=f"temp_filtro_regiao{_sufixo_aba_temp}"
+                    )
+                with fc_cidade_temp:
+                    cidade_sel_temp = st.selectbox(
+                        "Cidade", opcoes_cidade_temp, key=f"temp_filtro_cidade{_sufixo_aba_temp}"
+                    )
+                with fc_cluster_temp:
+                    cluster_sel_temp = st.selectbox(
+                        "Cluster", opcoes_cluster_temp, key=f"temp_filtro_cluster{_sufixo_aba_temp}"
+                    )
+
+                # Sem nenhum dos 6 filtros desta aba aplicado, o corte comparado tende a se
+                # aproximar da própria base nacional usada como referência — o CS fica pouco
+                # informativo (varia perto de 10 só por coincidência de escala, não por
+                # severidade real). Nesse caso o CS é exibido como "—" em vez do valor calculado.
+                nenhum_filtro_temp = (
+                    proc_sel_temp == "Todos" and prest_sel_temp == "Todos" and uf_sel_temp == "Todos"
+                    and regiao_sel_temp == "Todos" and cidade_sel_temp == "Todos" and cluster_sel_temp == "Todos"
+                )
+
+                # Aplica os filtros extras (além dos filtros do topo da página, já embutidos em
+                # df_temp_base) por cima da base dos códigos selecionados.
+                df_temp = df_temp_base
+                cod_sel_temp = None
+                if proc_sel_temp != "Todos":
+                    cod_sel_temp = int(proc_sel_temp.split(" — ")[0])
+                    df_temp = df_temp[df_temp["CD_PROCEDIMENTO"] == cod_sel_temp]
+                if prest_sel_temp != "Todos":
+                    df_temp = df_temp[df_temp["NOME_PRESTADOR"] == prest_sel_temp]
+                if uf_sel_temp != "Todos" and "UF" in df_temp.columns:
+                    df_temp = df_temp[df_temp["UF"] == uf_sel_temp]
+                if regiao_sel_temp != "Todos" and "REGIAO" in df_temp.columns:
+                    df_temp = df_temp[df_temp["REGIAO"] == regiao_sel_temp]
+                if cidade_sel_temp != "Todos" and "CIDADE_PRESTADOR" in df_temp.columns:
+                    df_temp = df_temp[df_temp["CIDADE_PRESTADOR"] == cidade_sel_temp]
+                if cluster_sel_temp != "Todos" and "CLUSTER" in df_temp.columns:
+                    df_temp = df_temp[df_temp["CLUSTER"] == cluster_sel_temp]
+
+                nomes_temp_ativos = df_temp["NOME_PROCEDIMENTO"].unique().tolist()
+                usuarios_temp = usuarios_filtrado[usuarios_filtrado["NOME_PROCEDIMENTO"].isin(nomes_temp_ativos)]
+                if prest_sel_temp != "Todos" and "NOME_PRESTADOR" in usuarios_temp.columns:
+                    usuarios_temp = usuarios_temp[usuarios_temp["NOME_PRESTADOR"] == prest_sel_temp]
+                if uf_sel_temp != "Todos" and "UF" in usuarios_temp.columns:
+                    usuarios_temp = usuarios_temp[usuarios_temp["UF"] == uf_sel_temp]
+                if regiao_sel_temp != "Todos" and "REGIAO" in usuarios_temp.columns:
+                    usuarios_temp = usuarios_temp[usuarios_temp["REGIAO"] == regiao_sel_temp]
+                if cidade_sel_temp != "Todos" and "CIDADE_PRESTADOR" in usuarios_temp.columns:
+                    usuarios_temp = usuarios_temp[usuarios_temp["CIDADE_PRESTADOR"] == cidade_sel_temp]
+                if cluster_sel_temp != "Todos" and "CLUSTER" in usuarios_temp.columns:
+                    usuarios_temp = usuarios_temp[usuarios_temp["CLUSTER"] == cluster_sel_temp]
+
+                # ---- métricas gerais (os códigos selecionados somados, sem contar a mesma vida 2x) ----
+                _qtd_geral_temp = df_temp["qtd_procedimentos"].sum()
+                _uso_geral_temp = df_temp["soma_uso"].sum()
+                _vidas_geral_temp = usuarios_temp["CD_USUARIO"].nunique()
+
+                mt1, mt2, mt3, mt4 = st.columns(4)
+                mt1.metric("Qtde de procedimentos", fmt_int(_qtd_geral_temp))
+                mt2.metric("Qtde de vidas", fmt_int(_vidas_geral_temp))
+                mt3.metric("Soma de uso", fmt_int(_uso_geral_temp))
+                mt4.metric(
+                    "Uso por vida",
+                    fmt_float2(_uso_geral_temp / _vidas_geral_temp) if _vidas_geral_temp else "—",
+                )
+
+                st.divider()
+
+                # ---- ranking por código ----
+                # Calculado direto sobre df_temp/usuarios_temp, que já vêm com os filtros do topo da
+                # página + os dois filtros extras desta aba (procedimento e prestador) aplicados —
+                # não usa mais "peso do grupo" (era só usado pelo FASE oficial, que esta aba não
+                # exibe mais), então não precisa mais calcular sobre a base toda antes de recortar.
+                rank_temp = ranking_severidade(
+                    df_temp, "NOME_PROCEDIMENTO", top_n=1_000_000, usuarios=usuarios_temp
+                ).copy()
+                nome_para_codigo_temp = {v: k for k, v in mapa_cod_nome_temp.items()}
+                rank_temp["CD_PROCEDIMENTO"] = rank_temp["NOME_PROCEDIMENTO"].map(nome_para_codigo_temp)
+                # Lista de compreensão em vez de concatenar Series com "+": como
+                # NOME_PROCEDIMENTO (e CD_PROCEDIMENTO depois do .map() logo acima) ficam em
+                # dtype category/arrow, o "+" vetorizado do pandas pode estourar TypeError
+                # ("operation 'add' not supported for dtype 'str' with dtype 'category'")
+                # dependendo da versão do pandas/pyarrow — inclusive .astype(str)/.map(str)
+                # sozinhos não bastam, porque Series.map em coluna category devolve outra
+                # category. Iterando com zip(), cada valor já sai como escalar Python comum,
+                # então o f-string nunca encosta em operação vetorizada de Series.
+                rank_temp["rotulo"] = [
+                    f"{int(cod)} — {nome}"
+                    for cod, nome in zip(rank_temp["CD_PROCEDIMENTO"], rank_temp["NOME_PROCEDIMENTO"])
+                ]
+
+                # ---- base nacional (sem filtro nenhum) por procedimento — referência do "esperado" ----
+                # Taxa nacional = qtd_procedimentos ÷ qtd_vidas, calculada sobre `agregado`/`base_usuarios`
+                # CRUS (sem nenhum filtro do topo da página) — "quantos procedimentos desse código o
+                # Brasil todo faz, por vida". Reaproveita calcular_media_nacional(), que já existe em
+                # severidade.py (usada em Desvios de Solicitações) — não mexe em severidade.py.
+                nacional_temp = calcular_media_nacional(
+                    agregado, "NOME_PROCEDIMENTO", usuarios=base_usuarios
+                ).set_index("NOME_PROCEDIMENTO")
+                # Versão "achatada" (colunas já renomeadas), usada via merge em vez de laço linha a
+                # linha — com todos os procedimentos (em vez dos 13 fixos de antes), o laço python
+                # anterior ficaria lento; merge é vetorizado e escala bem mesmo com muitos códigos.
+                # Só as 3 colunas necessárias pro merge — calcular_media_nacional() também devolve
+                # "quantidade_uso" (entre outras), que colide com a coluna de mesmo nome que
+                # ranking_severidade() já põe em rank_temp; sem esse recorte, o merge renomeia as
+                # duas pra "quantidade_uso_x"/"quantidade_uso_y" e a coluna "quantidade_uso" some.
+                nacional_temp_flat = nacional_temp.reset_index()[
+                    ["NOME_PROCEDIMENTO", "qtd_procedimentos", "qtd_usuarios"]
+                ].rename(columns={
+                    "qtd_procedimentos": "qtd_procedimentos_nacional", "qtd_usuarios": "qtd_vidas_nacional",
+                })
+
+                def _base_nacional_temp(nome_proc):
+                    if nome_proc not in nacional_temp.index:
+                        return float("nan"), float("nan")
+                    return (
+                        nacional_temp.loc[nome_proc, "qtd_procedimentos"],
+                        nacional_temp.loc[nome_proc, "qtd_usuarios"],
+                    )
+
+                rank_temp = rank_temp.merge(nacional_temp_flat, on="NOME_PROCEDIMENTO", how="left")
+
+                # ---- FASE (esperado) / QP (praticado) / CS — regra só desta aba ----
+                # NÃO mexe em severidade.py: o FASE oficial (Frequência × Intensidade × Peso do
+                # grupo, em _fase()) continua do jeito que está no resto do painel.
+                #
+                #   FASE (esperado)  = (qtd_procedimentos nacional ÷ qtd_vidas nacional) × qtd_vidas
+                #                      em utilização deste corte — quantos procedimentos este corte
+                #                      "deveria" ter, seguindo a taxa nacional desse procedimento.
+                #   QP (praticado) = qtd_procedimentos realmente observados neste corte — direto,
+                #                      sem conta nenhuma.
+                #   CS (Coeficiente de Severidade) = (QP ÷ FASE) × 10 — 10,000 = praticado igual ao
+                #                      esperado pela taxa nacional; acima de 10, mais severo; abaixo
+                #                      de 10, menos severo. O ×10 só amplia a escala (a razão sozinha
+                #                      fica sempre bem perto de 1) — não muda a ordem entre os
+                #                      procedimentos.
+                rank_temp["fase_esperado"] = (
+                    rank_temp["qtd_procedimentos_nacional"] / rank_temp["qtd_vidas_nacional"]
+                ) * rank_temp["qtd_usuarios"]
+                rank_temp["qp_praticado"] = rank_temp["qtd_procedimentos"]
+                rank_temp["cs"] = (rank_temp["qp_praticado"] / rank_temp["fase_esperado"]) * 10
+
+                # ---- coluna com o CS formatado com 3 casas decimais (padrão fmt_float2 usa só 2) ----
+                def _fmt_cs_temp(v):
+                    if v is None or (isinstance(v, float) and pd.isna(v)):
+                        return "—"
+                    s = f"{v:,.3f}"
+                    return s.replace(",", "§").replace(".", ",").replace("§", ".")
+
+                # ---- colunas com a "continha" de cada um: FASE, QP e CS ----
+                def _calculo_fase_esperado_temp(qpn, qun, qu_corte):
+                    if not qun or pd.isna(qun):
+                        return "—"
+                    return f"({fmt_int(qpn)} ÷ {fmt_int(qun)}) × {fmt_int(qu_corte)}"
+
+                def _calculo_cs_temp(qp, fase):
+                    if not fase or pd.isna(fase):
+                        return "—"
+                    return f"({fmt_int(qp)} ÷ {fmt_float2(fase)}) × 10"
+
+                rank_temp["calculo_fase_esperado"] = [
+                    _calculo_fase_esperado_temp(qpn, qun, qu)
+                    for qpn, qun, qu in zip(
+                        rank_temp["qtd_procedimentos_nacional"], rank_temp["qtd_vidas_nacional"], rank_temp["qtd_usuarios"]
+                    )
+                ]
+                # "Cálculo do QP" = o próprio valor observado — sem fórmula (o QP não é calculado
+                # a partir de outros números, é o número real do corte), mas mantido como coluna
+                # separada da "QP" por simetria com "Cálculo do FASE"/"Cálculo do CS".
+                rank_temp["calculo_qp"] = [fmt_int(qp) for qp in rank_temp["qp_praticado"]]
+                rank_temp["calculo_cs"] = [
+                    _calculo_cs_temp(qp, fase)
+                    for qp, fase in zip(rank_temp["qp_praticado"], rank_temp["fase_esperado"])
+                ]
+
+                # ---- ordena a grade por CS decrescente (do mais severo pro menos severo) ----
+                rank_temp = rank_temp.sort_values("cs", ascending=False)
+
+                exib_rank_temp = rank_temp.copy()
+                exib_rank_temp["qtd_procedimentos"] = exib_rank_temp["qtd_procedimentos"].map(fmt_int)
+                exib_rank_temp["qtd_usuarios"] = exib_rank_temp["qtd_usuarios"].map(fmt_int)
+                exib_rank_temp["quantidade_uso"] = exib_rank_temp["quantidade_uso"].map(fmt_int)
+                exib_rank_temp["uso_por_procedimento"] = exib_rank_temp["uso_por_procedimento"].map(fmt_float2)
+                exib_rank_temp["uso_por_vida"] = exib_rank_temp["uso_por_vida"].map(fmt_float2)
+                exib_rank_temp["fase_esperado"] = exib_rank_temp["fase_esperado"].map(fmt_float2)
+                exib_rank_temp["qp_praticado"] = exib_rank_temp["qp_praticado"].map(fmt_int)
+                if nenhum_filtro_temp:
+                    exib_rank_temp["cs"] = "—"
+                    exib_rank_temp["calculo_cs"] = "—"
+                else:
+                    exib_rank_temp["cs"] = exib_rank_temp["cs"].map(_fmt_cs_temp)
+                exib_rank_temp = exib_rank_temp[[
+                    "rotulo", "qtd_procedimentos", "qtd_usuarios", "quantidade_uso",
+                    "uso_por_procedimento", "uso_por_vida",
+                    "calculo_fase_esperado", "fase_esperado",
+                    "calculo_qp", "qp_praticado",
+                    "calculo_cs", "cs",
+                ]].rename(columns={
+                    "rotulo": "Procedimento",
+                    "qtd_procedimentos": "Qtde proced",
+                    "qtd_usuarios": "Qtd vidas",
+                    "quantidade_uso": "Soma de uso",
+                    "uso_por_procedimento": "Uso/proced",
+                    "uso_por_vida": "Uso/vida",
+                    "calculo_fase_esperado": "Cálculo do FASE",
+                    "fase_esperado": "FASE",
+                    "calculo_qp": "Cálculo do QP",
+                    "qp_praticado": "QP",
+                    "calculo_cs": "Cálculo do CS",
+                    "cs": "CS",
+                })
+                # Grade montada como tabela HTML própria, em vez de st.dataframe: o widget padrão do
+                # Streamlit desenha o conteúdo das células em canvas (glide-data-grid), então CSS de
+                # fonte/alinhamento não alcança o texto de dentro das células — só assim dá pra
+                # garantir fonte menor e valores centralizados de verdade. Classe própria (não é um
+                # <style> genérico), então não mexe em nenhuma outra tabela do painel — reaproveitada
+                # (via _tabela_html_temp) pela grade de prestadores logo abaixo também.
                 st.markdown(
-                    f"""
-                    <div class="{classe_wrap}">
-                    <table class="grade-cs-temp">
-                    <thead><tr>{cabecalho}</tr></thead>
-                    <tbody>{linhas}</tbody>
-                    </table>
-                    </div>
+                    """
+                    <style>
+                    .grade-cs-temp-wrap { overflow-x: auto; }
+                    .grade-cs-temp-wrap-scroll { overflow-x: auto; overflow-y: auto; max-height: 165px; }
+                    .grade-cs-temp { border-collapse: collapse; width: 100%; font-size: 12px; }
+                    .grade-cs-temp th, .grade-cs-temp td {
+                        text-align: center !important; padding: 4px 8px; white-space: nowrap;
+                        border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+                    }
+                    .grade-cs-temp th:first-child, .grade-cs-temp td:first-child {
+                        text-align: left !important;
+                        max-width: 260px; overflow: hidden; text-overflow: ellipsis;
+                    }
+                    .grade-cs-temp th { font-weight: 600; }
+                    </style>
                     """,
                     unsafe_allow_html=True,
                 )
 
-            _tabela_html_temp(exib_rank_temp, scroll=True)
+                def _tabela_html_temp(df_exibicao, scroll=False):
+                    cabecalho = "".join(f"<th>{html.escape(str(c))}</th>" for c in df_exibicao.columns)
+                    def _linha_html(linha):
+                        celulas = []
+                        for i, v in enumerate(linha):
+                            texto = html.escape(str(v))
+                            # 1ª coluna trunca com "..." (max-width no CSS) — title= mostra o
+                            # texto inteiro ao passar o mouse, já que a célula corta visualmente.
+                            titulo_attr = f' title="{texto}"' if i == 0 else ""
+                            celulas.append(f"<td{titulo_attr}>{texto}</td>")
+                        return "<tr>" + "".join(celulas) + "</tr>"
+                    linhas = "".join(_linha_html(linha) for linha in df_exibicao.itertuples(index=False, name=None))
+                    classe_wrap = "grade-cs-temp-wrap-scroll" if scroll else "grade-cs-temp-wrap"
+                    st.markdown(
+                        f"""
+                        <div class="{classe_wrap}">
+                        <table class="grade-cs-temp">
+                        <thead><tr>{cabecalho}</tr></thead>
+                        <tbody>{linhas}</tbody>
+                        </table>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
-            # ---- prestadores do procedimento selecionado, com FASE/QP/CS por prestador ----
-            # Só aparece quando um procedimento específico está selecionado no filtro acima (com
-            # "Todos" não faz sentido — a tabela ficaria com todo mundo que atendeu qualquer um
-            # dos 13 códigos misturado). Também não aparece se um prestador específico já estiver
-            # selecionado, porque aí a grade principal acima já é a linha desse único prestador —
-            # mostrar de novo seria redundante.
-            if cod_sel_temp is not None and prest_sel_temp == "Todos":
+                _tabela_html_temp(exib_rank_temp, scroll=True)
+
+                # ---- prestadores do procedimento selecionado, com FASE/QP/CS por prestador ----
+                # Só aparece quando um procedimento específico está selecionado no filtro acima (com
+                # "Todos" não faz sentido — a tabela ficaria com todo mundo que atendeu qualquer um
+                # dos 13 códigos misturado). Também não aparece se um prestador específico já estiver
+                # selecionado, porque aí a grade principal acima já é a linha desse único prestador —
+                # mostrar de novo seria redundante.
+                if cod_sel_temp is not None and prest_sel_temp == "Todos":
+                    st.divider()
+                    nome_proc_sel_temp = mapa_cod_nome_temp.get(cod_sel_temp)
+                    st.markdown(f"**Prestadores — {cod_sel_temp} — {nome_proc_sel_temp}**")
+
+                    rank_prestador_temp = ranking_severidade(
+                        df_temp, "CD_PRESTADOR", top_n=1_000_000, usuarios=usuarios_temp
+                    ).copy()
+                    if rank_prestador_temp.empty:
+                        st.info("Nenhum prestador encontrado para esse procedimento nos filtros atuais.")
+                    else:
+                        # Mesma taxa nacional já usada na grade principal (constante por
+                        # procedimento) — só muda a base de "vidas em utilização", que aqui é por
+                        # prestador em vez de por corte inteiro.
+                        _qpn_prest, _qun_prest = _base_nacional_temp(nome_proc_sel_temp)
+                        _taxa_nac_prest = (_qpn_prest / _qun_prest) if _qun_prest else float("nan")
+                        rank_prestador_temp["fase_esperado"] = _taxa_nac_prest * rank_prestador_temp["qtd_usuarios"]
+                        rank_prestador_temp["qp_praticado"] = rank_prestador_temp["qtd_procedimentos"]
+                        rank_prestador_temp["cs"] = (
+                            rank_prestador_temp["qp_praticado"] / rank_prestador_temp["fase_esperado"]
+                        ) * 10
+                        rank_prestador_temp = rank_prestador_temp.sort_values("cs", ascending=False)
+
+                        _col_nome_prest = (
+                            "NOME_PRESTADOR" if "NOME_PRESTADOR" in rank_prestador_temp.columns else "CD_PRESTADOR"
+                        )
+                        rank_prestador_temp["rotulo_prestador"] = [
+                            str(nome) if pd.notna(nome) and str(nome).strip() else f"Prestador {int(cod)}"
+                            for cod, nome in zip(
+                                rank_prestador_temp["CD_PRESTADOR"], rank_prestador_temp[_col_nome_prest]
+                            )
+                        ]
+
+                        # Mesmas "continhas" da grade principal, agora reaproveitadas aqui — cada
+                        # prestador funciona como um "corte" à parte, mas comparado com a mesma taxa
+                        # nacional desse procedimento.
+                        rank_prestador_temp["calculo_fase_esperado"] = [
+                            _calculo_fase_esperado_temp(_qpn_prest, _qun_prest, qu)
+                            for qu in rank_prestador_temp["qtd_usuarios"]
+                        ]
+                        rank_prestador_temp["calculo_qp"] = [
+                            fmt_int(qp) for qp in rank_prestador_temp["qp_praticado"]
+                        ]
+                        rank_prestador_temp["calculo_cs"] = [
+                            _calculo_cs_temp(qp, fase)
+                            for qp, fase in zip(
+                                rank_prestador_temp["qp_praticado"], rank_prestador_temp["fase_esperado"]
+                            )
+                        ]
+
+                        exib_prestador_temp = rank_prestador_temp.copy()
+                        exib_prestador_temp["qtd_procedimentos"] = exib_prestador_temp["qtd_procedimentos"].map(fmt_int)
+                        exib_prestador_temp["qtd_usuarios"] = exib_prestador_temp["qtd_usuarios"].map(fmt_int)
+                        exib_prestador_temp["quantidade_uso"] = exib_prestador_temp["quantidade_uso"].map(fmt_int)
+                        exib_prestador_temp["uso_por_procedimento"] = exib_prestador_temp["uso_por_procedimento"].map(fmt_float2)
+                        exib_prestador_temp["uso_por_vida"] = exib_prestador_temp["uso_por_vida"].map(fmt_float2)
+                        exib_prestador_temp["fase_esperado"] = exib_prestador_temp["fase_esperado"].map(fmt_float2)
+                        exib_prestador_temp["qp_praticado"] = exib_prestador_temp["qp_praticado"].map(fmt_int)
+                        exib_prestador_temp["cs"] = exib_prestador_temp["cs"].map(_fmt_cs_temp)
+                        exib_prestador_temp = exib_prestador_temp[[
+                            "rotulo_prestador", "qtd_procedimentos", "qtd_usuarios", "quantidade_uso",
+                            "uso_por_procedimento", "uso_por_vida",
+                            "calculo_fase_esperado", "fase_esperado",
+                            "calculo_qp", "qp_praticado",
+                            "calculo_cs", "cs",
+                        ]].rename(columns={
+                            "rotulo_prestador": "Prestador",
+                            "qtd_procedimentos": "Qtde proced",
+                            "qtd_usuarios": "Qtd vidas",
+                            "quantidade_uso": "Soma de uso",
+                            "uso_por_procedimento": "Uso/proced",
+                            "uso_por_vida": "Uso/vida",
+                            "calculo_fase_esperado": "Cálculo do FASE",
+                            "fase_esperado": "FASE",
+                            "calculo_qp": "Cálculo do QP",
+                            "qp_praticado": "QP",
+                            "calculo_cs": "Cálculo do CS",
+                            "cs": "CS",
+                        })
+                        _tabela_html_temp(exib_prestador_temp, scroll=True)
+                # ---- dispersão CS × volume: onde estão as severidades (outliers) ----
+                # Substitui os gráficos de barra/evolução mensal desta aba (removidos a pedido).
+                # Objetivo: achar procedimentos, prestadores e cidades com CS alto que sejam um
+                # padrão de verdade (muito volume) e não ruído de amostra pequena (pouco volume).
                 st.divider()
-                nome_proc_sel_temp = mapa_cod_nome_temp.get(cod_sel_temp)
-                st.markdown(f"**Prestadores — {cod_sel_temp} — {nome_proc_sel_temp}**")
+                st.markdown("**Onde estão as severidades — dispersão CS × volume**")
+                st.caption(
+                    "Cada ponto é um procedimento, prestador ou cidade. Eixo X = qtd de vidas em "
+                    "utilização (escala log, pra caber quem tem muita e pouca vida no mesmo "
+                    "gráfico); eixo Y = CS; tamanho do ponto = qtd de procedimentos. Linha "
+                    "pontilhada em CS = 10 (praticado igual ao esperado). Ponto acima da linha e "
+                    "bem à direita (muito volume) é o sinal mais confiável de severidade real — "
+                    "acima da linha mas bem à esquerda (pouco volume) pode ser só instabilidade de "
+                    "amostra pequena, não um padrão (passe o mouse pra ver os números de cada ponto)."
+                )
 
-                rank_prestador_temp = ranking_severidade(
-                    df_temp, "CD_PRESTADOR", top_n=1_000_000, usuarios=usuarios_temp
-                ).copy()
-                if rank_prestador_temp.empty:
-                    st.info("Nenhum prestador encontrado para esse procedimento nos filtros atuais.")
+                if nenhum_filtro_temp:
+                    st.info(
+                        "Selecione ao menos um filtro acima (procedimento, prestador, UF, "
+                        "região, cidade ou cluster) para ver a dispersão de severidade — sem "
+                        "nenhum filtro, o corte comparado se aproxima da própria base nacional "
+                        "e o CS fica pouco informativo."
+                    )
                 else:
-                    # Mesma taxa nacional já usada na grade principal (constante por
-                    # procedimento) — só muda a base de "vidas em utilização", que aqui é por
-                    # prestador em vez de por corte inteiro.
-                    _qpn_prest, _qun_prest = _base_nacional_temp(nome_proc_sel_temp)
-                    _taxa_nac_prest = (_qpn_prest / _qun_prest) if _qun_prest else float("nan")
-                    rank_prestador_temp["fase_esperado"] = _taxa_nac_prest * rank_prestador_temp["qtd_usuarios"]
-                    rank_prestador_temp["qp_praticado"] = rank_prestador_temp["qtd_procedimentos"]
-                    rank_prestador_temp["cs"] = (
-                        rank_prestador_temp["qp_praticado"] / rank_prestador_temp["fase_esperado"]
-                    ) * 10
-                    rank_prestador_temp = rank_prestador_temp.sort_values("cs", ascending=False)
+                    def _info_extra_temp(coluna_dimensao, colunas_extra):
+                        """Atributo mais frequente (moda) de cada `coluna_dimensao` — ex.: cidade/UF/
+                        cluster de cada prestador — só pra enriquecer o hover dos gráficos, não entra
+                        em nenhum cálculo de FASE/QP/CS."""
+                        colunas_presentes = [c for c in colunas_extra if c in df_temp.columns]
+                        if not colunas_presentes:
+                            return pd.DataFrame()
+                        agregacoes = {
+                            c: (c, lambda x: x.mode().iloc[0] if not x.mode().empty else "—")
+                            for c in colunas_presentes
+                        }
+                        return df_temp.groupby(coluna_dimensao, observed=True).agg(**agregacoes).reset_index()
 
-                    _col_nome_prest = (
-                        "NOME_PRESTADOR" if "NOME_PRESTADOR" in rank_prestador_temp.columns else "CD_PRESTADOR"
-                    )
-                    rank_prestador_temp["rotulo_prestador"] = [
-                        str(nome) if pd.notna(nome) and str(nome).strip() else f"Prestador {int(cod)}"
-                        for cod, nome in zip(
-                            rank_prestador_temp["CD_PRESTADOR"], rank_prestador_temp[_col_nome_prest]
-                        )
-                    ]
+                    def _severidade_agregada_temp(coluna_dimensao, colunas_extra=None):
+                        """
+                        FASE/QP/CS por `coluna_dimensao` (ex.: CD_PRESTADOR, CIDADE_PRESTADOR),
+                        somando entre TODOS os procedimentos desta aba. A taxa nacional de cada
+                        procedimento é constante — aplicada às vidas em utilização daquele
+                        procedimento dentro de cada grupo da dimensão — e só depois de somar FASE e
+                        QP entre os procedimentos é que o CS final do grupo é calculado. Não é uma
+                        média dos CS de cada procedimento (isso não pesaria pelo volume de cada um).
+                        `colunas_extra` são atributos descritivos (cidade, UF, cluster) trazidos à
+                        parte, pela moda de cada grupo, só pra hover — não afetam o cálculo.
+                        """
+                        grupo_cols = [coluna_dimensao, "NOME_PROCEDIMENTO"]
+                        extra_cols = ["NOME_PRESTADOR"] if (
+                            coluna_dimensao == "CD_PRESTADOR" and "NOME_PRESTADOR" in df_temp.columns
+                        ) else []
+                        base = df_temp.groupby(grupo_cols + extra_cols, dropna=False, observed=True).agg(
+                            qtd_procedimentos=("qtd_procedimentos", "sum"),
+                        ).reset_index()
+                        base = base[base[coluna_dimensao].notna() & base["NOME_PROCEDIMENTO"].notna()]
+                        if base.empty:
+                            return pd.DataFrame()
+                        vidas_cel = vidas_por(usuarios_temp, grupo_cols)
+                        base = base.merge(vidas_cel, on=grupo_cols, how="left")
+                        base["qtd_usuarios"] = base["qtd_usuarios"].fillna(0)
+                        # Merge vetorizado (em vez de laço linha a linha) — com todos os procedimentos,
+                        # essa base pode ter muito mais linhas do que quando eram só 13 códigos fixos.
+                        base = base.merge(nacional_temp_flat, on="NOME_PROCEDIMENTO", how="left")
+                        base["fase_esperado"] = (
+                            base["qtd_procedimentos_nacional"] / base["qtd_vidas_nacional"]
+                        ) * base["qtd_usuarios"]
+                        base["qp_praticado"] = base["qtd_procedimentos"]
 
-                    # Mesmas "continhas" da grade principal, agora reaproveitadas aqui — cada
-                    # prestador funciona como um "corte" à parte, mas comparado com a mesma taxa
-                    # nacional desse procedimento.
-                    rank_prestador_temp["calculo_fase_esperado"] = [
-                        _calculo_fase_esperado_temp(_qpn_prest, _qun_prest, qu)
-                        for qu in rank_prestador_temp["qtd_usuarios"]
-                    ]
-                    rank_prestador_temp["calculo_qp"] = [
-                        fmt_int(qp) for qp in rank_prestador_temp["qp_praticado"]
-                    ]
-                    rank_prestador_temp["calculo_cs"] = [
-                        _calculo_cs_temp(qp, fase)
-                        for qp, fase in zip(
-                            rank_prestador_temp["qp_praticado"], rank_prestador_temp["fase_esperado"]
-                        )
-                    ]
+                        group_final = [coluna_dimensao] + extra_cols
+                        resultado = base.groupby(group_final, dropna=False, observed=True).agg(
+                            fase_esperado=("fase_esperado", "sum"),
+                            qp_praticado=("qp_praticado", "sum"),
+                        ).reset_index()
+                        vidas_total = vidas_por(usuarios_temp, coluna_dimensao)
+                        resultado = resultado.merge(vidas_total, on=coluna_dimensao, how="left")
+                        resultado["qtd_usuarios"] = resultado["qtd_usuarios"].fillna(0)
+                        resultado = resultado[resultado["fase_esperado"] > 0]
+                        resultado["cs"] = (resultado["qp_praticado"] / resultado["fase_esperado"]) * 10
 
-                    exib_prestador_temp = rank_prestador_temp.copy()
-                    exib_prestador_temp["qtd_procedimentos"] = exib_prestador_temp["qtd_procedimentos"].map(fmt_int)
-                    exib_prestador_temp["qtd_usuarios"] = exib_prestador_temp["qtd_usuarios"].map(fmt_int)
-                    exib_prestador_temp["quantidade_uso"] = exib_prestador_temp["quantidade_uso"].map(fmt_int)
-                    exib_prestador_temp["uso_por_procedimento"] = exib_prestador_temp["uso_por_procedimento"].map(fmt_float2)
-                    exib_prestador_temp["uso_por_vida"] = exib_prestador_temp["uso_por_vida"].map(fmt_float2)
-                    exib_prestador_temp["fase_esperado"] = exib_prestador_temp["fase_esperado"].map(fmt_float2)
-                    exib_prestador_temp["qp_praticado"] = exib_prestador_temp["qp_praticado"].map(fmt_int)
-                    exib_prestador_temp["cs"] = exib_prestador_temp["cs"].map(_fmt_cs_temp)
-                    exib_prestador_temp = exib_prestador_temp[[
-                        "rotulo_prestador", "qtd_procedimentos", "qtd_usuarios", "quantidade_uso",
-                        "uso_por_procedimento", "uso_por_vida",
-                        "calculo_fase_esperado", "fase_esperado",
-                        "calculo_qp", "qp_praticado",
-                        "calculo_cs", "cs",
-                    ]].rename(columns={
-                        "rotulo_prestador": "Prestador",
-                        "qtd_procedimentos": "Qtde proced",
-                        "qtd_usuarios": "Qtd vidas",
-                        "quantidade_uso": "Soma de uso",
-                        "uso_por_procedimento": "Uso/proced",
-                        "uso_por_vida": "Uso/vida",
-                        "calculo_fase_esperado": "Cálculo do FASE",
-                        "fase_esperado": "FASE",
-                        "calculo_qp": "Cálculo do QP",
-                        "qp_praticado": "QP",
-                        "calculo_cs": "Cálculo do CS",
-                        "cs": "CS",
-                    })
-                    _tabela_html_temp(exib_prestador_temp, scroll=True)
-            # ---- dispersão CS × volume: onde estão as severidades (outliers) ----
-            # Substitui os gráficos de barra/evolução mensal desta aba (removidos a pedido).
-            # Objetivo: achar procedimentos, prestadores e cidades com CS alto que sejam um
-            # padrão de verdade (muito volume) e não ruído de amostra pequena (pouco volume).
-            st.divider()
-            st.markdown("**Onde estão as severidades — dispersão CS × volume**")
-            st.caption(
-                "Cada ponto é um procedimento, prestador ou cidade. Eixo X = qtd de vidas em "
-                "utilização (escala log, pra caber quem tem muita e pouca vida no mesmo "
-                "gráfico); eixo Y = CS; tamanho do ponto = qtd de procedimentos. Linha "
-                "pontilhada em CS = 10 (praticado igual ao esperado). Ponto acima da linha e "
-                "bem à direita (muito volume) é o sinal mais confiável de severidade real — "
-                "acima da linha mas bem à esquerda (pouco volume) pode ser só instabilidade de "
-                "amostra pequena, não um padrão (passe o mouse pra ver os números de cada ponto)."
-            )
+                        info_extra = _info_extra_temp(coluna_dimensao, colunas_extra or [])
+                        if not info_extra.empty:
+                            resultado = resultado.merge(info_extra, on=coluna_dimensao, how="left")
+                        return resultado
 
-            if nenhum_filtro_temp:
-                st.info(
-                    "Selecione ao menos um filtro acima (procedimento, prestador, UF, "
-                    "região, cidade ou cluster) para ver a dispersão de severidade — sem "
-                    "nenhum filtro, o corte comparado se aproxima da própria base nacional "
-                    "e o CS fica pouco informativo."
-                )
-            else:
-                def _info_extra_temp(coluna_dimensao, colunas_extra):
-                    """Atributo mais frequente (moda) de cada `coluna_dimensao` — ex.: cidade/UF/
-                    cluster de cada prestador — só pra enriquecer o hover dos gráficos, não entra
-                    em nenhum cálculo de FASE/QP/CS."""
-                    colunas_presentes = [c for c in colunas_extra if c in df_temp.columns]
-                    if not colunas_presentes:
-                        return pd.DataFrame()
-                    agregacoes = {
-                        c: (c, lambda x: x.mode().iloc[0] if not x.mode().empty else "—")
-                        for c in colunas_presentes
+                    _rotulos_hover_temp = {
+                        "qtd_usuarios": "Qtd vidas", "qp_praticado": "Qtd procedimentos", "cs": "CS",
+                        "CIDADE_PRESTADOR": "Cidade", "UF": "UF", "CLUSTER": "Cluster",
                     }
-                    return df_temp.groupby(coluna_dimensao, observed=True).agg(**agregacoes).reset_index()
 
-                def _severidade_agregada_temp(coluna_dimensao, colunas_extra=None):
-                    """
-                    FASE/QP/CS por `coluna_dimensao` (ex.: CD_PRESTADOR, CIDADE_PRESTADOR),
-                    somando entre TODOS os procedimentos desta aba. A taxa nacional de cada
-                    procedimento é constante — aplicada às vidas em utilização daquele
-                    procedimento dentro de cada grupo da dimensão — e só depois de somar FASE e
-                    QP entre os procedimentos é que o CS final do grupo é calculado. Não é uma
-                    média dos CS de cada procedimento (isso não pesaria pelo volume de cada um).
-                    `colunas_extra` são atributos descritivos (cidade, UF, cluster) trazidos à
-                    parte, pela moda de cada grupo, só pra hover — não afetam o cálculo.
-                    """
-                    grupo_cols = [coluna_dimensao, "NOME_PROCEDIMENTO"]
-                    extra_cols = ["NOME_PRESTADOR"] if (
-                        coluna_dimensao == "CD_PRESTADOR" and "NOME_PRESTADOR" in df_temp.columns
-                    ) else []
-                    base = df_temp.groupby(grupo_cols + extra_cols, dropna=False, observed=True).agg(
-                        qtd_procedimentos=("qtd_procedimentos", "sum"),
-                    ).reset_index()
-                    base = base[base[coluna_dimensao].notna() & base["NOME_PROCEDIMENTO"].notna()]
-                    if base.empty:
-                        return pd.DataFrame()
-                    vidas_cel = vidas_por(usuarios_temp, grupo_cols)
-                    base = base.merge(vidas_cel, on=grupo_cols, how="left")
-                    base["qtd_usuarios"] = base["qtd_usuarios"].fillna(0)
-                    # Merge vetorizado (em vez de laço linha a linha) — com todos os procedimentos,
-                    # essa base pode ter muito mais linhas do que quando eram só 13 códigos fixos.
-                    base = base.merge(nacional_temp_flat, on="NOME_PROCEDIMENTO", how="left")
-                    base["fase_esperado"] = (
-                        base["qtd_procedimentos_nacional"] / base["qtd_vidas_nacional"]
-                    ) * base["qtd_usuarios"]
-                    base["qp_praticado"] = base["qtd_procedimentos"]
-
-                    group_final = [coluna_dimensao] + extra_cols
-                    resultado = base.groupby(group_final, dropna=False, observed=True).agg(
-                        fase_esperado=("fase_esperado", "sum"),
-                        qp_praticado=("qp_praticado", "sum"),
-                    ).reset_index()
-                    vidas_total = vidas_por(usuarios_temp, coluna_dimensao)
-                    resultado = resultado.merge(vidas_total, on=coluna_dimensao, how="left")
-                    resultado["qtd_usuarios"] = resultado["qtd_usuarios"].fillna(0)
-                    resultado = resultado[resultado["fase_esperado"] > 0]
-                    resultado["cs"] = (resultado["qp_praticado"] / resultado["fase_esperado"]) * 10
-
-                    info_extra = _info_extra_temp(coluna_dimensao, colunas_extra or [])
-                    if not info_extra.empty:
-                        resultado = resultado.merge(info_extra, on=coluna_dimensao, how="left")
-                    return resultado
-
-                _rotulos_hover_temp = {
-                    "qtd_usuarios": "Qtd vidas", "qp_praticado": "Qtd procedimentos", "cs": "CS",
-                    "CIDADE_PRESTADOR": "Cidade", "UF": "UF", "CLUSTER": "Cluster",
-                }
-
-                def _grafico_dispersao_cs_temp(dados, rotulo_col, titulo, hover_extra=None):
-                    if dados is None or dados.empty or "qtd_usuarios" not in dados.columns:
-                        st.info(f"Sem dados suficientes para o gráfico de {titulo.lower()}.")
-                        return
-                    dados_plot = dados[(dados["qtd_usuarios"] > 0) & dados["cs"].notna()].copy()
-                    if dados_plot.empty:
-                        st.info(f"Sem dados suficientes para o gráfico de {titulo.lower()}.")
-                        return
-                    hover_data = {"qtd_usuarios": ":,.0f", "qp_praticado": ":,.0f", "cs": ":.3f"}
-                    for col in (hover_extra or []):
-                        if col in dados_plot.columns:
-                            dados_plot[col] = dados_plot[col].fillna("—")
-                            hover_data[col] = True
-                    fig = px.scatter(
-                        dados_plot, x="qtd_usuarios", y="cs", size="qp_praticado", color="cs",
-                        color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
-                        color_continuous_midpoint=10, size_max=32, hover_name=rotulo_col,
-                        hover_data=hover_data, labels=_rotulos_hover_temp,
-                        log_x=True, title=titulo,
-                    )
-                    fig.add_hline(y=10, line_dash="dash", line_color="#888")
-                    fig.update_layout(
-                        height=280, margin=dict(l=10, r=10, t=40, b=10),
-                        coloraxis_showscale=False, xaxis_title="Qtd vidas (escala log)", yaxis_title="CS",
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-
-                df_disp_prest_temp = _severidade_agregada_temp(
-                    "CD_PRESTADOR", colunas_extra=["CIDADE_PRESTADOR", "UF", "CLUSTER"]
-                )
-                if not df_disp_prest_temp.empty:
-                    col_nome_disp_prest = (
-                        "NOME_PRESTADOR" if "NOME_PRESTADOR" in df_disp_prest_temp.columns else "CD_PRESTADOR"
-                    )
-                    df_disp_prest_temp["rotulo"] = [
-                        str(nome) if pd.notna(nome) and str(nome).strip() else f"Prestador {int(cod)}"
-                        for cod, nome in zip(
-                            df_disp_prest_temp["CD_PRESTADOR"], df_disp_prest_temp[col_nome_disp_prest]
+                    def _grafico_dispersao_cs_temp(dados, rotulo_col, titulo, hover_extra=None):
+                        if dados is None or dados.empty or "qtd_usuarios" not in dados.columns:
+                            st.info(f"Sem dados suficientes para o gráfico de {titulo.lower()}.")
+                            return
+                        dados_plot = dados[(dados["qtd_usuarios"] > 0) & dados["cs"].notna()].copy()
+                        if dados_plot.empty:
+                            st.info(f"Sem dados suficientes para o gráfico de {titulo.lower()}.")
+                            return
+                        hover_data = {"qtd_usuarios": ":,.0f", "qp_praticado": ":,.0f", "cs": ":.3f"}
+                        for col in (hover_extra or []):
+                            if col in dados_plot.columns:
+                                dados_plot[col] = dados_plot[col].fillna("—")
+                                hover_data[col] = True
+                        fig = px.scatter(
+                            dados_plot, x="qtd_usuarios", y="cs", size="qp_praticado", color="cs",
+                            color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
+                            color_continuous_midpoint=10, size_max=32, hover_name=rotulo_col,
+                            hover_data=hover_data, labels=_rotulos_hover_temp,
+                            log_x=True, title=titulo,
                         )
-                    ]
+                        fig.add_hline(y=10, line_dash="dash", line_color="#888")
+                        fig.update_layout(
+                            height=280, margin=dict(l=10, r=10, t=40, b=10),
+                            coloraxis_showscale=False, xaxis_title="Qtd vidas (escala log)", yaxis_title="CS",
+                        )
+                        # key único (por aba + título do gráfico) — evita colisão de ID quando o
+                        # mesmo gráfico é desenhado duas vezes (uma por aba, no laço que reusa
+                        # este bloco pra "Coeficiente de Severidade" e pra aba legada de 13 códigos).
+                        st.plotly_chart(
+                            fig, use_container_width=True,
+                            key=f"grafico_disp_temp_{titulo}{_sufixo_aba_temp}",
+                        )
 
-                df_disp_cidade_temp = _severidade_agregada_temp(
-                    "CIDADE_PRESTADOR", colunas_extra=["UF", "CLUSTER"]
-                )
-                if not df_disp_cidade_temp.empty:
-                    df_disp_cidade_temp["rotulo"] = df_disp_cidade_temp["CIDADE_PRESTADOR"].astype(str)
-
-                col_disp_prest, col_disp_cidade = st.columns(2)
-                with col_disp_prest:
-                    _grafico_dispersao_cs_temp(
-                        df_disp_prest_temp, "rotulo", "Prestadores",
-                        hover_extra=["CIDADE_PRESTADOR", "UF", "CLUSTER"],
+                    df_disp_prest_temp = _severidade_agregada_temp(
+                        "CD_PRESTADOR", colunas_extra=["CIDADE_PRESTADOR", "UF", "CLUSTER"]
                     )
-                with col_disp_cidade:
-                    _grafico_dispersao_cs_temp(
-                        df_disp_cidade_temp, "rotulo", "Cidades",
-                        hover_extra=["UF", "CLUSTER"],
+                    if not df_disp_prest_temp.empty:
+                        col_nome_disp_prest = (
+                            "NOME_PRESTADOR" if "NOME_PRESTADOR" in df_disp_prest_temp.columns else "CD_PRESTADOR"
+                        )
+                        df_disp_prest_temp["rotulo"] = [
+                            str(nome) if pd.notna(nome) and str(nome).strip() else f"Prestador {int(cod)}"
+                            for cod, nome in zip(
+                                df_disp_prest_temp["CD_PRESTADOR"], df_disp_prest_temp[col_nome_disp_prest]
+                            )
+                        ]
+
+                    df_disp_cidade_temp = _severidade_agregada_temp(
+                        "CIDADE_PRESTADOR", colunas_extra=["UF", "CLUSTER"]
                     )
+                    if not df_disp_cidade_temp.empty:
+                        df_disp_cidade_temp["rotulo"] = df_disp_cidade_temp["CIDADE_PRESTADOR"].astype(str)
 
-                # ---- gráficos fixos de Região, UF, Cluster e Especialidade ----
-                # Quando o próprio filtro dessa dimensão está acionado (um valor específico
-                # escolhido, em vez de "Todos"/nenhum selecionado), não faz sentido mostrar a
-                # dispersão dela — o corte já está fixo num único valor. Nesse caso o gráfico
-                # fica em branco (nem título, nem "sem dados"); os outros 3 continuam batendo
-                # normal, já que já vêm calculados em cima de df_temp/usuarios_temp, que já
-                # respeitam esse (e qualquer outro) filtro ativo.
-                regiao_ativo_temp = regiao_sel_temp != "Todos"
-                uf_ativo_temp = uf_sel_temp != "Todos"
-                cluster_ativo_temp = cluster_sel_temp != "Todos"
-                especialidade_ativo_temp = bool(f_especialidade)
+                    col_disp_prest, col_disp_cidade = st.columns(2)
+                    with col_disp_prest:
+                        _grafico_dispersao_cs_temp(
+                            df_disp_prest_temp, "rotulo", "Prestadores",
+                            hover_extra=["CIDADE_PRESTADOR", "UF", "CLUSTER"],
+                        )
+                    with col_disp_cidade:
+                        _grafico_dispersao_cs_temp(
+                            df_disp_cidade_temp, "rotulo", "Cidades",
+                            hover_extra=["UF", "CLUSTER"],
+                        )
 
-                col_disp_regiao, col_disp_uf, col_disp_cluster, col_disp_esp = st.columns(4)
-                with col_disp_regiao:
-                    if not regiao_ativo_temp and "REGIAO" in df_temp.columns:
-                        df_disp_regiao_temp = _severidade_agregada_temp("REGIAO")
-                        if not df_disp_regiao_temp.empty:
-                            df_disp_regiao_temp["rotulo"] = df_disp_regiao_temp["REGIAO"].astype(str)
-                        _grafico_dispersao_cs_temp(df_disp_regiao_temp, "rotulo", "Região")
-                with col_disp_uf:
-                    if not uf_ativo_temp and "UF" in df_temp.columns:
-                        df_disp_uf_temp = _severidade_agregada_temp("UF")
-                        if not df_disp_uf_temp.empty:
-                            df_disp_uf_temp["rotulo"] = df_disp_uf_temp["UF"].astype(str)
-                        _grafico_dispersao_cs_temp(df_disp_uf_temp, "rotulo", "UF")
-                with col_disp_cluster:
-                    if not cluster_ativo_temp and "CLUSTER" in df_temp.columns:
-                        df_disp_cluster_temp = _severidade_agregada_temp("CLUSTER")
-                        if not df_disp_cluster_temp.empty:
-                            df_disp_cluster_temp["rotulo"] = df_disp_cluster_temp["CLUSTER"].astype(str)
-                        _grafico_dispersao_cs_temp(df_disp_cluster_temp, "rotulo", "Cluster")
-                with col_disp_esp:
-                    if not especialidade_ativo_temp and "ESPECIALIDADE" in df_temp.columns:
-                        df_disp_esp_temp = _severidade_agregada_temp("ESPECIALIDADE")
-                        if not df_disp_esp_temp.empty:
-                            df_disp_esp_temp["rotulo"] = df_disp_esp_temp["ESPECIALIDADE"].astype(str)
-                        _grafico_dispersao_cs_temp(df_disp_esp_temp, "rotulo", "Especialidade")
+                    # ---- gráficos fixos de Região, UF, Cluster e Especialidade ----
+                    # Quando o próprio filtro dessa dimensão está acionado (um valor específico
+                    # escolhido, em vez de "Todos"/nenhum selecionado), não faz sentido mostrar a
+                    # dispersão dela — o corte já está fixo num único valor. Nesse caso o gráfico
+                    # fica em branco (nem título, nem "sem dados"); os outros 3 continuam batendo
+                    # normal, já que já vêm calculados em cima de df_temp/usuarios_temp, que já
+                    # respeitam esse (e qualquer outro) filtro ativo.
+                    regiao_ativo_temp = regiao_sel_temp != "Todos"
+                    uf_ativo_temp = uf_sel_temp != "Todos"
+                    cluster_ativo_temp = cluster_sel_temp != "Todos"
+                    especialidade_ativo_temp = bool(f_especialidade)
+
+                    col_disp_regiao, col_disp_uf, col_disp_cluster, col_disp_esp = st.columns(4)
+                    with col_disp_regiao:
+                        if not regiao_ativo_temp and "REGIAO" in df_temp.columns:
+                            df_disp_regiao_temp = _severidade_agregada_temp("REGIAO")
+                            if not df_disp_regiao_temp.empty:
+                                df_disp_regiao_temp["rotulo"] = df_disp_regiao_temp["REGIAO"].astype(str)
+                            _grafico_dispersao_cs_temp(df_disp_regiao_temp, "rotulo", "Região")
+                    with col_disp_uf:
+                        if not uf_ativo_temp and "UF" in df_temp.columns:
+                            df_disp_uf_temp = _severidade_agregada_temp("UF")
+                            if not df_disp_uf_temp.empty:
+                                df_disp_uf_temp["rotulo"] = df_disp_uf_temp["UF"].astype(str)
+                            _grafico_dispersao_cs_temp(df_disp_uf_temp, "rotulo", "UF")
+                    with col_disp_cluster:
+                        if not cluster_ativo_temp and "CLUSTER" in df_temp.columns:
+                            df_disp_cluster_temp = _severidade_agregada_temp("CLUSTER")
+                            if not df_disp_cluster_temp.empty:
+                                df_disp_cluster_temp["rotulo"] = df_disp_cluster_temp["CLUSTER"].astype(str)
+                            _grafico_dispersao_cs_temp(df_disp_cluster_temp, "rotulo", "Cluster")
+                    with col_disp_esp:
+                        if not especialidade_ativo_temp and "ESPECIALIDADE" in df_temp.columns:
+                            df_disp_esp_temp = _severidade_agregada_temp("ESPECIALIDADE")
+                            if not df_disp_esp_temp.empty:
+                                df_disp_esp_temp["rotulo"] = df_disp_esp_temp["ESPECIALIDADE"].astype(str)
+                            _grafico_dispersao_cs_temp(df_disp_esp_temp, "rotulo", "Especialidade")
+
+                # ---- histórico por mês: CS, qtd de vidas, qtd de procedimentos, soma de uso ----
+                # Mesma exigência de "pelo menos 1 filtro acionado" do bloco de dispersão acima —
+                # sem filtro, o corte se aproxima da própria base nacional e a série mês a mês
+                # fica pouco informativa.
+                st.divider()
+                st.markdown("**Histórico por mês**")
+                if nenhum_filtro_temp:
+                    st.info(
+                        "Selecione ao menos um filtro acima (procedimento, prestador, UF, região, "
+                        "cidade ou cluster) para ver o histórico por mês."
+                    )
+                elif "MES" not in df_temp.columns:
+                    st.info("Sem coluna de mês nos dados pra montar o histórico.")
+                else:
+                    metrica_hist_temp = st.selectbox(
+                        "Métrica do histórico",
+                        ["CS", "Qtd de vidas", "Qtd de procedimentos", "Soma de uso"],
+                        key=f"temp_hist_metrica{_sufixo_aba_temp}",
+                    )
+                    # CS/qtd de vidas/qtd de procedimentos por mês vêm do mesmo agregador usado nos
+                    # gráficos de dispersão acima, só que agrupando por MES em vez de prestador/
+                    # cidade/etc. Soma de uso não faz parte desse cálculo (não entra na fórmula do
+                    # CS), então é somada à parte, direto de df_temp.
+                    df_hist_temp = _severidade_agregada_temp("MES")
+                    soma_uso_mes_temp = (
+                        df_temp.groupby("MES", dropna=False, observed=True)["soma_uso"]
+                        .sum().rename("soma_uso_mes").reset_index()
+                    )
+                    if not df_hist_temp.empty:
+                        df_hist_temp = df_hist_temp.merge(soma_uso_mes_temp, on="MES", how="outer")
+                    else:
+                        df_hist_temp = soma_uso_mes_temp.copy()
+                        for _col_vazia in ("cs", "qtd_usuarios", "qp_praticado"):
+                            df_hist_temp[_col_vazia] = float("nan")
+                    df_hist_temp = df_hist_temp[df_hist_temp["MES"].notna()]
+                    if df_hist_temp.empty:
+                        st.info("Sem dados suficientes para o histórico.")
+                    else:
+                        df_hist_temp = df_hist_temp.sort_values("MES")
+                        df_hist_temp["mes_rotulo"] = df_hist_temp["MES"].map(label_mes)
+                        _col_metrica_hist_temp = {
+                            "CS": "cs", "Qtd de vidas": "qtd_usuarios",
+                            "Qtd de procedimentos": "qp_praticado", "Soma de uso": "soma_uso_mes",
+                        }[metrica_hist_temp]
+                        fig_hist_temp = px.line(
+                            df_hist_temp, x="mes_rotulo", y=_col_metrica_hist_temp, markers=True,
+                            title=f"{metrica_hist_temp} por mês",
+                        )
+                        if metrica_hist_temp == "CS":
+                            fig_hist_temp.add_hline(y=10, line_dash="dash", line_color="#888")
+                        fig_hist_temp.update_layout(
+                            height=320, margin=dict(l=10, r=10, t=40, b=10),
+                            xaxis_title="Mês", yaxis_title=metrica_hist_temp,
+                        )
+                        st.plotly_chart(
+                            fig_hist_temp, use_container_width=True,
+                            key=f"grafico_hist_temp{_sufixo_aba_temp}",
+                        )
