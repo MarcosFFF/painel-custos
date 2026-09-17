@@ -1871,15 +1871,10 @@ elif st.session_state.pagina == "severidade":
                         _col_nome_prest = (
                             "NOME_PRESTADOR" if "NOME_PRESTADOR" in rank_prestador_temp.columns else "CD_PRESTADOR"
                         )
-                        rank_prestador_temp["rotulo_prestador"] = [
-                            str(nome) if pd.notna(nome) and str(nome).strip() else f"Prestador {int(cod)}"
-                            for cod, nome in zip(
-                                rank_prestador_temp["CD_PRESTADOR"], rank_prestador_temp[_col_nome_prest]
-                            )
-                        ]
 
                         # ---- Cidade/UF/Cluster de cada prestador (moda — mesmo critério do hover
-                        # dos gráficos de dispersão) — só informativo, não entra em nenhuma conta. ----
+                        # dos gráficos de dispersão) — só informativo, não entra em nenhuma conta;
+                        # juntado ao nome do prestador num rótulo só, não em colunas separadas. ----
                         _colunas_info_prest_temp = [
                             c for c in ("CIDADE_PRESTADOR", "UF", "CLUSTER") if c in df_temp.columns
                         ]
@@ -1895,6 +1890,20 @@ elif st.session_state.pagina == "severidade":
                             if c not in rank_prestador_temp.columns:
                                 rank_prestador_temp[c] = "—"
                             rank_prestador_temp[c] = rank_prestador_temp[c].fillna("—")
+
+                        rank_prestador_temp["rotulo_prestador"] = [
+                            f"{nome_fmt} - {uf} - {cidade} - {cluster}"
+                            for nome_fmt, uf, cidade, cluster in zip(
+                                [
+                                    str(nome) if pd.notna(nome) and str(nome).strip() else f"Prestador {int(cod)}"
+                                    for cod, nome in zip(
+                                        rank_prestador_temp["CD_PRESTADOR"], rank_prestador_temp[_col_nome_prest]
+                                    )
+                                ],
+                                rank_prestador_temp["UF"], rank_prestador_temp["CIDADE_PRESTADOR"],
+                                rank_prestador_temp["CLUSTER"],
+                            )
+                        ]
 
                         # Mesmas "continhas" da grade principal, agora reaproveitadas aqui — cada
                         # prestador funciona como um "corte" à parte, mas comparado com a mesma taxa
@@ -1923,7 +1932,7 @@ elif st.session_state.pagina == "severidade":
                         exib_prestador_temp["qp_praticado"] = exib_prestador_temp["qp_praticado"].map(fmt_int)
                         exib_prestador_temp["cs"] = exib_prestador_temp["cs"].map(_fmt_cs_temp)
                         exib_prestador_temp = exib_prestador_temp[[
-                            "rotulo_prestador", "CIDADE_PRESTADOR", "UF", "CLUSTER",
+                            "rotulo_prestador",
                             "qtd_procedimentos", "qtd_usuarios", "quantidade_uso",
                             "uso_por_procedimento", "uso_por_vida",
                             "calculo_fase_esperado", "fase_esperado",
@@ -1931,8 +1940,6 @@ elif st.session_state.pagina == "severidade":
                             "calculo_cs", "cs",
                         ]].rename(columns={
                             "rotulo_prestador": "Prestador",
-                            "CIDADE_PRESTADOR": "Cidade",
-                            "CLUSTER": "Cluster",
                             "qtd_procedimentos": "Qtde proced",
                             "qtd_usuarios": "Qtd vidas",
                             "quantidade_uso": "Soma de uso",
