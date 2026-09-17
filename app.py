@@ -1825,14 +1825,57 @@ elif st.session_state.pagina == "severidade":
                                         unsafe_allow_html=True,
                                     )
 
-                                st.caption(
-                                    f"{len(_tabela_final_temp)} procedimento(s) no Cluster {_cluster_ativo_temp}. "
-                                    "Passe o mouse sobre o valor projetado pra ver o detalhe do cálculo "
-                                    "(CMP, menor valor e de qual prestador ele veio)."
-                                )
+                                st.caption(f"{len(_tabela_final_temp)} procedimento(s) no Cluster {_cluster_ativo_temp}.")
                                 _tabela_html_cred_temp(
                                     _tabela_final_temp, scroll=True, tooltips_ultima_coluna=_detalhe_valor_temp
                                 )
+
+                                # ---- detalhe do cálculo, sempre visível (sem depender de hover, que
+                                # não funciona em touch/tablet e fica escondido atrás do menu do
+                                # Streamlit) — escolhe o procedimento e vê CMP/menor valor por extenso. ----
+                                with st.expander("🔍 Ver detalhe do cálculo de um procedimento"):
+                                    _opcoes_detalhe_temp = (
+                                        _grade_exib_temp["NOME_PROCEDIMENTO"] + " — " + _grade_exib_temp["ESPECIALIDADE"]
+                                    ).tolist()
+                                    if not _opcoes_detalhe_temp:
+                                        st.info("Nenhum procedimento pra detalhar com o filtro atual.")
+                                    else:
+                                        _proc_detalhe_temp = st.selectbox(
+                                            "Procedimento", options=_opcoes_detalhe_temp, key="cred_temp_detalhe_proc"
+                                        )
+                                        _idx_detalhe_temp = _opcoes_detalhe_temp.index(_proc_detalhe_temp)
+                                        _linha_detalhe_temp = _grade_exib_temp.iloc[_idx_detalhe_temp]
+                                        if not (_linha_detalhe_temp["qtd_prestadores_cidade"] > 0):
+                                            st.info(
+                                                "Sem prestador nesse procedimento na cidade escolhida — "
+                                                "por isso a linha aparece com \"—\" na tabela."
+                                            )
+                                        else:
+                                            dc1, dc2, dc3 = st.columns(3)
+                                            dc1.metric(
+                                                "CMP (na cidade)", fmt_brl(_linha_detalhe_temp["cmp"]),
+                                                help=(
+                                                    f"{fmt_brl(_linha_detalhe_temp['_valor_soma_cidade'])} ÷ "
+                                                    f"{fmt_int(_linha_detalhe_temp['_qtd_soma_cidade'])} procedimentos"
+                                                ),
+                                            )
+                                            dc2.metric(
+                                                "Menor valor (no Cluster)", fmt_brl(_linha_detalhe_temp["menor_valor"]),
+                                                help=(
+                                                    f"Prestador {fmt_int(_linha_detalhe_temp['menor_valor_prestador'])}, "
+                                                    f"{_linha_detalhe_temp['menor_valor_cidade']}"
+                                                ),
+                                            )
+                                            dc3.metric(
+                                                "Valor unit. projetado",
+                                                fmt_brl(_linha_detalhe_temp["valor_unitario_projetado"]),
+                                                help="(CMP + Menor valor) ÷ 2",
+                                            )
+                                            st.caption(
+                                                f"Prestador do menor valor: código "
+                                                f"{fmt_int(_linha_detalhe_temp['menor_valor_prestador'])}, "
+                                                f"cidade {_linha_detalhe_temp['menor_valor_cidade']}."
+                                            )
     # ============================================================
     # COEFICIENTE DE SEVERIDADE (+ aba legada "🧪 Temp") — mesmo corpo de código rodado uma
     # vez por aba (ver _config_abas_cs_temp acima): "Coeficiente de Severidade" cobre TODOS
