@@ -1834,9 +1834,16 @@ elif st.session_state.pagina == "severidade":
                                 # não funciona em touch/tablet e fica escondido atrás do menu do
                                 # Streamlit) — escolhe o procedimento e vê CMP/menor valor por extenso. ----
                                 with st.expander("🔍 Ver detalhe do cálculo de um procedimento"):
-                                    _opcoes_detalhe_temp = (
-                                        _grade_exib_temp["NOME_PROCEDIMENTO"] + " — " + _grade_exib_temp["ESPECIALIDADE"]
-                                    ).tolist()
+                                    # zip() em vez de "+" vetorizado: NOME_PROCEDIMENTO/ESPECIALIDADE
+                                    # são dtype category (herdado de severidade.py), e o "+" de Series
+                                    # nessas colunas estoura TypeError dependendo da versão do pandas/
+                                    # pyarrow — mesmo problema já visto no rótulo do ranking por código.
+                                    _opcoes_detalhe_temp = [
+                                        f"{proc} — {esp}"
+                                        for proc, esp in zip(
+                                            _grade_exib_temp["NOME_PROCEDIMENTO"], _grade_exib_temp["ESPECIALIDADE"]
+                                        )
+                                    ]
                                     if not _opcoes_detalhe_temp:
                                         st.info("Nenhum procedimento pra detalhar com o filtro atual.")
                                     else:
