@@ -1744,6 +1744,24 @@ elif st.session_state.pagina == "severidade":
                                     "CD_PRESTADOR": "menor_valor_da_cidade_prestador",
                                 })
 
+                            # ---- MAIOR VALOR DA CIDADE: mesmo critério (só valor pago válido),
+                            # restrito à cidade escolhida — mostrado no detalhe no lugar do menor
+                            # valor do Cluster, pra dar a faixa de preço praticada na própria cidade. ----
+                            if _base_cidade_valor_valido_temp.empty:
+                                _maior_valor_cidade_temp = pd.DataFrame(
+                                    columns=_grupo_esp_proc_temp + ["maior_valor_da_cidade", "maior_valor_da_cidade_prestador"]
+                                )
+                            else:
+                                _idx_maior_cidade_temp = _base_cidade_valor_valido_temp.groupby(
+                                    _grupo_esp_proc_temp, observed=True
+                                )["valor_unitario_prestador"].idxmax()
+                                _maior_valor_cidade_temp = _base_cidade_valor_valido_temp.loc[_idx_maior_cidade_temp, [
+                                    "ESPECIALIDADE", "NOME_PROCEDIMENTO", "valor_unitario_prestador", "CD_PRESTADOR",
+                                ]].rename(columns={
+                                    "valor_unitario_prestador": "maior_valor_da_cidade",
+                                    "CD_PRESTADOR": "maior_valor_da_cidade_prestador",
+                                })
+
                             _grade_cred_temp = (
                                 _cs_ideal_temp
                                 .merge(_menor_valor_temp, on=_grupo_esp_proc_temp, how="left")
@@ -1755,6 +1773,7 @@ elif st.session_state.pagina == "severidade":
                                        on=_grupo_esp_proc_temp, how="left")
                                 .merge(_prestadores_cmp_cidade_temp, on=_grupo_esp_proc_temp, how="left")
                                 .merge(_menor_valor_cidade_temp, on=_grupo_esp_proc_temp, how="left")
+                                .merge(_maior_valor_cidade_temp, on=_grupo_esp_proc_temp, how="left")
                             )
                             _grade_cred_temp["qtd_prestadores_cidade"] = (
                                 _grade_cred_temp["qtd_prestadores_cidade"].fillna(0).astype(int)
@@ -1775,6 +1794,10 @@ elif st.session_state.pagina == "severidade":
                             ].where(_tem_prestador_temp)
                             _grade_cred_temp.loc[~_tem_prestador_temp, "menor_valor_da_cidade_prestador"] = None
                             _grade_cred_temp.loc[~_tem_prestador_temp, "prestadores_cmp_cidade"] = None
+                            _grade_cred_temp["maior_valor_da_cidade"] = _grade_cred_temp[
+                                "maior_valor_da_cidade"
+                            ].where(_tem_prestador_temp)
+                            _grade_cred_temp.loc[~_tem_prestador_temp, "maior_valor_da_cidade_prestador"] = None
                             # ---- Valor unit. projetado = (CMP + MENOR VALOR) / 2 — NaN se CMP for
                             # NaN (cidade sem prestador), propagando o "—" automaticamente. ----
                             _grade_cred_temp["valor_unitario_projetado"] = (
@@ -1941,16 +1964,12 @@ elif st.session_state.pagina == "severidade":
                                             )
 
                                             dc2.metric(
-                                                "Menor valor (no Cluster)", fmt_brl(_linha_detalhe_temp["menor_valor"]),
-                                                help=(
-                                                    f"Prestador {fmt_int(_linha_detalhe_temp['menor_valor_prestador'])}, "
-                                                    f"{_linha_detalhe_temp['menor_valor_cidade']}"
-                                                ),
+                                                "Maior valor (na Cidade)",
+                                                fmt_brl(_linha_detalhe_temp["maior_valor_da_cidade"]),
                                             )
                                             dc2.caption(
                                                 f"Prestador: "
-                                                f"{_nome_prestador_temp(_linha_detalhe_temp['menor_valor_prestador'])} "
-                                                f"({_linha_detalhe_temp['menor_valor_cidade']})"
+                                                f"{_nome_prestador_temp(_linha_detalhe_temp['maior_valor_da_cidade_prestador'])}"
                                             )
 
                                             dc3.metric(
@@ -1965,7 +1984,12 @@ elif st.session_state.pagina == "severidade":
                                             dc4.metric(
                                                 "Valor unit. projetado",
                                                 fmt_brl(_linha_detalhe_temp["valor_unitario_projetado"]),
-                                                help="(CMP + Menor valor do Cluster) ÷ 2",
+                                                help=(
+                                                    f"(CMP {fmt_brl(_linha_detalhe_temp['cmp'])} + Menor valor "
+                                                    f"do Cluster {fmt_brl(_linha_detalhe_temp['menor_valor'])}, "
+                                                    f"prestador {fmt_int(_linha_detalhe_temp['menor_valor_prestador'])} "
+                                                    f"em {_linha_detalhe_temp['menor_valor_cidade']}) ÷ 2"
+                                                ),
                                             )
     # ============================================================
     # COEFICIENTE DE SEVERIDADE (+ aba legada "🧪 Temp") — mesmo corpo de código rodado uma
