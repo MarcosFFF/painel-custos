@@ -1486,8 +1486,8 @@ elif st.session_state.pagina == "severidade":
                             st.markdown(texto)
     # ============================================================
     # PROJEÇÃO DE CREDENCIAMENTO — escolhe UF + Cidade (mesmo sem nenhum prestador lá
-    # ainda) e projeta CS Ideal/Meta e valor unitário ideal, comparando com o que já é
-    # praticado (na própria cidade quando ela tiver dado; senão, no Cluster dela).
+    # ainda) e projeta CS Ideal/Meta e valor unitário projetado, comparando com o que já
+    # é praticado (na própria cidade quando ela tiver dado; senão, no Cluster dela).
     # ============================================================
     with tab_credenciamento:
         st.markdown("#### 📍 Projeção de Credenciamento")
@@ -1497,11 +1497,12 @@ elif st.session_state.pagina == "severidade":
             "**CS Ideal** = o menor CS já praticado por um prestador do mesmo Cluster, "
             "naquele procedimento — a melhor referência real observada.  \n"
             "**CS Meta** = CS Ideal × 0,80 (20% abaixo do Ideal).  \n"
-            "**Valor unitário ideal** = mediana do valor pago por procedimento entre os "
-            "prestadores do mesmo Cluster.  \n"
-            "**Praticado** (CS e valor unitário) = o que já acontece na própria cidade "
-            "escolhida; quando ela ainda não tiver prestador algum naquele procedimento, "
-            "cai para a referência do Cluster (mesma usada no Ideal)."
+            "**CMP** (Custo Médio Praticado) = valor total pago no procedimento ÷ qtde de "
+            "procedimentos — na própria cidade escolhida; quando ela ainda não tiver "
+            "prestador algum naquele procedimento, cai para o Cluster inteiro.  \n"
+            "**Valor unit. projetado** = (CMP + menor valor já praticado no Cluster) ÷ 2.  \n"
+            "**CS praticado** = mesma lógica: o CS já observado na cidade, ou no Cluster "
+            "quando a cidade ainda não tiver dado."
         )
 
         _crosswalk_cred_temp = _carregar_crosswalk_cidade_cluster_temp(".")
@@ -1618,16 +1619,28 @@ elif st.session_state.pagina == "severidade":
                                 _cs_cluster_temp["_qp_soma"] / _cs_cluster_temp["_fase_soma"]
                             ) * 10
 
-                            # ---- valor unitário ideal (mediana do Cluster) ----
-                            _valor_ideal_temp = _base_prest_temp.groupby(
+                            # ---- MENOR VALOR: o menor valor unitário já praticado por um prestador
+                            # do Cluster, naquele procedimento (mesmo critério do CS Ideal — o
+                            # melhor caso real observado, não uma média/mediana). ----
+                            _menor_valor_temp = _base_prest_temp.groupby(
                                 _grupo_esp_proc_temp, observed=True
-                            )["valor_unitario_prestador"].median().reset_index().rename(
-                                columns={"valor_unitario_prestador": "valor_unitario_ideal"}
+                            )["valor_unitario_prestador"].min().reset_index().rename(
+                                columns={"valor_unitario_prestador": "menor_valor"}
+                            )
+
+                            # ---- CMP (Custo Médio Praticado) = valor total do procedimento ÷
+                            # qtde de procedimentos — no Cluster inteiro (referência de fallback). ----
+                            _cmp_cluster_temp = _base_prest_temp.groupby(_grupo_esp_proc_temp, observed=True).agg(
+                                _valor_soma_cluster=("soma_valor", "sum"),
+                                _qtd_soma_cluster=("qtd_procedimentos", "sum"),
+                            ).reset_index()
+                            _cmp_cluster_temp["cmp_cluster"] = (
+                                _cmp_cluster_temp["_valor_soma_cluster"] / _cmp_cluster_temp["_qtd_soma_cluster"]
                             )
 
                             # ---- o que já é praticado NA CIDADE escolhida (qtde de prestadores,
-                            # CS e valor unitário) — quando vazio, cai pro Cluster (fallback já
-                            # respondido: cidade sem prestador usa a referência do Cluster) ----
+                            # CS e CMP) — quando vazio, cai pro Cluster (fallback já respondido:
+                            # cidade sem prestador usa a referência do Cluster) ----
                             _base_cidade_temp = _base_prest_temp[
                                 (_base_prest_temp["CIDADE_PRESTADOR"] == _cidade_ativa_temp)
                                 & (_base_prest_temp["UF"] == _uf_ativa_temp)
@@ -1644,21 +1657,26 @@ elif st.session_state.pagina == "severidade":
                             _cs_cidade_temp["cs_praticado_cidade"] = (
                                 _cs_cidade_temp["_qp_soma_cidade"] / _cs_cidade_temp["_fase_soma_cidade"]
                             ) * 10
-                            _valor_cidade_temp = _base_cidade_temp.groupby(
-                                _grupo_esp_proc_temp, observed=True
-                            )["valor_unitario_prestador"].median().reset_index().rename(
-                                columns={"valor_unitario_prestador": "valor_unitario_cidade"}
+                            _cmp_cidade_temp = _base_cidade_temp.groupby(_grupo_esp_proc_temp, observed=True).agg(
+                                _valor_soma_cidade=("soma_valor", "sum"),
+                                _qtd_soma_cidade=("qtd_procedimentos", "sum"),
+                            ).reset_index()
+                            _cmp_cidade_temp["cmp_cidade"] = (
+                                _cmp_cidade_temp["_valor_soma_cidade"] / _cmp_cidade_temp["_qtd_soma_cidade"]
                             )
 
                             _grade_cred_temp = (
                                 _cs_ideal_temp
                                 .merge(_cs_cluster_temp[_grupo_esp_proc_temp + ["cs_praticado_cluster"]],
                                        on=_grupo_esp_proc_temp, how="left")
-                                .merge(_valor_ideal_temp, on=_grupo_esp_proc_temp, how="left")
+                                .merge(_menor_valor_temp, on=_grupo_esp_proc_temp, how="left")
+                                .merge(_cmp_cluster_temp[_grupo_esp_proc_temp + ["cmp_cluster"]],
+                                       on=_grupo_esp_proc_temp, how="left")
                                 .merge(_qtd_prest_cidade_temp, on=_grupo_esp_proc_temp, how="left")
                                 .merge(_cs_cidade_temp[_grupo_esp_proc_temp + ["cs_praticado_cidade"]],
                                        on=_grupo_esp_proc_temp, how="left")
-                                .merge(_valor_cidade_temp, on=_grupo_esp_proc_temp, how="left")
+                                .merge(_cmp_cidade_temp[_grupo_esp_proc_temp + ["cmp_cidade"]],
+                                       on=_grupo_esp_proc_temp, how="left")
                             )
                             _grade_cred_temp["qtd_prestadores_cidade"] = (
                                 _grade_cred_temp["qtd_prestadores_cidade"].fillna(0).astype(int)
@@ -1667,12 +1685,14 @@ elif st.session_state.pagina == "severidade":
                                 _grade_cred_temp["qtd_prestadores_cidade"] > 0,
                                 _grade_cred_temp["cs_praticado_cluster"],
                             )
-                            _grade_cred_temp["valor_unitario_praticado"] = _grade_cred_temp[
-                                "valor_unitario_cidade"
-                            ].where(
+                            _grade_cred_temp["cmp"] = _grade_cred_temp["cmp_cidade"].where(
                                 _grade_cred_temp["qtd_prestadores_cidade"] > 0,
-                                _grade_cred_temp["valor_unitario_ideal"],
+                                _grade_cred_temp["cmp_cluster"],
                             )
+                            # ---- Valor unit. projetado = (CMP + MENOR VALOR) / 2 ----
+                            _grade_cred_temp["valor_unitario_projetado"] = (
+                                _grade_cred_temp["cmp"] + _grade_cred_temp["menor_valor"]
+                            ) / 2
 
                             # ---- filtros de busca (procedimento por texto + especialidade) ----
                             fcred1, fcred2 = st.columns([2, 1])
@@ -1720,7 +1740,7 @@ elif st.session_state.pagina == "severidade":
                                     "CS praticado": _grade_exib_temp["cs_praticado"].map(_fmt_cs_cred_temp),
                                     "CS Ideal": _grade_exib_temp["cs_ideal"].map(_fmt_cs_cred_temp),
                                     "CS Meta": _grade_exib_temp["cs_meta"].map(_fmt_cs_cred_temp),
-                                    "Valor unit. praticado": _grade_exib_temp["valor_unitario_praticado"].map(fmt_brl),
+                                    "Valor unit. projetado": _grade_exib_temp["valor_unitario_projetado"].map(fmt_brl),
                                 })
 
                                 def _tabela_html_cred_temp(df_exibicao, scroll=True):
