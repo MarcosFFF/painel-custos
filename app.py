@@ -1939,17 +1939,6 @@ elif st.session_state.pagina == "severidade":
                                                     f"{fmt_int(_linha_detalhe_temp['_qtd_soma_cidade'])} procedimentos"
                                                 ),
                                             )
-                                            _prestadores_cmp_txt_temp = _linha_detalhe_temp.get(
-                                                "prestadores_cmp_cidade"
-                                            )
-                                            if (
-                                                _prestadores_cmp_txt_temp is None
-                                                or (isinstance(_prestadores_cmp_txt_temp, float)
-                                                    and pd.isna(_prestadores_cmp_txt_temp))
-                                                or not str(_prestadores_cmp_txt_temp).strip()
-                                            ):
-                                                _prestadores_cmp_txt_temp = "—"
-                                            dc1.caption(f"Prestadores: {_prestadores_cmp_txt_temp}")
 
                                             dc2.metric(
                                                 "Menor valor (no Cluster)", fmt_brl(_linha_detalhe_temp["menor_valor"]),
