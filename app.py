@@ -1721,7 +1721,6 @@ elif st.session_state.pagina == "severidade":
                                     "CS Ideal": _grade_exib_temp["cs_ideal"].map(_fmt_cs_cred_temp),
                                     "CS Meta": _grade_exib_temp["cs_meta"].map(_fmt_cs_cred_temp),
                                     "Valor unit. praticado": _grade_exib_temp["valor_unitario_praticado"].map(fmt_brl),
-                                    "Valor unit. ideal": _grade_exib_temp["valor_unitario_ideal"].map(fmt_brl),
                                 })
 
                                 def _tabela_html_cred_temp(df_exibicao, scroll=True):
