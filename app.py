@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import html
 import os
+import glob
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -16,6 +17,7 @@ try:
         ranking_severidade, identificar_ofensores, calcular_desvios, montar_watchlist,
         comparacao_mensal, resumo_comparativo, alertas_prestador_procedimento,
         identificar_desvios_solicitacao, calcular_media_nacional, vidas_por,
+        _casar_colunas, _corrigir_mojibake,
     )
 except Exception as _erro_import_severidade:
     # O Streamlit Cloud redige a mensagem de erro padrão — mostramos o traceback
@@ -179,6 +181,37 @@ def fmt_fase(v):
         return "—"
     s = f"{v:,.4f}"
     return s.replace(",", "§").replace(".", ",").replace("§", ".")
+@st.cache_data(show_spinner=False)
+def _carregar_crosswalk_cidade_cluster_temp(pasta="."):
+    """
+    Cidade -> UF -> Cluster para TODOS os municípios do Brasil (não só os que já têm
+    prestador credenciado) — lido direto do mesmo arquivo "cluster*.xlsx" que
+    severidade.py já usa pra montar a coluna CLUSTER da base operacional (mesmo glob,
+    mesma pasta). Lido aqui de novo, à parte — não mexe em severidade.py — só pra ter
+    cidade/UF/cluster mesmo de município que ainda não tem prestador nenhum, o que a
+    base operacional (agregado/df_filtrado) não teria como saber sozinha.
+    Devolve DataFrame vazio (colunas CIDADE/UF/CLUSTER) se o arquivo não for encontrado
+    ou não tiver as colunas esperadas — quem usa trata esse caso com um aviso na tela.
+    """
+    candidatos = glob.glob(os.path.join(pasta, "cluster*.xlsx"))
+    if not candidatos:
+        return pd.DataFrame(columns=["CIDADE", "UF", "CLUSTER"])
+    try:
+        bruto = pd.read_excel(candidatos[0], sheet_name=0)
+    except Exception:
+        return pd.DataFrame(columns=["CIDADE", "UF", "CLUSTER"])
+    mapa = _casar_colunas(bruto.columns, ["UF_MUN", "UF", "NOME DO MUNICÍPIO", "CLUSTER"])
+    faltando = [c for c in ("UF", "NOME DO MUNICÍPIO", "CLUSTER") if c not in mapa]
+    if faltando:
+        return pd.DataFrame(columns=["CIDADE", "UF", "CLUSTER"])
+    cw = bruto[[mapa["NOME DO MUNICÍPIO"], mapa["UF"], mapa["CLUSTER"]]].copy()
+    cw.columns = ["CIDADE", "UF", "CLUSTER"]
+    cw["CIDADE"] = cw["CIDADE"].apply(_corrigir_mojibake)
+    cw["CIDADE"] = cw["CIDADE"].astype(str).str.strip()
+    cw["UF"] = cw["UF"].astype(str).str.strip().str.upper()
+    cw["CLUSTER"] = cw["CLUSTER"].astype(str).str.strip()
+    cw = cw.dropna(subset=["CIDADE", "UF"]).drop_duplicates(subset=["CIDADE", "UF"])
+    return cw.reset_index(drop=True)
 def label_mes(key):
     y, m = key.split("-")
     return f"{MESES_ABREV[int(m) - 1]}/{y}"
@@ -859,16 +892,19 @@ elif st.session_state.pagina == "severidade":
     m4.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
     m5.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
     st.divider()
-    _labels_abas_temp = ["Coeficiente de Severidade", "Resumo", "🧪 Temp: procedimentos selecionados"]
+    _labels_abas_temp = [
+        "Coeficiente de Severidade", "Resumo", "🧪 Temp: procedimentos selecionados",
+        "📍 Projeção de Credenciamento",
+    ]
     if MOSTRAR_ABAS_OFICIAIS_EXTRAS:
         _labels_abas_temp += ["Ranking de Severidade", "Evolução mensal", "Ofensores", "Desvios de Solicitações"]
     _abas_criadas_temp = st.tabs(_labels_abas_temp)
-    tab_temp, tab_resumo, tab_temp_legado = (
-        _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2]
+    tab_temp, tab_resumo, tab_temp_legado, tab_credenciamento = (
+        _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2], _abas_criadas_temp[3]
     )
     if MOSTRAR_ABAS_OFICIAIS_EXTRAS:
         tab_rank, tab_evolucao, tab_ofensores, tab_desvios = (
-            _abas_criadas_temp[3], _abas_criadas_temp[4], _abas_criadas_temp[5], _abas_criadas_temp[6]
+            _abas_criadas_temp[4], _abas_criadas_temp[5], _abas_criadas_temp[6], _abas_criadas_temp[7]
         )
     # Lista de códigos original da aba temporária, de antes dela ter virado "Coeficiente de
     # Severidade" (que hoje cobre todos os procedimentos) — volta como uma aba própria, sem
@@ -1448,6 +1484,288 @@ elif st.session_state.pagina == "severidade":
                                         f"**{row['variacao_fase_pct']:+.0f}%**."
                                     )
                             st.markdown(texto)
+    # ============================================================
+    # PROJEÇÃO DE CREDENCIAMENTO — escolhe UF + Cidade (mesmo sem nenhum prestador lá
+    # ainda) e projeta CS Ideal/Meta e valor unitário ideal, comparando com o que já é
+    # praticado (na própria cidade quando ela tiver dado; senão, no Cluster dela).
+    # ============================================================
+    with tab_credenciamento:
+        st.markdown("#### 📍 Projeção de Credenciamento")
+        st.caption(
+            "Escolha a UF e a cidade onde quer credenciar um prestador (mesmo que ainda não "
+            "tenha nenhum lá) e clique em **Projetar**. As definições usadas aqui:  \n"
+            "**CS Ideal** = o menor CS já praticado por um prestador do mesmo Cluster, "
+            "naquele procedimento — a melhor referência real observada.  \n"
+            "**CS Meta** = CS Ideal × 0,80 (20% abaixo do Ideal).  \n"
+            "**Valor unitário ideal** = mediana do valor pago por procedimento entre os "
+            "prestadores do mesmo Cluster.  \n"
+            "**Praticado** (CS e valor unitário) = o que já acontece na própria cidade "
+            "escolhida; quando ela ainda não tiver prestador algum naquele procedimento, "
+            "cai para a referência do Cluster (mesma usada no Ideal)."
+        )
+
+        _crosswalk_cred_temp = _carregar_crosswalk_cidade_cluster_temp(".")
+        if _crosswalk_cred_temp.empty:
+            st.warning(
+                "Não encontrei o arquivo de cluster (cluster*.xlsx) nesta pasta — sem ele não "
+                "dá pra saber o Cluster de cidades que ainda não têm prestador."
+            )
+        else:
+            _ufs_cred_temp = sorted(_crosswalk_cred_temp["UF"].dropna().unique())
+            cred_col1, cred_col2, cred_col3 = st.columns([1, 2, 1])
+            with cred_col1:
+                uf_cred_temp = st.selectbox("UF", options=_ufs_cred_temp, key="cred_temp_uf")
+            with cred_col2:
+                _cidades_cred_temp = sorted(
+                    _crosswalk_cred_temp.loc[
+                        _crosswalk_cred_temp["UF"] == uf_cred_temp, "CIDADE"
+                    ].unique()
+                )
+                cidade_cred_temp = st.selectbox("Cidade", options=_cidades_cred_temp, key="cred_temp_cidade")
+            with cred_col3:
+                st.markdown("<div style='height: 28px'></div>", unsafe_allow_html=True)
+                projetar_clicado_temp = st.button(
+                    "📊 Projetar", key="cred_temp_botao", use_container_width=True
+                )
+            if projetar_clicado_temp:
+                st.session_state["cred_temp_ativa"] = (uf_cred_temp, cidade_cred_temp)
+
+            _ativa_cred_temp = st.session_state.get("cred_temp_ativa")
+            if not _ativa_cred_temp:
+                st.info("Escolha UF e cidade acima e clique em Projetar.")
+            else:
+                _uf_ativa_temp, _cidade_ativa_temp = _ativa_cred_temp
+                _linha_cluster_temp = _crosswalk_cred_temp[
+                    (_crosswalk_cred_temp["UF"] == _uf_ativa_temp)
+                    & (_crosswalk_cred_temp["CIDADE"] == _cidade_ativa_temp)
+                ]
+                if _linha_cluster_temp.empty:
+                    st.warning(f"Não encontrei o Cluster de {_cidade_ativa_temp}/{_uf_ativa_temp}.")
+                else:
+                    _cluster_ativo_temp = _linha_cluster_temp["CLUSTER"].iloc[0]
+                    st.markdown(
+                        f"📍 **{_cidade_ativa_temp} / {_uf_ativa_temp}** · Cluster **{_cluster_ativo_temp}**"
+                    )
+
+                    # ---- taxa nacional por procedimento (mesma referência do FASE usado no
+                    # resto do painel — reaproveita calcular_media_nacional(), não mexe em
+                    # severidade.py) ----
+                    _nacional_cred_temp = calcular_media_nacional(
+                        agregado, "NOME_PROCEDIMENTO", usuarios=base_usuarios
+                    ).reset_index()[["NOME_PROCEDIMENTO", "qtd_procedimentos", "qtd_usuarios"]].rename(columns={
+                        "qtd_procedimentos": "qtd_procedimentos_nacional", "qtd_usuarios": "qtd_vidas_nacional",
+                    })
+
+                    # ---- CS por prestador, dentro do Cluster escolhido — base de tudo que
+                    # segue (CS Ideal/Meta, CS praticado no Cluster/cidade, valor unitário) ----
+                    _grupo_prest_cred_temp = [
+                        "CLUSTER", "CIDADE_PRESTADOR", "UF", "ESPECIALIDADE", "NOME_PROCEDIMENTO", "CD_PRESTADOR",
+                    ]
+                    _base_cluster_temp = df_filtrado[df_filtrado["CLUSTER"] == _cluster_ativo_temp]
+                    if _base_cluster_temp.empty:
+                        st.info(
+                            f"Nenhum procedimento praticado ainda no Cluster {_cluster_ativo_temp} "
+                            "(dentro dos filtros de página atuais) — sem dado suficiente pra projetar."
+                        )
+                    else:
+                        _base_prest_temp = _base_cluster_temp.groupby(
+                            _grupo_prest_cred_temp, dropna=False, observed=True
+                        ).agg(
+                            qtd_procedimentos=("qtd_procedimentos", "sum"),
+                            soma_valor=("soma_valor", "sum"),
+                        ).reset_index()
+                        _usuarios_cluster_temp = usuarios_filtrado[usuarios_filtrado["CLUSTER"] == _cluster_ativo_temp]
+                        _vidas_prest_temp = vidas_por(_usuarios_cluster_temp, _grupo_prest_cred_temp)
+                        _base_prest_temp = _base_prest_temp.merge(
+                            _vidas_prest_temp, on=_grupo_prest_cred_temp, how="left"
+                        )
+                        _base_prest_temp["qtd_usuarios"] = _base_prest_temp["qtd_usuarios"].fillna(0)
+                        _base_prest_temp = _base_prest_temp.merge(
+                            _nacional_cred_temp, on="NOME_PROCEDIMENTO", how="left"
+                        )
+                        _base_prest_temp["fase_esperado"] = (
+                            _base_prest_temp["qtd_procedimentos_nacional"] / _base_prest_temp["qtd_vidas_nacional"]
+                        ) * _base_prest_temp["qtd_usuarios"]
+                        _base_prest_temp = _base_prest_temp[_base_prest_temp["fase_esperado"] > 0].copy()
+                        _base_prest_temp["cs_prestador"] = (
+                            _base_prest_temp["qtd_procedimentos"] / _base_prest_temp["fase_esperado"]
+                        ) * 10
+                        _base_prest_temp["valor_unitario_prestador"] = (
+                            _base_prest_temp["soma_valor"] / _base_prest_temp["qtd_procedimentos"]
+                        )
+
+                        if _base_prest_temp.empty:
+                            st.info(
+                                f"Nenhum procedimento com taxa nacional válida no Cluster "
+                                f"{_cluster_ativo_temp} — sem dado suficiente pra projetar."
+                            )
+                        else:
+                            _grupo_esp_proc_temp = ["ESPECIALIDADE", "NOME_PROCEDIMENTO"]
+
+                            # ---- CS Ideal (mínimo no Cluster) e CS Meta (Ideal x 0,80) ----
+                            _cs_ideal_temp = _base_prest_temp.groupby(
+                                _grupo_esp_proc_temp, observed=True
+                            )["cs_prestador"].min().reset_index().rename(columns={"cs_prestador": "cs_ideal"})
+                            _cs_ideal_temp["cs_meta"] = _cs_ideal_temp["cs_ideal"] * 0.8
+
+                            # ---- CS praticado no Cluster (soma de FASE/QP entre prestadores,
+                            # mesma regra usada no resto da aba — não é média dos CS individuais) ----
+                            _cs_cluster_temp = _base_prest_temp.groupby(_grupo_esp_proc_temp, observed=True).agg(
+                                _fase_soma=("fase_esperado", "sum"),
+                                _qp_soma=("qtd_procedimentos", "sum"),
+                            ).reset_index()
+                            _cs_cluster_temp["cs_praticado_cluster"] = (
+                                _cs_cluster_temp["_qp_soma"] / _cs_cluster_temp["_fase_soma"]
+                            ) * 10
+
+                            # ---- valor unitário ideal (mediana do Cluster) ----
+                            _valor_ideal_temp = _base_prest_temp.groupby(
+                                _grupo_esp_proc_temp, observed=True
+                            )["valor_unitario_prestador"].median().reset_index().rename(
+                                columns={"valor_unitario_prestador": "valor_unitario_ideal"}
+                            )
+
+                            # ---- o que já é praticado NA CIDADE escolhida (qtde de prestadores,
+                            # CS e valor unitário) — quando vazio, cai pro Cluster (fallback já
+                            # respondido: cidade sem prestador usa a referência do Cluster) ----
+                            _base_cidade_temp = _base_prest_temp[
+                                (_base_prest_temp["CIDADE_PRESTADOR"] == _cidade_ativa_temp)
+                                & (_base_prest_temp["UF"] == _uf_ativa_temp)
+                            ]
+                            _qtd_prest_cidade_temp = _base_cidade_temp.groupby(
+                                _grupo_esp_proc_temp, observed=True
+                            )["CD_PRESTADOR"].nunique().reset_index().rename(
+                                columns={"CD_PRESTADOR": "qtd_prestadores_cidade"}
+                            )
+                            _cs_cidade_temp = _base_cidade_temp.groupby(_grupo_esp_proc_temp, observed=True).agg(
+                                _fase_soma_cidade=("fase_esperado", "sum"),
+                                _qp_soma_cidade=("qtd_procedimentos", "sum"),
+                            ).reset_index()
+                            _cs_cidade_temp["cs_praticado_cidade"] = (
+                                _cs_cidade_temp["_qp_soma_cidade"] / _cs_cidade_temp["_fase_soma_cidade"]
+                            ) * 10
+                            _valor_cidade_temp = _base_cidade_temp.groupby(
+                                _grupo_esp_proc_temp, observed=True
+                            )["valor_unitario_prestador"].median().reset_index().rename(
+                                columns={"valor_unitario_prestador": "valor_unitario_cidade"}
+                            )
+
+                            _grade_cred_temp = (
+                                _cs_ideal_temp
+                                .merge(_cs_cluster_temp[_grupo_esp_proc_temp + ["cs_praticado_cluster"]],
+                                       on=_grupo_esp_proc_temp, how="left")
+                                .merge(_valor_ideal_temp, on=_grupo_esp_proc_temp, how="left")
+                                .merge(_qtd_prest_cidade_temp, on=_grupo_esp_proc_temp, how="left")
+                                .merge(_cs_cidade_temp[_grupo_esp_proc_temp + ["cs_praticado_cidade"]],
+                                       on=_grupo_esp_proc_temp, how="left")
+                                .merge(_valor_cidade_temp, on=_grupo_esp_proc_temp, how="left")
+                            )
+                            _grade_cred_temp["qtd_prestadores_cidade"] = (
+                                _grade_cred_temp["qtd_prestadores_cidade"].fillna(0).astype(int)
+                            )
+                            _grade_cred_temp["cs_praticado"] = _grade_cred_temp["cs_praticado_cidade"].where(
+                                _grade_cred_temp["qtd_prestadores_cidade"] > 0,
+                                _grade_cred_temp["cs_praticado_cluster"],
+                            )
+                            _grade_cred_temp["valor_unitario_praticado"] = _grade_cred_temp[
+                                "valor_unitario_cidade"
+                            ].where(
+                                _grade_cred_temp["qtd_prestadores_cidade"] > 0,
+                                _grade_cred_temp["valor_unitario_ideal"],
+                            )
+
+                            # ---- filtros de busca (procedimento por texto + especialidade) ----
+                            fcred1, fcred2 = st.columns([2, 1])
+                            with fcred1:
+                                _busca_proc_cred_temp = st.text_input(
+                                    "Filtrar por procedimento (digite parte do nome)",
+                                    key="cred_temp_busca_proc",
+                                )
+                            with fcred2:
+                                _opcoes_esp_cred_temp = ["Todas"] + sorted(
+                                    _grade_cred_temp["ESPECIALIDADE"].dropna().unique()
+                                )
+                                _esp_sel_cred_temp = st.selectbox(
+                                    "Especialidade", options=_opcoes_esp_cred_temp, key="cred_temp_especialidade"
+                                )
+
+                            _grade_exib_temp = _grade_cred_temp.copy()
+                            if _busca_proc_cred_temp.strip():
+                                _grade_exib_temp = _grade_exib_temp[
+                                    _grade_exib_temp["NOME_PROCEDIMENTO"].str.contains(
+                                        _busca_proc_cred_temp.strip(), case=False, na=False
+                                    )
+                                ]
+                            if _esp_sel_cred_temp != "Todas":
+                                _grade_exib_temp = _grade_exib_temp[
+                                    _grade_exib_temp["ESPECIALIDADE"] == _esp_sel_cred_temp
+                                ]
+                            _grade_exib_temp = _grade_exib_temp.sort_values(
+                                ["ESPECIALIDADE", "NOME_PROCEDIMENTO"]
+                            )
+
+                            if _grade_exib_temp.empty:
+                                st.info("Nenhum procedimento encontrado com esse filtro.")
+                            else:
+                                def _fmt_cs_cred_temp(v):
+                                    if v is None or (isinstance(v, float) and pd.isna(v)):
+                                        return "—"
+                                    s = f"{v:,.3f}"
+                                    return s.replace(",", "§").replace(".", ",").replace("§", ".")
+
+                                _tabela_final_temp = pd.DataFrame({
+                                    "Especialidade": _grade_exib_temp["ESPECIALIDADE"],
+                                    "Procedimento": _grade_exib_temp["NOME_PROCEDIMENTO"],
+                                    "Prestadores na cidade": _grade_exib_temp["qtd_prestadores_cidade"],
+                                    "CS praticado": _grade_exib_temp["cs_praticado"].map(_fmt_cs_cred_temp),
+                                    "CS Ideal": _grade_exib_temp["cs_ideal"].map(_fmt_cs_cred_temp),
+                                    "CS Meta": _grade_exib_temp["cs_meta"].map(_fmt_cs_cred_temp),
+                                    "Valor unit. praticado": _grade_exib_temp["valor_unitario_praticado"].map(fmt_brl),
+                                    "Valor unit. ideal": _grade_exib_temp["valor_unitario_ideal"].map(fmt_brl),
+                                })
+
+                                def _tabela_html_cred_temp(df_exibicao, scroll=True):
+                                    st.markdown("""
+                                        <style>
+                                        .grade-cred-temp-wrap-scroll {
+                                            overflow-x: auto; overflow-y: auto; max-height: 420px;
+                                        }
+                                        .grade-cred-temp { border-collapse: collapse; width: 100%; font-size: 12px; }
+                                        .grade-cred-temp th, .grade-cred-temp td {
+                                            border: 1px solid #444; padding: 4px 8px; text-align: right;
+                                            white-space: nowrap;
+                                        }
+                                        .grade-cred-temp th:nth-child(-n+2), .grade-cred-temp td:nth-child(-n+2) {
+                                            text-align: left; max-width: 260px; overflow: hidden;
+                                            text-overflow: ellipsis;
+                                        }
+                                        .grade-cred-temp th { font-weight: 600; }
+                                        </style>
+                                    """, unsafe_allow_html=True)
+                                    cabecalho = "".join(f"<th>{html.escape(str(c))}</th>" for c in df_exibicao.columns)
+
+                                    def _linha_html(linha):
+                                        celulas = []
+                                        for i, v in enumerate(linha):
+                                            texto = html.escape(str(v))
+                                            titulo_attr = f' title="{texto}"' if i < 2 else ""
+                                            celulas.append(f"<td{titulo_attr}>{texto}</td>")
+                                        return "<tr>" + "".join(celulas) + "</tr>"
+
+                                    linhas = "".join(
+                                        _linha_html(linha) for linha in df_exibicao.itertuples(index=False, name=None)
+                                    )
+                                    classe_wrap = "grade-cred-temp-wrap-scroll" if scroll else "grade-cred-temp-wrap"
+                                    st.markdown(
+                                        f"""<div class="{classe_wrap}"><table class="grade-cred-temp">
+                                        <thead><tr>{cabecalho}</tr></thead><tbody>{linhas}</tbody></table></div>""",
+                                        unsafe_allow_html=True,
+                                    )
+
+                                st.caption(
+                                    f"{len(_tabela_final_temp)} procedimento(s) no Cluster {_cluster_ativo_temp}."
+                                )
+                                _tabela_html_cred_temp(_tabela_final_temp, scroll=True)
     # ============================================================
     # COEFICIENTE DE SEVERIDADE (+ aba legada "🧪 Temp") — mesmo corpo de código rodado uma
     # vez por aba (ver _config_abas_cs_temp acima): "Coeficiente de Severidade" cobre TODOS
