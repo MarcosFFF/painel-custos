@@ -159,7 +159,7 @@ def calendario(y, m):
     du = sum(1 for d in range(1, total + 1) if eh_dia_util(date(y, m, d)))
     return total, du, dn
 def fmt_brl(v):
-    if v is None:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
     s = f"{v:,.2f}"
     s = s.replace(",", "§").replace(".", ",").replace("§", ".")
@@ -1486,8 +1486,9 @@ elif st.session_state.pagina == "severidade":
                             st.markdown(texto)
     # ============================================================
     # PROJEÇÃO DE CREDENCIAMENTO — escolhe UF + Cidade (mesmo sem nenhum prestador lá
-    # ainda) e projeta CS Ideal/Meta e valor unitário projetado, comparando com o que já
-    # é praticado (na própria cidade quando ela tiver dado; senão, no Cluster dela).
+    # ainda) e projeta CS Ideal/Meta e valor unitário projetado. Procedimento sem nenhum
+    # prestador na cidade escolhida fica sem essas informações (aparece "—") — nada de
+    # herdar a referência do Cluster nesse caso.
     # ============================================================
     with tab_credenciamento:
         st.markdown("#### 📍 Projeção de Credenciamento")
@@ -1498,11 +1499,12 @@ elif st.session_state.pagina == "severidade":
             "naquele procedimento — a melhor referência real observada.  \n"
             "**CS Meta** = CS Ideal × 0,80 (20% abaixo do Ideal).  \n"
             "**CMP** (Custo Médio Praticado) = valor total pago no procedimento ÷ qtde de "
-            "procedimentos — na própria cidade escolhida; quando ela ainda não tiver "
-            "prestador algum naquele procedimento, cai para o Cluster inteiro.  \n"
+            "procedimentos, na própria cidade escolhida.  \n"
             "**Valor unit. projetado** = (CMP + menor valor já praticado no Cluster) ÷ 2.  \n"
-            "**CS praticado** = mesma lógica: o CS já observado na cidade, ou no Cluster "
-            "quando a cidade ainda não tiver dado."
+            "**CS praticado** = o CS já observado na própria cidade escolhida.  \n"
+            "Quando a cidade ainda não tiver nenhum prestador para aquele procedimento "
+            "(Prestadores na cidade = 0), CS praticado, CS Ideal, CS Meta e Valor unit. "
+            "projetado aparecem como **—** — sem herdar a referência do Cluster."
         )
 
         _crosswalk_cred_temp = _carregar_crosswalk_cidade_cluster_temp(".")
@@ -1609,38 +1611,21 @@ elif st.session_state.pagina == "severidade":
                             )["cs_prestador"].min().reset_index().rename(columns={"cs_prestador": "cs_ideal"})
                             _cs_ideal_temp["cs_meta"] = _cs_ideal_temp["cs_ideal"] * 0.8
 
-                            # ---- CS praticado no Cluster (soma de FASE/QP entre prestadores,
-                            # mesma regra usada no resto da aba — não é média dos CS individuais) ----
-                            _cs_cluster_temp = _base_prest_temp.groupby(_grupo_esp_proc_temp, observed=True).agg(
-                                _fase_soma=("fase_esperado", "sum"),
-                                _qp_soma=("qtd_procedimentos", "sum"),
-                            ).reset_index()
-                            _cs_cluster_temp["cs_praticado_cluster"] = (
-                                _cs_cluster_temp["_qp_soma"] / _cs_cluster_temp["_fase_soma"]
-                            ) * 10
-
                             # ---- MENOR VALOR: o menor valor unitário já praticado por um prestador
                             # do Cluster, naquele procedimento (mesmo critério do CS Ideal — o
-                            # melhor caso real observado, não uma média/mediana). ----
+                            # melhor caso real observado, não uma média/mediana). Continua vindo do
+                            # Cluster inteiro (referência de negociação), mesmo quando a cidade
+                            # escolhida ainda não tiver prestador — só não aparece na tela nesse
+                            # caso (ver _tem_prestador_temp mais abaixo). ----
                             _menor_valor_temp = _base_prest_temp.groupby(
                                 _grupo_esp_proc_temp, observed=True
                             )["valor_unitario_prestador"].min().reset_index().rename(
                                 columns={"valor_unitario_prestador": "menor_valor"}
                             )
 
-                            # ---- CMP (Custo Médio Praticado) = valor total do procedimento ÷
-                            # qtde de procedimentos — no Cluster inteiro (referência de fallback). ----
-                            _cmp_cluster_temp = _base_prest_temp.groupby(_grupo_esp_proc_temp, observed=True).agg(
-                                _valor_soma_cluster=("soma_valor", "sum"),
-                                _qtd_soma_cluster=("qtd_procedimentos", "sum"),
-                            ).reset_index()
-                            _cmp_cluster_temp["cmp_cluster"] = (
-                                _cmp_cluster_temp["_valor_soma_cluster"] / _cmp_cluster_temp["_qtd_soma_cluster"]
-                            )
-
                             # ---- o que já é praticado NA CIDADE escolhida (qtde de prestadores,
-                            # CS e CMP) — quando vazio, cai pro Cluster (fallback já respondido:
-                            # cidade sem prestador usa a referência do Cluster) ----
+                            # CS e CMP) — sem fallback pro Cluster: procedimento sem prestador na
+                            # cidade fica sem essas informações (vira "—" na exibição). ----
                             _base_cidade_temp = _base_prest_temp[
                                 (_base_prest_temp["CIDADE_PRESTADOR"] == _cidade_ativa_temp)
                                 & (_base_prest_temp["UF"] == _uf_ativa_temp)
@@ -1667,11 +1652,7 @@ elif st.session_state.pagina == "severidade":
 
                             _grade_cred_temp = (
                                 _cs_ideal_temp
-                                .merge(_cs_cluster_temp[_grupo_esp_proc_temp + ["cs_praticado_cluster"]],
-                                       on=_grupo_esp_proc_temp, how="left")
                                 .merge(_menor_valor_temp, on=_grupo_esp_proc_temp, how="left")
-                                .merge(_cmp_cluster_temp[_grupo_esp_proc_temp + ["cmp_cluster"]],
-                                       on=_grupo_esp_proc_temp, how="left")
                                 .merge(_qtd_prest_cidade_temp, on=_grupo_esp_proc_temp, how="left")
                                 .merge(_cs_cidade_temp[_grupo_esp_proc_temp + ["cs_praticado_cidade"]],
                                        on=_grupo_esp_proc_temp, how="left")
@@ -1681,15 +1662,19 @@ elif st.session_state.pagina == "severidade":
                             _grade_cred_temp["qtd_prestadores_cidade"] = (
                                 _grade_cred_temp["qtd_prestadores_cidade"].fillna(0).astype(int)
                             )
+                            # ---- Sem prestador na cidade pra aquele procedimento -> nada de
+                            # números (nem CS praticado, nem CS Ideal/Meta, nem valor projetado),
+                            # só "—". Nada de herdar a referência do Cluster nesse caso: só entra
+                            # linha com dado quando a própria cidade já tem prestador ali. ----
+                            _tem_prestador_temp = _grade_cred_temp["qtd_prestadores_cidade"] > 0
                             _grade_cred_temp["cs_praticado"] = _grade_cred_temp["cs_praticado_cidade"].where(
-                                _grade_cred_temp["qtd_prestadores_cidade"] > 0,
-                                _grade_cred_temp["cs_praticado_cluster"],
+                                _tem_prestador_temp
                             )
-                            _grade_cred_temp["cmp"] = _grade_cred_temp["cmp_cidade"].where(
-                                _grade_cred_temp["qtd_prestadores_cidade"] > 0,
-                                _grade_cred_temp["cmp_cluster"],
-                            )
-                            # ---- Valor unit. projetado = (CMP + MENOR VALOR) / 2 ----
+                            _grade_cred_temp["cmp"] = _grade_cred_temp["cmp_cidade"].where(_tem_prestador_temp)
+                            _grade_cred_temp["cs_ideal"] = _grade_cred_temp["cs_ideal"].where(_tem_prestador_temp)
+                            _grade_cred_temp["cs_meta"] = _grade_cred_temp["cs_meta"].where(_tem_prestador_temp)
+                            # ---- Valor unit. projetado = (CMP + MENOR VALOR) / 2 — NaN se CMP for
+                            # NaN (cidade sem prestador), propagando o "—" automaticamente. ----
                             _grade_cred_temp["valor_unitario_projetado"] = (
                                 _grade_cred_temp["cmp"] + _grade_cred_temp["menor_valor"]
                             ) / 2
