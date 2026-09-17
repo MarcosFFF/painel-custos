@@ -1616,6 +1616,13 @@ elif st.session_state.pagina == "severidade":
                         _base_prest_temp["valor_unitario_prestador"] = (
                             _base_prest_temp["soma_valor"] / _base_prest_temp["qtd_procedimentos"]
                         )
+                        # ---- subconjunto só com valor pago real (soma_valor > 0) — usado nos
+                        # cálculos de CMP/menor valor (preço), pra não deixar um registro com
+                        # VL_PAGO zerado/ausente (erro de dado, não procedimento de graça) virar
+                        # "menor valor R$ 0,00" ou derrubar o CMP. O CS continua usando
+                        # _base_prest_temp inteiro (volume do procedimento vale mesmo sem preço
+                        # registrado). ----
+                        _base_valor_valido_temp = _base_prest_temp[_base_prest_temp["soma_valor"] > 0].copy()
 
                         if _base_prest_temp.empty:
                             st.info(
@@ -1632,24 +1639,32 @@ elif st.session_state.pagina == "severidade":
                             _cs_ideal_temp["cs_meta"] = _cs_ideal_temp["cs_ideal"] * 0.8
 
                             # ---- MENOR VALOR: o menor valor unitário já praticado por um prestador
-                            # do Cluster, naquele procedimento (mesmo critério do CS Ideal — o
-                            # melhor caso real observado, não uma média/mediana). Continua vindo do
-                            # Cluster inteiro (referência de negociação), mesmo quando a cidade
-                            # escolhida ainda não tiver prestador — só não aparece na tela nesse
-                            # caso (ver _tem_prestador_temp mais abaixo). Usa idxmin (não só min())
-                            # pra também guardar QUAL prestador/cidade bateu esse valor — dá pra
-                            # auditar no hover da grade, em vez de confiar cegamente no número. ----
-                            _idx_menor_valor_temp = _base_prest_temp.groupby(
-                                _grupo_esp_proc_temp, observed=True
-                            )["valor_unitario_prestador"].idxmin()
-                            _menor_valor_temp = _base_prest_temp.loc[_idx_menor_valor_temp, [
-                                "ESPECIALIDADE", "NOME_PROCEDIMENTO", "valor_unitario_prestador",
-                                "CD_PRESTADOR", "CIDADE_PRESTADOR",
-                            ]].rename(columns={
-                                "valor_unitario_prestador": "menor_valor",
-                                "CD_PRESTADOR": "menor_valor_prestador",
-                                "CIDADE_PRESTADOR": "menor_valor_cidade",
-                            })
+                            # do Cluster, naquele procedimento, EXCLUINDO registros com valor pago
+                            # zerado/ausente (_base_valor_valido_temp — ver nota acima; sem isso, um
+                            # VL_PAGO quebrado vira "menor valor R$ 0,00" e puxa o projetado pra
+                            # baixo indevidamente). Mesmo critério do CS Ideal — o melhor caso real
+                            # observado, não uma média/mediana. Continua vindo do Cluster inteiro
+                            # (referência de negociação), mesmo quando a cidade escolhida ainda não
+                            # tiver prestador — só não aparece na tela nesse caso (ver
+                            # _tem_prestador_temp mais abaixo). Usa idxmin (não só min()) pra também
+                            # guardar QUAL prestador/cidade bateu esse valor — dá pra auditar no
+                            # detalhe do cálculo, em vez de confiar cegamente no número. ----
+                            if _base_valor_valido_temp.empty:
+                                _menor_valor_temp = pd.DataFrame(
+                                    columns=_grupo_esp_proc_temp + ["menor_valor", "menor_valor_prestador", "menor_valor_cidade"]
+                                )
+                            else:
+                                _idx_menor_valor_temp = _base_valor_valido_temp.groupby(
+                                    _grupo_esp_proc_temp, observed=True
+                                )["valor_unitario_prestador"].idxmin()
+                                _menor_valor_temp = _base_valor_valido_temp.loc[_idx_menor_valor_temp, [
+                                    "ESPECIALIDADE", "NOME_PROCEDIMENTO", "valor_unitario_prestador",
+                                    "CD_PRESTADOR", "CIDADE_PRESTADOR",
+                                ]].rename(columns={
+                                    "valor_unitario_prestador": "menor_valor",
+                                    "CD_PRESTADOR": "menor_valor_prestador",
+                                    "CIDADE_PRESTADOR": "menor_valor_cidade",
+                                })
 
                             # ---- o que já é praticado NA CIDADE escolhida (qtde de prestadores,
                             # CS e CMP) — sem fallback pro Cluster: procedimento sem prestador na
@@ -1670,7 +1685,13 @@ elif st.session_state.pagina == "severidade":
                             _cs_cidade_temp["cs_praticado_cidade"] = (
                                 _cs_cidade_temp["_qp_soma_cidade"] / _cs_cidade_temp["_fase_soma_cidade"]
                             ) * 10
-                            _cmp_cidade_temp = _base_cidade_temp.groupby(_grupo_esp_proc_temp, observed=True).agg(
+                            # CMP também só com registros de valor pago válido (mesmo motivo do
+                            # menor valor) — um prestador com VL_PAGO zerado ainda conta em
+                            # "Prestadores na cidade" e no CS praticado, só fica fora do CMP.
+                            _base_cidade_valor_valido_temp = _base_cidade_temp[_base_cidade_temp["soma_valor"] > 0]
+                            _cmp_cidade_temp = _base_cidade_valor_valido_temp.groupby(
+                                _grupo_esp_proc_temp, observed=True
+                            ).agg(
                                 _valor_soma_cidade=("soma_valor", "sum"),
                                 _qtd_soma_cidade=("qtd_procedimentos", "sum"),
                             ).reset_index()
