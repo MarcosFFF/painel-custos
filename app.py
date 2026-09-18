@@ -1843,6 +1843,13 @@ elif st.session_state.pagina == "severidade":
                                     "Especialidade", options=_opcoes_esp_cred_temp, key="cred_temp_especialidade"
                                 )
 
+                            # ---- limpar filtros de busca desta aba, de uma vez só (mesmo
+                            # padrão da aba Temporária: apaga a key do session_state + rerun) ----
+                            if st.button("🧹 Limpar filtros", key="limpar_filtros_cred_temp"):
+                                for _chave_filtro_cred_temp in ("cred_temp_busca_proc", "cred_temp_especialidade"):
+                                    st.session_state.pop(_chave_filtro_cred_temp, None)
+                                st.rerun()
+
                             _grade_exib_temp = _grade_cred_temp.copy()
                             if _busca_proc_cred_temp.strip():
                                 _grade_exib_temp = _grade_exib_temp[
@@ -2131,6 +2138,30 @@ elif st.session_state.pagina == "severidade":
                     cluster_sel_temp = st.selectbox(
                         "Cluster", opcoes_cluster_temp, key=f"temp_filtro_cluster{_sufixo_aba_temp}"
                     )
+
+                # ---- limpar filtros, de uma vez só ---- apaga a key do session_state de cada
+                # campo (Mês/Plano/Especialidade também, só na aba Temporária — são únicos pra
+                # página toda) e força um rerun; sem a key, o widget volta pro valor padrão dele
+                # (lista vazia no multiselect, "Todos" no selectbox) já na próxima rodada. Não dá
+                # pra só reatribuir o valor aqui, porque os widgets acima já foram instanciados
+                # nesta mesma rodada — Streamlit não permite mudar o valor de um widget já criado
+                # sem passar pelo session_state + rerun.
+                _chaves_filtro_aba_temp = [
+                    f"temp_filtro_procedimento{_sufixo_aba_temp}",
+                    f"temp_filtro_prestador{_sufixo_aba_temp}",
+                    f"temp_filtro_uf{_sufixo_aba_temp}",
+                    f"temp_filtro_regiao{_sufixo_aba_temp}",
+                    f"temp_filtro_cidade{_sufixo_aba_temp}",
+                    f"temp_filtro_cluster{_sufixo_aba_temp}",
+                ]
+                if _sufixo_aba_temp == "_legado":
+                    _chaves_filtro_aba_temp += [
+                        "temp_filtro_mes", "temp_filtro_plano", "temp_filtro_especialidade",
+                    ]
+                if st.button("🧹 Limpar filtros", key=f"limpar_filtros_temp{_sufixo_aba_temp}"):
+                    for _chave_filtro_temp in _chaves_filtro_aba_temp:
+                        st.session_state.pop(_chave_filtro_temp, None)
+                    st.rerun()
 
                 # Sem nenhum dos 6 filtros desta aba aplicado, o corte comparado tende a se
                 # aproximar da própria base nacional usada como referência — o CS fica pouco
