@@ -376,7 +376,7 @@ def enviar_email_resumo_ranking_temp(destinatarios, periodo_texto, ranqueado_por
     msg = MIMEMultipart()
     msg["From"] = remetente
     msg["To"] = ", ".join(destinatarios)
-    msg["Subject"] = f"Resumo do Ranking - Odonto ({periodo_texto})"
+    msg["Subject"] = f"Resumo do Ranking - Odonto"
     msg.attach(MIMEText(corpo_html, "html", "utf-8"))
     try:
         with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as servidor:
