@@ -742,6 +742,10 @@ elif st.session_state.pagina == "severidade":
     # (30). Troque pra True pra restaurar o quadro original (os 7 campos + slider) do jeito
     # que era.
     MOSTRAR_FILTROS_TOPO = False
+    # Grade "por procedimento" (Qtde proced/Qtd vidas/Soma de uso/Uso.../Cálculo do FASE/FASE/
+    # Cálculo do QP/QP/Cálculo do CS/CS/CS Geral), que aparece logo antes do bloco "Onde estão
+    # as severidades" — fica oculta por enquanto, não apagada — troque pra True pra reexibi-la.
+    MOSTRAR_GRADE_CS_PROCEDIMENTO_TEMP = False
     col_titulo_sev, col_atualizar_sev = st.columns([5, 1])
     with col_titulo_sev:
         st.subheader("🕵️ Severidade")
@@ -2398,7 +2402,8 @@ elif st.session_state.pagina == "severidade":
                         unsafe_allow_html=True,
                     )
 
-                _tabela_html_temp(exib_rank_temp, scroll=True)
+                if MOSTRAR_GRADE_CS_PROCEDIMENTO_TEMP:
+                    _tabela_html_temp(exib_rank_temp, scroll=True)
 
                 # ---- prestadores do procedimento selecionado, com FASE/QP/CS por prestador ----
                 # Só aparece quando um procedimento específico está selecionado no filtro acima (com
