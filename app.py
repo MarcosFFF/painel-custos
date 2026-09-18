@@ -907,20 +907,21 @@ elif st.session_state.pagina == "severidade":
     m4.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
     m5.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
     st.divider()
-    # Sequência das abas: Temporária, Resumo, Projeção — "Coeficiente de Severidade" fica
-    # fora da lista (oculta) a menos que MOSTRAR_ABA_CS_TEMP seja religado.
+    # Sequência das abas: Temporária, Resumo, Projeção, SMILE DENTAL — "Coeficiente de
+    # Severidade" fica fora da lista (oculta) a menos que MOSTRAR_ABA_CS_TEMP seja religado.
     _labels_abas_temp = [
         "🧪 Temp: procedimentos selecionados", "Resumo", "📍 Projeção de Credenciamento",
+        "🔎 SMILE DENTAL",
     ]
     if MOSTRAR_ABA_CS_TEMP:
         _labels_abas_temp.append("Coeficiente de Severidade")
     if MOSTRAR_ABAS_OFICIAIS_EXTRAS:
         _labels_abas_temp += ["Ranking de Severidade", "Evolução mensal", "Ofensores", "Desvios de Solicitações"]
     _abas_criadas_temp = st.tabs(_labels_abas_temp)
-    tab_temp_legado, tab_resumo, tab_credenciamento = (
-        _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2]
+    tab_temp_legado, tab_resumo, tab_credenciamento, tab_smile_temp = (
+        _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2], _abas_criadas_temp[3]
     )
-    _prox_idx_aba_temp = 3
+    _prox_idx_aba_temp = 4
     if MOSTRAR_ABA_CS_TEMP:
         tab_temp = _abas_criadas_temp[_prox_idx_aba_temp]
         _prox_idx_aba_temp += 1
@@ -936,14 +937,22 @@ elif st.session_state.pagina == "severidade":
         9040, 110, 2035, 5314, 4500, 1064, 4425,
         330, 550, 3015, 2025, 9010, 9030,
     ]
+    # Nome do prestador que a aba "🔎 SMILE DENTAL" trava por padrão no filtro Prestador —
+    # investigação pontual de volume/CS estranho nos procedimentos 550/110/100/510 dessa
+    # clínica. Comparado por substring (maiúsculas, sem espaço nas pontas) contra as opções
+    # de prestador dos filtros atuais, então tolera pequenas diferenças de acentuação/sufixo.
+    NOME_PRESTADOR_SMILE_TEMP = "SMILE DENTAL CLINICA ODONTOLOGICA LTDA ME"
     # (tab_obj, título exibido, lista de códigos que restringe a aba — None = todos os
-    # procedimentos, sufixo pra deixar as keys dos widgets únicas por aba) — o corpo da aba
-    # (logo abaixo) roda uma vez por item desta lista, reaproveitando o mesmo código pras duas.
+    # procedimentos, sufixo pra deixar as keys dos widgets únicas por aba, nome do prestador
+    # travado por padrão no filtro Prestador dessa aba — None = sem trava, nenhum, mostra as
+    # colunas Cálculo do QP/QP — True mostra, False esconde) — o corpo da aba (logo abaixo)
+    # roda uma vez por item desta lista, reaproveitando o mesmo código pra todas.
     _config_abas_cs_temp = [
-        (tab_temp_legado, "🧪 Temp: procedimentos selecionados", CODIGOS_TEMP_LEGADO, "_legado"),
+        (tab_temp_legado, "🧪 Temp: procedimentos selecionados", CODIGOS_TEMP_LEGADO, "_legado", None, True),
+        (tab_smile_temp, "🔎 SMILE DENTAL", None, "_smile", NOME_PRESTADOR_SMILE_TEMP, False),
     ]
     if MOSTRAR_ABA_CS_TEMP:
-        _config_abas_cs_temp.append((tab_temp, "Coeficiente de Severidade", None, ""))
+        _config_abas_cs_temp.append((tab_temp, "Coeficiente de Severidade", None, "", None, True))
     if MOSTRAR_ABAS_OFICIAIS_EXTRAS:
         # ---------- RANKING DE SEVERIDADE (FASE — só gráficos, sem tabelas) ----------
         JANELA_5_BARRAS = 300  # altura fixa (px) que mostra ~5 barras; o resto rola dentro do quadro
@@ -2027,9 +2036,23 @@ elif st.session_state.pagina == "severidade":
     # vez por aba (ver _config_abas_cs_temp acima): "Coeficiente de Severidade" cobre TODOS
     # os procedimentos; "🧪 Temp" fica restrita aos 13 códigos originais (CODIGOS_TEMP_LEGADO).
     # ============================================================
-    for _tab_obj_cs_temp, _titulo_aba_temp, _codigos_restritos_temp, _sufixo_aba_temp in _config_abas_cs_temp:
+    for (
+        _tab_obj_cs_temp, _titulo_aba_temp, _codigos_restritos_temp, _sufixo_aba_temp,
+        _prestador_fixo_temp, _mostrar_calculo_qp_temp,
+    ) in _config_abas_cs_temp:
         with _tab_obj_cs_temp:
             st.markdown(f"#### {_titulo_aba_temp}")
+
+            if _sufixo_aba_temp == "_smile":
+                st.caption(
+                    "Aba dedicada pra investigar o volume de procedimentos (550, 110, 100 e "
+                    "510) da SMILE DENTAL CLINICA ODONTOLOGICA LTDA ME em São Paulo — filtro "
+                    "Prestador já vem travado nela; troque livremente se quiser comparar com "
+                    "outro prestador. \"CS da Cidade\"/\"Cálculo do CS Cidade\" mostram o CS de "
+                    "todos os prestadores da mesma cidade, lado a lado com o CS da própria "
+                    "clínica (colunas CS/Cálculo do CS), pra ajudar a enxergar se o volume dela "
+                    "realmente destoa do praticado ao redor."
+                )
 
             st.caption(
                 "CS (Coeficiente de Severidade) = (QP ÷ FASE) × 10 (Se o resultado igual a 10 "
@@ -2109,6 +2132,35 @@ elif st.session_state.pagina == "severidade":
                 opcoes_regiao_temp = _opcoes_coluna_temp("REGIAO")
                 opcoes_cidade_temp = _opcoes_coluna_temp("CIDADE_PRESTADOR")
                 opcoes_cluster_temp = _opcoes_coluna_temp("CLUSTER")
+
+                # ---- trava o filtro Prestador desta aba num prestador fixo (só a aba "🔎 SMILE
+                # DENTAL" usa isso hoje) — precisa rodar ANTES do st.selectbox correspondente ser
+                # instanciado (Streamlit só aceita pré-setar o session_state de uma key antes do
+                # widget dessa key existir nesta rodada). Comparação por substring maiúscula pra
+                # tolerar pequena diferença de acentuação/espaço no nome cadastrado na base. Só
+                # roda na primeira vez que a aba aparece nesta sessão — depois disso a key já
+                # existe no session_state e o usuário fica livre pra trocar de prestador (ou
+                # limpar com "🧹 Limpar filtros", que apaga a key e faz a trava valer de novo).
+                if _prestador_fixo_temp is not None:
+                    _chave_prestador_fixo_temp = f"temp_filtro_prestador{_sufixo_aba_temp}"
+                    if _chave_prestador_fixo_temp not in st.session_state:
+                        _alvo_prestador_fixo_temp = _prestador_fixo_temp.strip().upper()
+                        _match_prestador_fixo_temp = next(
+                            (
+                                p for p in opcoes_prestador_temp
+                                if _alvo_prestador_fixo_temp in str(p).strip().upper()
+                            ),
+                            None,
+                        )
+                        if _match_prestador_fixo_temp is not None:
+                            st.session_state[_chave_prestador_fixo_temp] = _match_prestador_fixo_temp
+                        else:
+                            st.warning(
+                                f"Não encontrei \"{_prestador_fixo_temp}\" entre os prestadores "
+                                "dos filtros atuais (Mês/Plano/Especialidade da página) — "
+                                "selecione manualmente no filtro Prestador abaixo, ou confira se "
+                                "o nome está exatamente assim na base."
+                            )
 
                 (
                     fc_proc_temp, fc_prest_temp, fc_uf_temp,
@@ -2400,10 +2452,15 @@ elif st.session_state.pagina == "severidade":
                         rank_cidade_temp["qtd_procedimentos"] / rank_cidade_temp["fase_esperado_cidade"]
                     ) * 10
                     rank_temp = rank_temp.merge(
-                        rank_cidade_temp[["NOME_PROCEDIMENTO", "cs_cidade"]], on="NOME_PROCEDIMENTO", how="left"
+                        rank_cidade_temp[[
+                            "NOME_PROCEDIMENTO", "cs_cidade", "qtd_procedimentos", "fase_esperado_cidade",
+                        ]].rename(columns={"qtd_procedimentos": "qtd_procedimentos_cidade"}),
+                        on="NOME_PROCEDIMENTO", how="left",
                     )
                 else:
                     rank_temp["cs_cidade"] = float("nan")
+                    rank_temp["qtd_procedimentos_cidade"] = float("nan")
+                    rank_temp["fase_esperado_cidade"] = float("nan")
 
                 # ---- coluna com o CS formatado com 3 casas decimais (padrão fmt_float2 usa só 2) ----
                 def _fmt_cs_temp(v):
@@ -2437,6 +2494,16 @@ elif st.session_state.pagina == "severidade":
                     _calculo_cs_temp(qp, fase)
                     for qp, fase in zip(rank_temp["qp_praticado"], rank_temp["fase_esperado"])
                 ]
+                # "Cálculo do CS Cidade" — mesma continha do "Cálculo do CS", só que com o QP e
+                # o FASE calculados sobre a cidade de referência (todos os prestadores dela),
+                # não só o corte desta aba. "—" quando não há cidade de referência (mesma regra
+                # de "CS da Cidade" logo acima).
+                rank_temp["calculo_cs_cidade"] = [
+                    _calculo_cs_temp(qp_cid, fase_cid)
+                    for qp_cid, fase_cid in zip(
+                        rank_temp["qtd_procedimentos_cidade"], rank_temp["fase_esperado_cidade"]
+                    )
+                ]
 
                 # ---- ordena a grade por CS decrescente (do mais severo pro menos severo) ----
                 rank_temp = rank_temp.sort_values("cs", ascending=False)
@@ -2462,13 +2529,19 @@ elif st.session_state.pagina == "severidade":
                     exib_rank_temp["calculo_cs"] = "—"
                 else:
                     exib_rank_temp["cs"] = exib_rank_temp["cs"].map(_fmt_cs_temp)
-                exib_rank_temp = exib_rank_temp[[
+                # "Cálculo do QP"/"QP" ficam de fora quando a aba pede (_mostrar_calculo_qp_temp
+                # = False, hoje só a "🔎 SMILE DENTAL") — o resto das colunas é igual pra todas.
+                _colunas_exib_rank_temp = [
                     "rotulo", "qtd_procedimentos", "qtd_usuarios", "quantidade_uso",
                     "uso_por_procedimento", "uso_por_vida",
                     "calculo_fase_esperado", "fase_esperado",
-                    "calculo_qp", "qp_praticado",
-                    "calculo_cs", "cs", "cs_geral", "cs_cidade",
-                ]].rename(columns={
+                ]
+                if _mostrar_calculo_qp_temp:
+                    _colunas_exib_rank_temp += ["calculo_qp", "qp_praticado"]
+                _colunas_exib_rank_temp += [
+                    "calculo_cs", "cs", "cs_geral", "calculo_cs_cidade", "cs_cidade",
+                ]
+                exib_rank_temp = exib_rank_temp[_colunas_exib_rank_temp].rename(columns={
                     "rotulo": "Procedimento",
                     "qtd_procedimentos": "Qtde proced",
                     "qtd_usuarios": "Qtd vidas",
@@ -2482,6 +2555,7 @@ elif st.session_state.pagina == "severidade":
                     "calculo_cs": "Cálculo do CS",
                     "cs": "CS",
                     "cs_geral": "CS Geral",
+                    "calculo_cs_cidade": "Cálculo do CS Cidade",
                     "cs_cidade": "CS da Cidade",
                 })
                 # Grade montada como tabela HTML própria, em vez de st.dataframe: o widget padrão do
