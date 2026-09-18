@@ -2735,12 +2735,254 @@ elif st.session_state.pagina == "severidade":
                 _mostrar_grade_cs_temp = MOSTRAR_GRADE_CS_PROCEDIMENTO_TEMP or prest_sel_temp != "Todos"
                 if _mostrar_grade_cs_temp:
                     st.caption(
+                        "**Alerta de volume**  \n"
                         "🚩 bandeirinha vermelha: volume ≥ 5× a média por prestador (alerta "
                         "forte)  \n"
                         "⚠️ triângulo amarelo: volume ≥ 2× a média por prestador (atenção "
                         "moderada)"
                     )
                     _tabela_html_temp(exib_rank_temp, scroll=True)
+
+                # ============================================================
+                # BENCHMARK — 30 prestadores de volume médio, em cidades/UFs/clusters
+                # diferentes (só na aba "🔎 SMILE DENTAL") — referência do que é "normal"
+                # nos mesmos 4 procedimentos sob suspeita (550, 110, 100 e 510), pra
+                # comparar com a grade da SMILE acima. Escolhe prestadores com volume
+                # perto da mediana (nem outlier alto, nem baixo demais) entre todos os
+                # outros prestadores que fazem esses procedimentos nos filtros atuais da
+                # página, espalhando a escolha entre cidades/UFs/clusters diferentes.
+                # Mesmas contas da grade principal (Qtde por prestador, FASE, CS, Índice
+                # de Atenção), recalculadas prestador a prestador.
+                # ============================================================
+                if _sufixo_aba_temp == "_smile":
+                    CODIGOS_BENCHMARK_SMILE_TEMP = [550, 110, 100, 510]
+                    QTD_BENCHMARK_SMILE_TEMP = 30
+
+                    def _div_segura_temp(a, b):
+                        if b is None or pd.isna(b) or b == 0 or pd.isna(a):
+                            return float("nan")
+                        return a / b
+
+                    df_bench_base_temp = df_filtrado[
+                        df_filtrado["CD_PROCEDIMENTO"].isin(CODIGOS_BENCHMARK_SMILE_TEMP)
+                    ]
+
+                    # Mesma comparação por substring da trava do filtro Prestador (mais
+                    # acima nesta aba), mas independente do que estiver selecionado ali
+                    # agora — exclui a própria SMILE da amostra de referência mesmo que o
+                    # usuário tenha trocado o filtro Prestador pra outra clínica.
+                    _alvo_bench_smile_temp = NOME_PRESTADOR_SMILE_TEMP.strip().upper()
+                    _cds_smile_bench_temp = {
+                        cd for cd, nome in zip(
+                            df_filtrado["CD_PRESTADOR"], df_filtrado["NOME_PRESTADOR"]
+                        )
+                        if _alvo_bench_smile_temp in str(nome).strip().upper()
+                    }
+
+                    if df_bench_base_temp.empty:
+                        st.info(
+                            "Não encontrei nenhum dos procedimentos 550, 110, 100 ou 510 "
+                            "nos filtros atuais (Mês/Plano/Especialidade) pra montar a "
+                            "amostra de referência."
+                        )
+                    else:
+                        _bench_grp_temp = (
+                            df_bench_base_temp[
+                                ~df_bench_base_temp["CD_PRESTADOR"].isin(_cds_smile_bench_temp)
+                            ]
+                            .groupby("CD_PRESTADOR", observed=True)
+                            .agg(
+                                qtd_procedimentos_total=("qtd_procedimentos", "sum"),
+                                nome_prestador=(
+                                    "NOME_PRESTADOR",
+                                    lambda x: x.mode().iloc[0] if not x.mode().empty else "—",
+                                ),
+                                cidade_prestador=(
+                                    "CIDADE_PRESTADOR",
+                                    lambda x: x.mode().iloc[0] if not x.mode().empty else "—",
+                                ),
+                                uf_prestador=(
+                                    "UF", lambda x: x.mode().iloc[0] if not x.mode().empty else "—"
+                                ),
+                                cluster_prestador=(
+                                    "CLUSTER", lambda x: x.mode().iloc[0] if not x.mode().empty else "—"
+                                ),
+                            )
+                            .reset_index()
+                        )
+
+                        if _bench_grp_temp.empty:
+                            st.info(
+                                "Não encontrei outros prestadores (além da SMILE) com "
+                                "volume nesses procedimentos, nos filtros atuais."
+                            )
+                        else:
+                            # ---- "volume médio" = perto da mediana do volume total (soma dos 4
+                            # códigos), entre o 25º e o 75º percentil — evita pegar outlier alto
+                            # (pareceria "outra SMILE") ou baixo demais (quase sem uso). ----
+                            _mediana_bench_temp = _bench_grp_temp["qtd_procedimentos_total"].median()
+                            _p25_bench_temp = _bench_grp_temp["qtd_procedimentos_total"].quantile(0.25)
+                            _p75_bench_temp = _bench_grp_temp["qtd_procedimentos_total"].quantile(0.75)
+                            _candidatos_bench_temp = _bench_grp_temp[
+                                _bench_grp_temp["qtd_procedimentos_total"].between(
+                                    _p25_bench_temp, _p75_bench_temp
+                                )
+                            ]
+                            if len(_candidatos_bench_temp) < QTD_BENCHMARK_SMILE_TEMP:
+                                _candidatos_bench_temp = _bench_grp_temp
+                            _candidatos_bench_temp = _candidatos_bench_temp.copy()
+                            _candidatos_bench_temp["dist_mediana"] = (
+                                _candidatos_bench_temp["qtd_procedimentos_total"] - _mediana_bench_temp
+                            ).abs()
+                            _candidatos_bench_temp = _candidatos_bench_temp.sort_values("dist_mediana")
+
+                            # ---- espalha a escolha entre cidades/UFs/clusters diferentes: 1ª
+                            # passada só aceita quem traz cidade, UF OU cluster ainda não visto;
+                            # 2ª passada completa até 30 com quem sobrou (ainda por proximidade
+                            # da mediana), caso a base não tenha diversidade suficiente. ----
+                            _selecionados_bench_temp = []
+                            _cidades_vistas_temp, _ufs_vistas_temp, _clusters_vistos_temp = set(), set(), set()
+                            for _linha_bench_temp in _candidatos_bench_temp.itertuples(index=False):
+                                if len(_selecionados_bench_temp) >= QTD_BENCHMARK_SMILE_TEMP:
+                                    break
+                                _e_novo_temp = (
+                                    _linha_bench_temp.cidade_prestador not in _cidades_vistas_temp
+                                    or _linha_bench_temp.uf_prestador not in _ufs_vistas_temp
+                                    or _linha_bench_temp.cluster_prestador not in _clusters_vistos_temp
+                                )
+                                if _e_novo_temp:
+                                    _selecionados_bench_temp.append(_linha_bench_temp.CD_PRESTADOR)
+                                    _cidades_vistas_temp.add(_linha_bench_temp.cidade_prestador)
+                                    _ufs_vistas_temp.add(_linha_bench_temp.uf_prestador)
+                                    _clusters_vistos_temp.add(_linha_bench_temp.cluster_prestador)
+                            if len(_selecionados_bench_temp) < QTD_BENCHMARK_SMILE_TEMP:
+                                _restantes_bench_temp = _candidatos_bench_temp[
+                                    ~_candidatos_bench_temp["CD_PRESTADOR"].isin(_selecionados_bench_temp)
+                                ]
+                                _faltam_bench_temp = QTD_BENCHMARK_SMILE_TEMP - len(_selecionados_bench_temp)
+                                _selecionados_bench_temp += _restantes_bench_temp["CD_PRESTADOR"].head(
+                                    _faltam_bench_temp
+                                ).tolist()
+
+                            _info_bench_temp = _bench_grp_temp.set_index("CD_PRESTADOR")
+                            _df_sel_bench_temp = df_bench_base_temp[
+                                df_bench_base_temp["CD_PRESTADOR"].isin(_selecionados_bench_temp)
+                            ]
+                            _nomes_bench_temp = _df_sel_bench_temp["NOME_PROCEDIMENTO"].dropna().unique().tolist()
+
+                            # ---- vidas (pacientes distintos) por prestador+procedimento, sem
+                            # contar o mesmo paciente 2x (mesma lógica de vidas_por usada no
+                            # resto do painel — nunca soma a coluna qtd_usuarios já agregada em
+                            # nível mais fino, que dobraria paciente repetido em mês/plano
+                            # diferente). ----
+                            _usuarios_bench_temp = usuarios_filtrado[
+                                usuarios_filtrado["NOME_PROCEDIMENTO"].isin(_nomes_bench_temp)
+                            ]
+                            _vidas_prest_proc_bench_temp = vidas_por(
+                                _usuarios_bench_temp, ["CD_PRESTADOR", "NOME_PROCEDIMENTO"]
+                            ).set_index(["CD_PRESTADOR", "NOME_PROCEDIMENTO"])["qtd_usuarios"]
+
+                            # ---- referência nacional (reaproveita nacional_temp_flat, já
+                            # calculado acima sobre agregado/base_usuarios CRUS) e referência por
+                            # cidade (dentro dos filtros da página, igual à "CS da Cidade" da
+                            # grade principal) — uma linha por (cidade, procedimento). ----
+                            _nacional_bench_idx_temp = nacional_temp_flat.set_index("NOME_PROCEDIMENTO")
+                            _cidade_proc_bench_temp = df_bench_base_temp.groupby(
+                                ["CIDADE_PRESTADOR", "NOME_PROCEDIMENTO"], observed=True
+                            ).agg(
+                                qtd_procedimentos_cidade=("qtd_procedimentos", "sum"),
+                                qtd_prestadores_cidade=("CD_PRESTADOR", "nunique"),
+                            )
+
+                            _linhas_bench_temp = []
+                            for _cd_prest_temp, _grupo_prest_temp in _df_sel_bench_temp.groupby(
+                                "CD_PRESTADOR", observed=True
+                            ):
+                                _info_temp = _info_bench_temp.loc[_cd_prest_temp]
+                                _cidade_prest_temp = _info_temp["cidade_prestador"]
+                                _por_proc_temp = _grupo_prest_temp.groupby(
+                                    "NOME_PROCEDIMENTO", observed=True
+                                )["qtd_procedimentos"].sum()
+                                for _nome_proc_temp, _qtd_prest_proc_temp in _por_proc_temp.items():
+                                    _cod_proc_temp = _grupo_prest_temp.loc[
+                                        _grupo_prest_temp["NOME_PROCEDIMENTO"] == _nome_proc_temp,
+                                        "CD_PROCEDIMENTO",
+                                    ].iloc[0]
+                                    _qtd_vidas_prest_temp = _vidas_prest_proc_bench_temp.get(
+                                        (_cd_prest_temp, _nome_proc_temp), 0
+                                    )
+                                    if _nome_proc_temp in _nacional_bench_idx_temp.index:
+                                        _qpn_temp = _nacional_bench_idx_temp.loc[
+                                            _nome_proc_temp, "qtd_procedimentos_nacional"
+                                        ]
+                                        _qvn_temp = _nacional_bench_idx_temp.loc[
+                                            _nome_proc_temp, "qtd_vidas_nacional"
+                                        ]
+                                        _pn_temp = _nacional_bench_idx_temp.loc[
+                                            _nome_proc_temp, "qtd_prestadores_nacional"
+                                        ]
+                                    else:
+                                        _qpn_temp = _qvn_temp = _pn_temp = float("nan")
+                                    _qpp_nacional_temp = _div_segura_temp(_qpn_temp, _pn_temp)
+                                    _chave_cidade_temp = (_cidade_prest_temp, _nome_proc_temp)
+                                    if _chave_cidade_temp in _cidade_proc_bench_temp.index:
+                                        _qpc_temp = _cidade_proc_bench_temp.loc[
+                                            _chave_cidade_temp, "qtd_procedimentos_cidade"
+                                        ]
+                                        _pc_temp = _cidade_proc_bench_temp.loc[
+                                            _chave_cidade_temp, "qtd_prestadores_cidade"
+                                        ]
+                                        _qpp_cidade_temp = _div_segura_temp(_qpc_temp, _pc_temp)
+                                    else:
+                                        _qpp_cidade_temp = float("nan")
+                                    _fase_temp = _div_segura_temp(_qpn_temp, _qvn_temp) * _qtd_vidas_prest_temp
+                                    _cs_temp = _div_segura_temp(_qtd_prest_proc_temp, _fase_temp) * 10
+                                    _ref_atencao_temp = (
+                                        _qpp_cidade_temp if pd.notna(_qpp_cidade_temp) else _qpp_nacional_temp
+                                    )
+                                    if pd.isna(_ref_atencao_temp) or _ref_atencao_temp == 0:
+                                        _icone_bench_temp, _rotulo_atencao_bench_temp = "", "—"
+                                    else:
+                                        _razao_bench_temp = _qtd_prest_proc_temp / _ref_atencao_temp
+                                        _icone_bench_temp = _icone_indice_atencao_temp(_razao_bench_temp)
+                                        _rotulo_atencao_bench_temp = _texto_indice_atencao_temp(_razao_bench_temp)
+                                    _linhas_bench_temp.append({
+                                        "Prestador": _info_temp["nome_prestador"],
+                                        "Cidade": _cidade_prest_temp,
+                                        "UF": _info_temp["uf_prestador"],
+                                        "Cluster": _info_temp["cluster_prestador"],
+                                        "Procedimento": f"{_icone_bench_temp}{int(_cod_proc_temp)} — {_nome_proc_temp}",
+                                        "Qtde proced": fmt_int(_qtd_prest_proc_temp),
+                                        "Qtde por prestador Nacional": fmt_float2(_qpp_nacional_temp),
+                                        "Qtde por prestador - Cidade": fmt_float2(_qpp_cidade_temp),
+                                        "Qtd vidas": fmt_int(_qtd_vidas_prest_temp),
+                                        "FASE": fmt_float2(_fase_temp),
+                                        "CS": _fmt_cs_temp(_cs_temp),
+                                        "Índice de Atenção (Volume)": _rotulo_atencao_bench_temp,
+                                    })
+
+                            st.divider()
+                            st.markdown(
+                                f"**Referência — {len(_selecionados_bench_temp)} prestadores de "
+                                "volume médio, em cidades/UFs/clusters diferentes**"
+                            )
+                            st.caption(
+                                "Amostra de comparação: outros prestadores (excluindo a própria "
+                                "SMILE) com volume perto da mediana nos mesmos 4 procedimentos sob "
+                                "suspeita (550, 110, 100 e 510), escolhidos espalhados em cidades, "
+                                "UFs e clusters diferentes — não são os maiores nem os menores "
+                                "volumes, servem só de referência do que é \"normal\". Mesmas "
+                                "contas da grade acima (Qtde por prestador, FASE, CS, Índice de "
+                                "Atenção), calculadas prestador a prestador — mesmos ícones "
+                                "🚩/⚠️ da legenda \"Alerta de volume\"."
+                            )
+                            if not _linhas_bench_temp:
+                                st.info("Nenhuma linha de referência pôde ser calculada.")
+                            else:
+                                _df_bench_exibicao_temp = pd.DataFrame(_linhas_bench_temp).sort_values(
+                                    ["UF", "Cidade", "Prestador", "Procedimento"]
+                                )
+                                _tabela_html_temp(_df_bench_exibicao_temp, scroll=True)
 
                 # ---- prestadores do procedimento selecionado, com FASE/QP/CS por prestador ----
                 # Só aparece quando um procedimento específico está selecionado no filtro acima (com
