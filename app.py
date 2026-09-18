@@ -2069,15 +2069,16 @@ elif st.session_state.pagina == "severidade":
 
             if _sufixo_aba_temp == "_ranking":
                 st.caption(
-                    "Mesmos filtros e cálculos das outras abas (Procedimento, Prestador, UF, "
-                    "Região, Cidade, Cluster), mas a grade só traz as colunas de volume/"
-                    "severidade — sem trava de prestador. Use \"Ranquear por\" (abaixo dos "
-                    "filtros) pra reordenar a grade pela métrica que interessar — sempre do "
-                    "maior pro menor.  \n"
-                    "\"Qtde por prestador Nacional/Cidade\" e o \"Índice de Atenção (Volume)\" só "
-                    "fazem sentido comparando UM prestador específico contra a média — com o "
-                    "filtro Prestador em \"Todos\", o Índice de Atenção fica \"—\" (a \"Qtde "
-                    "proced\" ali vira a soma de vários prestadores misturados)."
+                    "Cada LINHA aqui é um prestador (não um procedimento) — soma todos os "
+                    "procedimentos que ele faz dentro dos filtros atuais (Procedimento, "
+                    "Prestador, UF, Região, Cidade, Cluster). \"Qtde por prestador Nacional/"
+                    "Cidade\", FASE, CS e CS da Cidade são somados procedimento a "
+                    "procedimento (cada um com sua própria taxa nacional) e só depois viram "
+                    "um número só por prestador — não é média dos procedimentos. \"Qtde por "
+                    "prestador - Cidade\"/\"CS da Cidade\" comparam cada prestador com a "
+                    "PRÓPRIA cidade dele (cada linha pode ser de uma cidade diferente). Use "
+                    "\"Ranquear por\" (abaixo dos filtros) pra reordenar a grade pela métrica "
+                    "que interessar — sempre do maior pro menor."
                 )
 
             st.caption(
@@ -2370,23 +2371,30 @@ elif st.session_state.pagina == "severidade":
                 # página + os dois filtros extras desta aba (procedimento e prestador) aplicados —
                 # não usa mais "peso do grupo" (era só usado pelo FASE oficial, que esta aba não
                 # exibe mais), então não precisa mais calcular sobre a base toda antes de recortar.
-                rank_temp = ranking_severidade(
-                    df_temp, "NOME_PROCEDIMENTO", top_n=1_000_000, usuarios=usuarios_temp
-                ).copy()
-                nome_para_codigo_temp = {v: k for k, v in mapa_cod_nome_temp.items()}
-                rank_temp["CD_PROCEDIMENTO"] = rank_temp["NOME_PROCEDIMENTO"].map(nome_para_codigo_temp)
-                # Lista de compreensão em vez de concatenar Series com "+": como
-                # NOME_PROCEDIMENTO (e CD_PROCEDIMENTO depois do .map() logo acima) ficam em
-                # dtype category/arrow, o "+" vetorizado do pandas pode estourar TypeError
-                # ("operation 'add' not supported for dtype 'str' with dtype 'category'")
-                # dependendo da versão do pandas/pyarrow — inclusive .astype(str)/.map(str)
-                # sozinhos não bastam, porque Series.map em coluna category devolve outra
-                # category. Iterando com zip(), cada valor já sai como escalar Python comum,
-                # então o f-string nunca encosta em operação vetorizada de Series.
-                rank_temp["rotulo"] = [
-                    f"{int(cod)} — {nome}"
-                    for cod, nome in zip(rank_temp["CD_PROCEDIMENTO"], rank_temp["NOME_PROCEDIMENTO"])
-                ]
+                # A aba "📊 Ranking" pediu a grade agrupada por PRESTADOR, não por procedimento
+                # — o resto das abas (Temp/SMILE/Coeficiente) continua ranqueando por
+                # procedimento, como sempre. Monta rank_temp com o rótulo certo pra cada caso;
+                # o cálculo de FASE/CS/Qtde-por-prestador (que depende de qual dimensão virou
+                # linha) só termina mais abaixo, depois de ter a base nacional (nacional_temp_flat)
+                # pronta — usada pelos dois caminhos.
+                if _sufixo_aba_temp != "_ranking":
+                    rank_temp = ranking_severidade(
+                        df_temp, "NOME_PROCEDIMENTO", top_n=1_000_000, usuarios=usuarios_temp
+                    ).copy()
+                    nome_para_codigo_temp = {v: k for k, v in mapa_cod_nome_temp.items()}
+                    rank_temp["CD_PROCEDIMENTO"] = rank_temp["NOME_PROCEDIMENTO"].map(nome_para_codigo_temp)
+                    # Lista de compreensão em vez de concatenar Series com "+": como
+                    # NOME_PROCEDIMENTO (e CD_PROCEDIMENTO depois do .map() logo acima) ficam em
+                    # dtype category/arrow, o "+" vetorizado do pandas pode estourar TypeError
+                    # ("operation 'add' not supported for dtype 'str' with dtype 'category'")
+                    # dependendo da versão do pandas/pyarrow — inclusive .astype(str)/.map(str)
+                    # sozinhos não bastam, porque Series.map em coluna category devolve outra
+                    # category. Iterando com zip(), cada valor já sai como escalar Python comum,
+                    # então o f-string nunca encosta em operação vetorizada de Series.
+                    rank_temp["rotulo"] = [
+                        f"{int(cod)} — {nome}"
+                        for cod, nome in zip(rank_temp["CD_PROCEDIMENTO"], rank_temp["NOME_PROCEDIMENTO"])
+                    ]
 
                 # ---- base nacional (sem filtro nenhum) por procedimento — referência do "esperado" ----
                 # Taxa nacional = qtd_procedimentos ÷ qtd_vidas, calculada sobre `agregado`/`base_usuarios`
@@ -2415,9 +2423,14 @@ elif st.session_state.pagina == "severidade":
                 _prestadores_nacional_temp = agregado.groupby(
                     "NOME_PROCEDIMENTO", observed=True
                 )["CD_PRESTADOR"].nunique()
+                # .astype(float) no final: Series.map() numa coluna category (NOME_PROCEDIMENTO)
+                # contra outra Series pode devolver o resultado também em dtype category (mesmo
+                # os valores sendo numéricos) dependendo da versão do pandas — e divisão não é
+                # suportada em Categorical, quebraria mais abaixo com TypeError. Sem esse cast,
+                # o bug só aparece dependendo da versão instalada, então corrige aqui na raiz.
                 nacional_temp_flat["qtd_prestadores_nacional"] = nacional_temp_flat["NOME_PROCEDIMENTO"].map(
                     _prestadores_nacional_temp
-                )
+                ).astype(float)
 
                 def _base_nacional_temp(nome_proc):
                     if nome_proc not in nacional_temp.index:
@@ -2427,124 +2440,289 @@ elif st.session_state.pagina == "severidade":
                         nacional_temp.loc[nome_proc, "qtd_usuarios"],
                     )
 
-                rank_temp = rank_temp.merge(nacional_temp_flat, on="NOME_PROCEDIMENTO", how="left")
+                if _sufixo_aba_temp == "_ranking":
+                    # ---- Ranking POR PRESTADOR: agrega todos os procedimentos em escopo
+                    # (respeita o filtro Procedimento, se houver) por CD_PRESTADOR. FASE é
+                    # somado entre os procedimentos que o prestador faz (cada um com sua
+                    # própria taxa nacional) e só DEPOIS o CS final é calculado — não é uma
+                    # média dos CS de cada procedimento (isso não pesaria pelo volume de
+                    # cada um). Mesma lógica já usada nos gráficos de dispersão desta aba,
+                    # mais abaixo (_severidade_agregada_temp), só que aqui vira uma grade,
+                    # com também "Qtde por prestador Nacional/Cidade" e "CS da Cidade" por
+                    # prestador (cada um comparado com a PRÓPRIA cidade dele, não uma única
+                    # cidade de referência pra aba toda). ----
+                    def _div_segura_rank_temp(a, b):
+                        if b is None or pd.isna(b) or b == 0 or pd.isna(a):
+                            return float("nan")
+                        return a / b
 
-                # ---- Qtde por prestador (Nacional) = qtd_procedimentos_nacional ÷ qtd de
-                # prestadores distintos que fazem esse procedimento no Brasil todo — quanto, em
-                # média, cada prestador nacional faz daquele procedimento. Serve pra comparar com
-                # o volume de UM prestador específico (ex.: a SMILE DENTAL) e ver se ele destoa
-                # muito da média por prestador. ----
-                rank_temp["qtd_por_prestador_nacional"] = (
-                    rank_temp["qtd_procedimentos_nacional"] / rank_temp["qtd_prestadores_nacional"]
-                )
-
-                # ---- FASE (esperado) / QP (praticado) / CS — regra só desta aba ----
-                # NÃO mexe em severidade.py: o FASE oficial (Frequência × Intensidade × Peso do
-                # grupo, em _fase()) continua do jeito que está no resto do painel.
-                #
-                #   FASE (esperado)  = (qtd_procedimentos nacional ÷ qtd_vidas nacional) × qtd_vidas
-                #                      em utilização deste corte — quantos procedimentos este corte
-                #                      "deveria" ter, seguindo a taxa nacional desse procedimento.
-                #   QP (praticado) = qtd_procedimentos realmente observados neste corte — direto,
-                #                      sem conta nenhuma.
-                #   CS (Coeficiente de Severidade) = (QP ÷ FASE) × 10 — 10,000 = praticado igual ao
-                #                      esperado pela taxa nacional; acima de 10, mais severo; abaixo
-                #                      de 10, menos severo. O ×10 só amplia a escala (a razão sozinha
-                #                      fica sempre bem perto de 1) — não muda a ordem entre os
-                #                      procedimentos.
-                rank_temp["fase_esperado"] = (
-                    rank_temp["qtd_procedimentos_nacional"] / rank_temp["qtd_vidas_nacional"]
-                ) * rank_temp["qtd_usuarios"]
-                rank_temp["qp_praticado"] = rank_temp["qtd_procedimentos"]
-                rank_temp["cs"] = (rank_temp["qp_praticado"] / rank_temp["fase_esperado"]) * 10
-
-                # ---- CS Geral: mesmo cálculo, mas sem os filtros de Procedimento/Prestador/
-                # UF/Região/Cidade/Cluster desta aba (só com os filtros de página — Mês/Plano/
-                # Especialidade/Período) — referência fixa pra comparar ao lado do CS já
-                # filtrado, sem precisar tirar o filtro pra ver o "antes".
-                usuarios_geral_temp = usuarios_filtrado[usuarios_filtrado["NOME_PROCEDIMENTO"].isin(nomes_temp)]
-                rank_geral_temp = ranking_severidade(
-                    df_temp_base, "NOME_PROCEDIMENTO", top_n=1_000_000, usuarios=usuarios_geral_temp
-                ).copy()
-                rank_geral_temp = rank_geral_temp.merge(nacional_temp_flat, on="NOME_PROCEDIMENTO", how="left")
-                rank_geral_temp["fase_esperado_geral"] = (
-                    rank_geral_temp["qtd_procedimentos_nacional"] / rank_geral_temp["qtd_vidas_nacional"]
-                ) * rank_geral_temp["qtd_usuarios"]
-                rank_geral_temp["cs_geral"] = (
-                    rank_geral_temp["qtd_procedimentos"] / rank_geral_temp["fase_esperado_geral"]
-                ) * 10
-                rank_temp = rank_temp.merge(
-                    rank_geral_temp[["NOME_PROCEDIMENTO", "cs_geral"]], on="NOME_PROCEDIMENTO", how="left"
-                )
-
-                # ---- CS da Cidade: mesmo cálculo do CS Geral, mas em vez de tirar TODOS os
-                # filtros desta aba, mantém só o recorte de cidade — a cidade escolhida no
-                # filtro "Cidade" (se houver) ou, com um prestador específico selecionado e
-                # sem cidade escolhida, a cidade onde esse prestador atua (moda de
-                # CIDADE_PRESTADOR dentro do recorte já filtrado por prestador). Serve pra
-                # comparar o CS de uma clínica/prestador específico com o CS de todo mundo
-                # que atua na mesma cidade pra aquele procedimento — sem cidade de
-                # referência (nem filtro de Cidade, nem Prestador selecionado), fica "—".
-                _cidade_referencia_temp = None
-                if cidade_sel_temp != "Todos":
-                    _cidade_referencia_temp = cidade_sel_temp
-                elif (
-                    prest_sel_temp != "Todos"
-                    and "CIDADE_PRESTADOR" in df_temp.columns
-                    and not df_temp.empty
-                ):
-                    _moda_cidade_temp = df_temp["CIDADE_PRESTADOR"].mode()
-                    if not _moda_cidade_temp.empty:
-                        _cidade_referencia_temp = _moda_cidade_temp.iloc[0]
-
-                if (
-                    _cidade_referencia_temp is not None
-                    and "CIDADE_PRESTADOR" in df_temp_base.columns
-                    and "CIDADE_PRESTADOR" in usuarios_filtrado.columns
-                ):
-                    df_cidade_ref_temp = df_temp_base[
-                        df_temp_base["CIDADE_PRESTADOR"] == _cidade_referencia_temp
+                    _base_rank_prest_temp = df_temp.groupby(
+                        ["CD_PRESTADOR", "NOME_PROCEDIMENTO"], dropna=False, observed=True
+                    ).agg(
+                        qtd_procedimentos=("qtd_procedimentos", "sum"),
+                        quantidade_uso=("soma_uso", "sum"),
+                    ).reset_index()
+                    _base_rank_prest_temp = _base_rank_prest_temp[
+                        _base_rank_prest_temp["CD_PRESTADOR"].notna()
+                        & _base_rank_prest_temp["NOME_PROCEDIMENTO"].notna()
                     ]
-                    usuarios_cidade_ref_temp = usuarios_filtrado[
-                        usuarios_filtrado["NOME_PROCEDIMENTO"].isin(nomes_temp)
-                        & (usuarios_filtrado["CIDADE_PRESTADOR"] == _cidade_referencia_temp)
-                    ]
-                    rank_cidade_temp = ranking_severidade(
-                        df_cidade_ref_temp, "NOME_PROCEDIMENTO", top_n=1_000_000, usuarios=usuarios_cidade_ref_temp
-                    ).copy()
-                    rank_cidade_temp = rank_cidade_temp.merge(nacional_temp_flat, on="NOME_PROCEDIMENTO", how="left")
-                    rank_cidade_temp["fase_esperado_cidade"] = (
-                        rank_cidade_temp["qtd_procedimentos_nacional"] / rank_cidade_temp["qtd_vidas_nacional"]
-                    ) * rank_cidade_temp["qtd_usuarios"]
-                    rank_cidade_temp["cs_cidade"] = (
-                        rank_cidade_temp["qtd_procedimentos"] / rank_cidade_temp["fase_esperado_cidade"]
-                    ) * 10
-                    # Qtde de prestadores distintos NA CIDADE de referência que fazem cada
-                    # procedimento — junto com qtd_procedimentos (da cidade) acima, dá "Qtde por
-                    # prestador (Cidade)": quanto, em média, um prestador qualquer da cidade faz
-                    # daquele procedimento, pra comparar com o volume do prestador investigado.
-                    _prestadores_cidade_temp = df_cidade_ref_temp.groupby(
-                        "NOME_PROCEDIMENTO", observed=True
-                    )["CD_PRESTADOR"].nunique()
-                    rank_cidade_temp["qtd_prestadores_cidade"] = rank_cidade_temp["NOME_PROCEDIMENTO"].map(
-                        _prestadores_cidade_temp
-                    )
-                    rank_temp = rank_temp.merge(
-                        rank_cidade_temp[[
-                            "NOME_PROCEDIMENTO", "cs_cidade", "qtd_procedimentos", "fase_esperado_cidade",
-                            "qtd_prestadores_cidade",
-                        ]].rename(columns={"qtd_procedimentos": "qtd_procedimentos_cidade"}),
-                        on="NOME_PROCEDIMENTO", how="left",
-                    )
+                    if _base_rank_prest_temp.empty:
+                        rank_temp = pd.DataFrame({c: [] for c in [
+                            "CD_PRESTADOR", "rotulo", "qtd_usuarios", "qtd_procedimentos",
+                            "quantidade_uso", "uso_por_procedimento", "uso_por_vida",
+                            "qtd_procedimentos_nacional", "qtd_vidas_nacional",
+                            "qtd_por_prestador_nacional", "qtd_procedimentos_cidade",
+                            "fase_esperado_cidade", "qtd_por_prestador_cidade",
+                            "fase_esperado", "qp_praticado", "cs", "cs_geral", "cs_cidade",
+                        ]})
+                    else:
+                        _vidas_cel_rank_temp = vidas_por(
+                            usuarios_temp, ["CD_PRESTADOR", "NOME_PROCEDIMENTO"]
+                        )
+                        _base_rank_prest_temp = _base_rank_prest_temp.merge(
+                            _vidas_cel_rank_temp, on=["CD_PRESTADOR", "NOME_PROCEDIMENTO"], how="left"
+                        )
+                        _base_rank_prest_temp["qtd_usuarios"] = _base_rank_prest_temp["qtd_usuarios"].fillna(0)
+                        _base_rank_prest_temp = _base_rank_prest_temp.merge(
+                            nacional_temp_flat, on="NOME_PROCEDIMENTO", how="left"
+                        )
+                        _base_rank_prest_temp["fase_esperado_linha"] = (
+                            _base_rank_prest_temp["qtd_procedimentos_nacional"]
+                            / _base_rank_prest_temp["qtd_vidas_nacional"]
+                        ) * _base_rank_prest_temp["qtd_usuarios"]
+                        _base_rank_prest_temp["qtd_por_prestador_nacional_linha"] = (
+                            _base_rank_prest_temp["qtd_procedimentos_nacional"]
+                            / _base_rank_prest_temp["qtd_prestadores_nacional"]
+                        )
+
+                        # ---- referência por cidade: cada prestador compara com a PRÓPRIA
+                        # cidade dele (moda de CIDADE_PRESTADOR dentro dos filtros atuais). ----
+                        _cidade_por_prestador_rank_temp = df_temp.groupby(
+                            "CD_PRESTADOR", observed=True
+                        )["CIDADE_PRESTADOR"].agg(
+                            lambda x: x.mode().iloc[0] if not x.mode().empty else None
+                        ).rename("CIDADE_PRESTADOR_ref").reset_index()
+                        _base_rank_prest_temp = _base_rank_prest_temp.merge(
+                            _cidade_por_prestador_rank_temp, on="CD_PRESTADOR", how="left"
+                        )
+                        if "CIDADE_PRESTADOR" in df_temp_base.columns:
+                            _cidade_proc_rank_temp = df_temp_base.groupby(
+                                ["CIDADE_PRESTADOR", "NOME_PROCEDIMENTO"], observed=True
+                            ).agg(
+                                qtd_procedimentos_cidade=("qtd_procedimentos", "sum"),
+                                qtd_prestadores_cidade=("CD_PRESTADOR", "nunique"),
+                            ).reset_index()
+                            _vidas_cidade_proc_rank_temp = vidas_por(
+                                usuarios_filtrado[usuarios_filtrado["NOME_PROCEDIMENTO"].isin(nomes_temp)],
+                                ["CIDADE_PRESTADOR", "NOME_PROCEDIMENTO"],
+                            ).rename(columns={"qtd_usuarios": "qtd_vidas_cidade"})
+                            _cidade_proc_rank_temp = _cidade_proc_rank_temp.merge(
+                                _vidas_cidade_proc_rank_temp,
+                                on=["CIDADE_PRESTADOR", "NOME_PROCEDIMENTO"], how="left",
+                            )
+                            _base_rank_prest_temp = _base_rank_prest_temp.merge(
+                                _cidade_proc_rank_temp.rename(columns={"CIDADE_PRESTADOR": "CIDADE_PRESTADOR_ref"}),
+                                on=["CIDADE_PRESTADOR_ref", "NOME_PROCEDIMENTO"], how="left",
+                            )
+                        else:
+                            _base_rank_prest_temp["qtd_procedimentos_cidade"] = float("nan")
+                            _base_rank_prest_temp["qtd_prestadores_cidade"] = float("nan")
+                            _base_rank_prest_temp["qtd_vidas_cidade"] = float("nan")
+                        _base_rank_prest_temp["qtd_por_prestador_cidade_linha"] = (
+                            _base_rank_prest_temp["qtd_procedimentos_cidade"]
+                            / _base_rank_prest_temp["qtd_prestadores_cidade"]
+                        )
+                        # FASE da cidade (por linha prestador+procedimento) — mesma taxa
+                        # nacional aplicada às vidas DA CIDADE nesse procedimento; QP da
+                        # cidade = soma de TODOS os prestadores da cidade nesse procedimento —
+                        # junto formam o "CS da Cidade" agregado por prestador (severidade da
+                        # cidade dele nesses procedimentos, não o CS do próprio prestador
+                        # recalculado).
+                        _base_rank_prest_temp["fase_esperado_cidade_linha"] = (
+                            _base_rank_prest_temp["qtd_procedimentos_nacional"]
+                            / _base_rank_prest_temp["qtd_vidas_nacional"]
+                        ) * _base_rank_prest_temp["qtd_vidas_cidade"]
+
+                        rank_temp = _base_rank_prest_temp.groupby("CD_PRESTADOR", observed=True).agg(
+                            qtd_procedimentos=("qtd_procedimentos", "sum"),
+                            quantidade_uso=("quantidade_uso", "sum"),
+                            qtd_procedimentos_nacional=("qtd_procedimentos_nacional", "sum"),
+                            qtd_vidas_nacional=("qtd_vidas_nacional", "sum"),
+                            fase_esperado=("fase_esperado_linha", "sum"),
+                            qtd_por_prestador_nacional=("qtd_por_prestador_nacional_linha", "sum"),
+                            qtd_por_prestador_cidade=("qtd_por_prestador_cidade_linha", "sum"),
+                            fase_esperado_cidade=("fase_esperado_cidade_linha", "sum"),
+                            qtd_procedimentos_cidade=("qtd_procedimentos_cidade", "sum"),
+                        ).reset_index()
+                        _vidas_prest_total_rank_temp = vidas_por(usuarios_temp, "CD_PRESTADOR")
+                        rank_temp = rank_temp.merge(_vidas_prest_total_rank_temp, on="CD_PRESTADOR", how="left")
+                        rank_temp["qtd_usuarios"] = rank_temp["qtd_usuarios"].fillna(0)
+                        rank_temp["uso_por_procedimento"] = (
+                            rank_temp["quantidade_uso"] / rank_temp["qtd_procedimentos"]
+                        )
+                        rank_temp["uso_por_vida"] = rank_temp["quantidade_uso"] / rank_temp["qtd_usuarios"]
+                        rank_temp["qp_praticado"] = rank_temp["qtd_procedimentos"]
+                        rank_temp["cs"] = [
+                            _div_segura_rank_temp(qp, fase) * 10
+                            for qp, fase in zip(rank_temp["qtd_procedimentos"], rank_temp["fase_esperado"])
+                        ]
+                        rank_temp["cs_cidade"] = [
+                            _div_segura_rank_temp(qpc, fasec) * 10
+                            for qpc, fasec in zip(
+                                rank_temp["qtd_procedimentos_cidade"], rank_temp["fase_esperado_cidade"]
+                            )
+                        ]
+                        rank_temp["cs_geral"] = float("nan")  # não se aplica a esta aba (sem "corte" único)
+
+                        # ---- rótulo "Prestador - UF - Cidade - Cluster" (mesmo padrão já
+                        # usado na tabela "Prestadores do procedimento selecionado" mais
+                        # abaixo nesta aba). ----
+                        _colunas_info_rank_prest_temp = [
+                            c for c in ("NOME_PRESTADOR", "CIDADE_PRESTADOR", "UF", "CLUSTER")
+                            if c in df_temp.columns
+                        ]
+                        _info_extra_rank_prest_temp = df_temp.groupby("CD_PRESTADOR", observed=True).agg(**{
+                            c: (c, lambda x: x.mode().iloc[0] if not x.mode().empty else "—")
+                            for c in _colunas_info_rank_prest_temp
+                        }).reset_index()
+                        rank_temp = rank_temp.merge(_info_extra_rank_prest_temp, on="CD_PRESTADOR", how="left")
+                        for c in ("NOME_PRESTADOR", "CIDADE_PRESTADOR", "UF", "CLUSTER"):
+                            if c not in rank_temp.columns:
+                                rank_temp[c] = "—"
+                            rank_temp[c] = rank_temp[c].fillna("—")
+                        rank_temp["rotulo"] = [
+                            f"{nome_fmt} - {uf} - {cidade} - {cluster}"
+                            for nome_fmt, uf, cidade, cluster in zip(
+                                [
+                                    str(nome) if pd.notna(nome) and str(nome).strip() and str(nome) != "—"
+                                    else f"Prestador {int(cod)}"
+                                    for cod, nome in zip(rank_temp["CD_PRESTADOR"], rank_temp["NOME_PRESTADOR"])
+                                ],
+                                rank_temp["UF"], rank_temp["CIDADE_PRESTADOR"], rank_temp["CLUSTER"],
+                            )
+                        ]
                 else:
-                    rank_temp["cs_cidade"] = float("nan")
-                    rank_temp["qtd_procedimentos_cidade"] = float("nan")
-                    rank_temp["fase_esperado_cidade"] = float("nan")
-                    rank_temp["qtd_prestadores_cidade"] = float("nan")
+                    rank_temp = rank_temp.merge(nacional_temp_flat, on="NOME_PROCEDIMENTO", how="left")
 
-                rank_temp["qtd_por_prestador_cidade"] = (
-                    rank_temp["qtd_procedimentos_cidade"] / rank_temp["qtd_prestadores_cidade"]
-                )
+                    # ---- Qtde por prestador (Nacional) = qtd_procedimentos_nacional ÷ qtd de
+                    # prestadores distintos que fazem esse procedimento no Brasil todo — quanto, em
+                    # média, cada prestador nacional faz daquele procedimento. Serve pra comparar com
+                    # o volume de UM prestador específico (ex.: a SMILE DENTAL) e ver se ele destoa
+                    # muito da média por prestador. ----
+                    rank_temp["qtd_por_prestador_nacional"] = (
+                        rank_temp["qtd_procedimentos_nacional"] / rank_temp["qtd_prestadores_nacional"]
+                    )
+
+                    # ---- FASE (esperado) / QP (praticado) / CS — regra só desta aba ----
+                    # NÃO mexe em severidade.py: o FASE oficial (Frequência × Intensidade × Peso do
+                    # grupo, em _fase()) continua do jeito que está no resto do painel.
+                    #
+                    #   FASE (esperado)  = (qtd_procedimentos nacional ÷ qtd_vidas nacional) × qtd_vidas
+                    #                      em utilização deste corte — quantos procedimentos este corte
+                    #                      "deveria" ter, seguindo a taxa nacional desse procedimento.
+                    #   QP (praticado) = qtd_procedimentos realmente observados neste corte — direto,
+                    #                      sem conta nenhuma.
+                    #   CS (Coeficiente de Severidade) = (QP ÷ FASE) × 10 — 10,000 = praticado igual ao
+                    #                      esperado pela taxa nacional; acima de 10, mais severo; abaixo
+                    #                      de 10, menos severo. O ×10 só amplia a escala (a razão sozinha
+                    #                      fica sempre bem perto de 1) — não muda a ordem entre os
+                    #                      procedimentos.
+                    rank_temp["fase_esperado"] = (
+                        rank_temp["qtd_procedimentos_nacional"] / rank_temp["qtd_vidas_nacional"]
+                    ) * rank_temp["qtd_usuarios"]
+                    rank_temp["qp_praticado"] = rank_temp["qtd_procedimentos"]
+                    rank_temp["cs"] = (rank_temp["qp_praticado"] / rank_temp["fase_esperado"]) * 10
+
+                    # ---- CS Geral: mesmo cálculo, mas sem os filtros de Procedimento/Prestador/
+                    # UF/Região/Cidade/Cluster desta aba (só com os filtros de página — Mês/Plano/
+                    # Especialidade/Período) — referência fixa pra comparar ao lado do CS já
+                    # filtrado, sem precisar tirar o filtro pra ver o "antes".
+                    usuarios_geral_temp = usuarios_filtrado[usuarios_filtrado["NOME_PROCEDIMENTO"].isin(nomes_temp)]
+                    rank_geral_temp = ranking_severidade(
+                        df_temp_base, "NOME_PROCEDIMENTO", top_n=1_000_000, usuarios=usuarios_geral_temp
+                    ).copy()
+                    rank_geral_temp = rank_geral_temp.merge(nacional_temp_flat, on="NOME_PROCEDIMENTO", how="left")
+                    rank_geral_temp["fase_esperado_geral"] = (
+                        rank_geral_temp["qtd_procedimentos_nacional"] / rank_geral_temp["qtd_vidas_nacional"]
+                    ) * rank_geral_temp["qtd_usuarios"]
+                    rank_geral_temp["cs_geral"] = (
+                        rank_geral_temp["qtd_procedimentos"] / rank_geral_temp["fase_esperado_geral"]
+                    ) * 10
+                    rank_temp = rank_temp.merge(
+                        rank_geral_temp[["NOME_PROCEDIMENTO", "cs_geral"]], on="NOME_PROCEDIMENTO", how="left"
+                    )
+
+                    # ---- CS da Cidade: mesmo cálculo do CS Geral, mas em vez de tirar TODOS os
+                    # filtros desta aba, mantém só o recorte de cidade — a cidade escolhida no
+                    # filtro "Cidade" (se houver) ou, com um prestador específico selecionado e
+                    # sem cidade escolhida, a cidade onde esse prestador atua (moda de
+                    # CIDADE_PRESTADOR dentro do recorte já filtrado por prestador). Serve pra
+                    # comparar o CS de uma clínica/prestador específico com o CS de todo mundo
+                    # que atua na mesma cidade pra aquele procedimento — sem cidade de
+                    # referência (nem filtro de Cidade, nem Prestador selecionado), fica "—".
+                    _cidade_referencia_temp = None
+                    if cidade_sel_temp != "Todos":
+                        _cidade_referencia_temp = cidade_sel_temp
+                    elif (
+                        prest_sel_temp != "Todos"
+                        and "CIDADE_PRESTADOR" in df_temp.columns
+                        and not df_temp.empty
+                    ):
+                        _moda_cidade_temp = df_temp["CIDADE_PRESTADOR"].mode()
+                        if not _moda_cidade_temp.empty:
+                            _cidade_referencia_temp = _moda_cidade_temp.iloc[0]
+
+                    if (
+                        _cidade_referencia_temp is not None
+                        and "CIDADE_PRESTADOR" in df_temp_base.columns
+                        and "CIDADE_PRESTADOR" in usuarios_filtrado.columns
+                    ):
+                        df_cidade_ref_temp = df_temp_base[
+                            df_temp_base["CIDADE_PRESTADOR"] == _cidade_referencia_temp
+                        ]
+                        usuarios_cidade_ref_temp = usuarios_filtrado[
+                            usuarios_filtrado["NOME_PROCEDIMENTO"].isin(nomes_temp)
+                            & (usuarios_filtrado["CIDADE_PRESTADOR"] == _cidade_referencia_temp)
+                        ]
+                        rank_cidade_temp = ranking_severidade(
+                            df_cidade_ref_temp, "NOME_PROCEDIMENTO", top_n=1_000_000, usuarios=usuarios_cidade_ref_temp
+                        ).copy()
+                        rank_cidade_temp = rank_cidade_temp.merge(nacional_temp_flat, on="NOME_PROCEDIMENTO", how="left")
+                        rank_cidade_temp["fase_esperado_cidade"] = (
+                            rank_cidade_temp["qtd_procedimentos_nacional"] / rank_cidade_temp["qtd_vidas_nacional"]
+                        ) * rank_cidade_temp["qtd_usuarios"]
+                        rank_cidade_temp["cs_cidade"] = (
+                            rank_cidade_temp["qtd_procedimentos"] / rank_cidade_temp["fase_esperado_cidade"]
+                        ) * 10
+                        # Qtde de prestadores distintos NA CIDADE de referência que fazem cada
+                        # procedimento — junto com qtd_procedimentos (da cidade) acima, dá "Qtde por
+                        # prestador (Cidade)": quanto, em média, um prestador qualquer da cidade faz
+                        # daquele procedimento, pra comparar com o volume do prestador investigado.
+                        _prestadores_cidade_temp = df_cidade_ref_temp.groupby(
+                            "NOME_PROCEDIMENTO", observed=True
+                        )["CD_PRESTADOR"].nunique()
+                        # .astype(float) pelo mesmo motivo do "qtd_prestadores_nacional" mais acima —
+                        # .map() numa coluna category pode devolver category mesmo com valores
+                        # numéricos, e a divisão logo abaixo não é suportada em Categorical.
+                        rank_cidade_temp["qtd_prestadores_cidade"] = rank_cidade_temp["NOME_PROCEDIMENTO"].map(
+                            _prestadores_cidade_temp
+                        ).astype(float)
+                        rank_temp = rank_temp.merge(
+                            rank_cidade_temp[[
+                                "NOME_PROCEDIMENTO", "cs_cidade", "qtd_procedimentos", "fase_esperado_cidade",
+                                "qtd_prestadores_cidade",
+                            ]].rename(columns={"qtd_procedimentos": "qtd_procedimentos_cidade"}),
+                            on="NOME_PROCEDIMENTO", how="left",
+                        )
+                    else:
+                        rank_temp["cs_cidade"] = float("nan")
+                        rank_temp["qtd_procedimentos_cidade"] = float("nan")
+                        rank_temp["fase_esperado_cidade"] = float("nan")
+                        rank_temp["qtd_prestadores_cidade"] = float("nan")
+
+                    rank_temp["qtd_por_prestador_cidade"] = (
+                        rank_temp["qtd_procedimentos_cidade"] / rank_temp["qtd_prestadores_cidade"]
+                    )
 
                 # ---- Índice de Atenção (Volume) — quantas vezes o volume do PRESTADOR
                 # selecionado neste filtro está acima da média por prestador (referência: a
@@ -2580,8 +2758,14 @@ elif st.session_state.pagina == "severidade":
                         _qtd_pp_cidade_idx_temp if pd.notna(_qtd_pp_cidade_idx_temp)
                         else _qtd_pp_nacional_idx_temp
                     )
+                    # Na aba "📊 Ranking" cada LINHA já é um prestador específico (a grade é
+                    # agrupada por prestador, não por procedimento) — então o índice faz
+                    # sentido linha a linha mesmo com o filtro Prestador em "Todos" (que é
+                    # como a aba abre por padrão). Nas outras abas, só calcula com um
+                    # prestador específico selecionado no filtro (senão "Qtde proced" seria a
+                    # soma de vários prestadores misturados).
                     if (
-                        prest_sel_temp == "Todos"
+                        (prest_sel_temp == "Todos" and _sufixo_aba_temp != "_ranking")
                         or pd.isna(_ref_idx_temp) or _ref_idx_temp == 0
                         or pd.isna(_qtd_prest_idx_temp)
                     ):
@@ -2682,7 +2866,12 @@ elif st.session_state.pagina == "severidade":
                 # com "—" só quando não há cidade de referência (função _fmt_cs_temp já cobre
                 # o NaN desse caso).
                 exib_rank_temp["cs_cidade"] = exib_rank_temp["cs_cidade"].map(_fmt_cs_temp)
-                if nenhum_filtro_temp:
+                # Na aba "📊 Ranking" cada linha já é UM prestador específico (o "corte" é o
+                # próprio prestador, não a base toda) — o CS continua informativo mesmo sem
+                # nenhum filtro extra ligado, então não some por conta de nenhum_filtro_temp
+                # (essa regra é só pra evitar CS artificialmente perto de 10 quando o "corte"
+                # das outras abas, sem filtro, se aproxima da própria base nacional).
+                if nenhum_filtro_temp and _sufixo_aba_temp != "_ranking":
                     exib_rank_temp["cs"] = "—"
                     exib_rank_temp["calculo_cs"] = "—"
                 else:
@@ -2715,7 +2904,9 @@ elif st.session_state.pagina == "severidade":
                         "fase_esperado", "cs", "cs_cidade", "indice_atencao_volume_rotulo",
                     ]
                 exib_rank_temp = exib_rank_temp[_colunas_exib_rank_temp].rename(columns={
-                    "rotulo": "Procedimento",
+                    # Na aba "📊 Ranking" a linha é um prestador, não um procedimento — o
+                    # cabeçalho da 1ª coluna muda pra "Prestador" nesse caso.
+                    "rotulo": "Prestador" if _sufixo_aba_temp == "_ranking" else "Procedimento",
                     "qtd_procedimentos": "Qtde proced",
                     "qtd_por_prestador_nacional": "Qtde por prestador Nacional",
                     "qtd_por_prestador_cidade": "Qtde por prestador - Cidade",
