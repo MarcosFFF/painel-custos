@@ -3,6 +3,7 @@ import pandas as pd
 import html
 import os
 import glob
+import calendar
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -2181,6 +2182,51 @@ elif st.session_state.pagina == "severidade":
                     "Uso por vida",
                     fmt_float2(_uso_geral_temp / _vidas_geral_temp) if _vidas_geral_temp else "—",
                 )
+
+                # ---- período considerado (data real, não só o mês) — só aparece quando algum
+                # filtro está ativo (Mês/Plano/Especialidade da página ou os 6 desta aba), pra
+                # não poluir a tela sem filtro nenhum. MES vem como string "AAAA-MM" e DIA como
+                # o dia do mês (dt.day) — ambos originados da mesma DATA_REF em severidade.py —,
+                # então dá pra reconstruir a data real de início/fim do recorte, não só o mês. ----
+                def _periodo_considerado_temp(df):
+                    if df is None or df.empty or "MES" not in df.columns:
+                        return None
+                    meses_presentes_temp = sorted(df["MES"].dropna().unique())
+                    if not meses_presentes_temp:
+                        return None
+                    mes_min_temp, mes_max_temp = meses_presentes_temp[0], meses_presentes_temp[-1]
+                    try:
+                        ano_min_temp, mes_num_min_temp = (int(p) for p in mes_min_temp.split("-"))
+                        ano_max_temp, mes_num_max_temp = (int(p) for p in mes_max_temp.split("-"))
+                    except (ValueError, AttributeError):
+                        return None
+                    if "DIA" in df.columns:
+                        _dias_mes_min_temp = df.loc[df["MES"] == mes_min_temp, "DIA"].dropna()
+                        dia_min_temp = int(_dias_mes_min_temp.min()) if not _dias_mes_min_temp.empty else 1
+                        _dias_mes_max_temp = df.loc[df["MES"] == mes_max_temp, "DIA"].dropna()
+                        dia_max_temp = (
+                            int(_dias_mes_max_temp.max()) if not _dias_mes_max_temp.empty
+                            else calendar.monthrange(ano_max_temp, mes_num_max_temp)[1]
+                        )
+                    else:
+                        dia_min_temp = 1
+                        dia_max_temp = calendar.monthrange(ano_max_temp, mes_num_max_temp)[1]
+                    # trava defensiva contra dia fora do intervalo do mês (não deveria acontecer
+                    # com dado real, mas evita crash se algum DIA vier corrompido/fora de faixa).
+                    dia_min_temp = min(max(dia_min_temp, 1), calendar.monthrange(ano_min_temp, mes_num_min_temp)[1])
+                    dia_max_temp = min(max(dia_max_temp, 1), calendar.monthrange(ano_max_temp, mes_num_max_temp)[1])
+                    try:
+                        data_ini_temp = date(ano_min_temp, mes_num_min_temp, dia_min_temp)
+                        data_fim_temp = date(ano_max_temp, mes_num_max_temp, dia_max_temp)
+                    except ValueError:
+                        return None
+                    return f"{data_ini_temp.strftime('%d/%m/%Y')} a {data_fim_temp.strftime('%d/%m/%Y')}"
+
+                _algum_filtro_ativo_temp = bool(f_mes or f_plano or f_especialidade) or not nenhum_filtro_temp
+                if _algum_filtro_ativo_temp:
+                    _periodo_temp = _periodo_considerado_temp(df_temp)
+                    if _periodo_temp:
+                        st.caption(f"Período considerado: {_periodo_temp}")
 
                 st.divider()
 
