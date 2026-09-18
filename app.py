@@ -2941,14 +2941,46 @@ elif st.session_state.pagina == "severidade":
                                         return f"Prestador {int(row.CD_PRESTADOR)}"
                                     return str(_nome_temp)
 
-                                def _lista_nomeada_pdf_temp(df_lista, formatador, limite=8):
-                                    _itens_temp = [
-                                        formatador(_r_temp) for _r_temp in df_lista.head(limite).itertuples()
-                                    ]
-                                    _texto_temp = ", ".join(_itens_temp)
+                                # ---- um parágrafo por prestador (não mais uma lista corrida
+                                # separada por vírgula) — nome + UF/Cidade/Cluster na 1ª linha,
+                                # Qtde proced/Qtde por prestador (Cidade)/CS/CS da Cidade/Índice
+                                # de Atenção na 2ª — pedido explícito do usuário pra estruturar
+                                # o resumo em vez de um bloco só de texto corrido.
+                                def _linha_prestador_pdf_temp(row, mostrar_desvio=False):
+                                    _uf_temp = getattr(row, "UF", None) or "—"
+                                    _cidade_temp = getattr(row, "CIDADE_PRESTADOR", None) or "—"
+                                    _cluster_temp = getattr(row, "CLUSTER", None) or "—"
+                                    _extra_desvio_temp = ""
+                                    if mostrar_desvio and hasattr(row, "desvio_pct_temp"):
+                                        _sinal_temp = "+" if row.desvio_pct_temp >= 0 else ""
+                                        _extra_desvio_temp = (
+                                            f" · Desvio: {_sinal_temp}{row.desvio_pct_temp:.0f}%"
+                                        )
+                                    return (
+                                        f"<b>{html.escape(_nome_prest_pdf_temp(row))}</b> — "
+                                        f"{html.escape(str(_uf_temp))}, {html.escape(str(_cidade_temp))} "
+                                        f"— Cluster {html.escape(str(_cluster_temp))}<br/>"
+                                        f"Qtde proced: {fmt_int(row.qtd_procedimentos)} · "
+                                        f"Qtde por prestador (Cidade): {fmt_float2(row.qtd_por_prestador_cidade)} · "
+                                        f"CS: {_fmt_cs_temp(row.cs)} · CS da Cidade: {_fmt_cs_temp(row.cs_cidade)} · "
+                                        f"Índice de Atenção: {html.escape(row.indice_atencao_volume_rotulo)}"
+                                        f"{_extra_desvio_temp}"
+                                    )
+
+                                def _bloco_prestadores_pdf_temp(df_lista, titulo_html, limite=5, mostrar_desvio=False):
+                                    story.append(Paragraph(titulo_html, estilo_corpo))
+                                    story.append(Spacer(1, 2))
+                                    for _r_temp in df_lista.head(limite).itertuples():
+                                        story.append(Paragraph(
+                                            _linha_prestador_pdf_temp(_r_temp, mostrar_desvio), estilo_corpo
+                                        ))
+                                        story.append(Spacer(1, 3))
                                     if len(df_lista) > limite:
-                                        _texto_temp += f" e mais {len(df_lista) - limite}"
-                                    return _texto_temp
+                                        story.append(Paragraph(
+                                            f"<i>...e mais {len(df_lista) - limite} prestador(es) nesta seleção.</i>",
+                                            estilo_corpo,
+                                        ))
+                                    story.append(Spacer(1, 6))
 
                                 _total_prest_pdf_temp = len(rank_temp)
                                 _validos_atencao_pdf_temp = rank_temp[rank_temp["indice_atencao_volume"].notna()]
@@ -2988,6 +3020,7 @@ elif st.session_state.pagina == "severidade":
                                             f"disponível).",
                                             estilo_corpo,
                                         ))
+                                    story.append(Spacer(1, 3))
                                 else:
                                     story.append(Paragraph(
                                         f"Nos filtros atuais aparecem <b>{_total_prest_pdf_temp}</b> "
@@ -2998,31 +3031,15 @@ elif st.session_state.pagina == "severidade":
                                         f"(entre 2× e 5×).",
                                         estilo_corpo,
                                     ))
+                                    story.append(Spacer(1, 4))
                                     if not _flag_alto_pdf_temp.empty:
-                                        story.append(Paragraph(
-                                            f"{_ROTULO_ALTO_PDF_TEMP}: " + _lista_nomeada_pdf_temp(
-                                                _flag_alto_pdf_temp,
-                                                lambda r: (
-                                                    f"{html.escape(_nome_prest_pdf_temp(r))} "
-                                                    f"({html.escape(r.indice_atencao_volume_rotulo)}, "
-                                                    f"CS {_fmt_cs_temp(r.cs)})"
-                                                ),
-                                            ) + ".",
-                                            estilo_corpo,
-                                        ))
+                                        _bloco_prestadores_pdf_temp(
+                                            _flag_alto_pdf_temp, f"{_ROTULO_ALTO_PDF_TEMP}:"
+                                        )
                                     if not _flag_medio_pdf_temp.empty:
-                                        story.append(Paragraph(
-                                            f"{_ROTULO_MEDIO_PDF_TEMP}: " + _lista_nomeada_pdf_temp(
-                                                _flag_medio_pdf_temp,
-                                                lambda r: (
-                                                    f"{html.escape(_nome_prest_pdf_temp(r))} "
-                                                    f"({html.escape(r.indice_atencao_volume_rotulo)}, "
-                                                    f"CS {_fmt_cs_temp(r.cs)})"
-                                                ),
-                                            ) + ".",
-                                            estilo_corpo,
-                                        ))
-                                story.append(Spacer(1, 3))
+                                        _bloco_prestadores_pdf_temp(
+                                            _flag_medio_pdf_temp, f"{_ROTULO_MEDIO_PDF_TEMP}:"
+                                        )
 
                                 # ---- desvio de CS: 10 é a prática esperada (QP praticado igual
                                 # à taxa nacional aplicada às vidas do corte) — acima de 10 é mais
@@ -3042,6 +3059,11 @@ elif st.session_state.pagina == "severidade":
                                             f"esperada (CS 10 = praticado igual à taxa nacional).",
                                             estilo_corpo,
                                         ))
+                                        story.append(Spacer(1, 3))
+                                        story.append(Paragraph(
+                                            _linha_prestador_pdf_temp(_r0_temp), estilo_corpo
+                                        ))
+                                        story.append(Spacer(1, 6))
                                     else:
                                         _acima_pdf_temp = _cs_validos_pdf_temp[
                                             _cs_validos_pdf_temp["cs"] > 10
@@ -3049,30 +3071,17 @@ elif st.session_state.pagina == "severidade":
                                         _abaixo_pdf_temp = _cs_validos_pdf_temp[
                                             _cs_validos_pdf_temp["cs"] < 10
                                         ].sort_values("cs", ascending=True)
-
-                                        def _fmt_desvio_pdf_temp(r):
-                                            _sinal_temp = "+" if r.desvio_pct_temp >= 0 else ""
-                                            return (
-                                                f"{html.escape(_nome_prest_pdf_temp(r))} "
-                                                f"(CS {_fmt_cs_temp(r.cs)}, "
-                                                f"{_sinal_temp}{r.desvio_pct_temp:.0f}%)"
-                                            )
-
                                         if not _acima_pdf_temp.empty:
-                                            story.append(Paragraph(
-                                                "<b>Acima do esperado (CS &gt; 10):</b> " + _lista_nomeada_pdf_temp(
-                                                    _acima_pdf_temp, _fmt_desvio_pdf_temp, limite=6
-                                                ) + ".",
-                                                estilo_corpo,
-                                            ))
+                                            _bloco_prestadores_pdf_temp(
+                                                _acima_pdf_temp, "<b>Acima do esperado (CS &gt; 10):</b>",
+                                                mostrar_desvio=True,
+                                            )
                                         if not _abaixo_pdf_temp.empty:
-                                            story.append(Paragraph(
-                                                "<b>Abaixo do esperado (CS &lt; 10):</b> " + _lista_nomeada_pdf_temp(
-                                                    _abaixo_pdf_temp, _fmt_desvio_pdf_temp, limite=6
-                                                ) + ".",
-                                                estilo_corpo,
-                                            ))
-                                story.append(Spacer(1, 8))
+                                            _bloco_prestadores_pdf_temp(
+                                                _abaixo_pdf_temp, "<b>Abaixo do esperado (CS &lt; 10):</b>",
+                                                mostrar_desvio=True,
+                                            )
+                                story.append(Spacer(1, 4))
 
                             # ---- gráficos ----
                             if not rank_temp.empty:
@@ -3227,14 +3236,42 @@ elif st.session_state.pagina == "severidade":
                                     return f"Prestador {int(row.CD_PRESTADOR)}"
                                 return str(_nome_temp)
 
-                            def _lista_nomeada_email_temp(df_lista, formatador, limite=8):
-                                _itens_temp = [
-                                    formatador(r) for r in df_lista.head(limite).itertuples()
-                                ]
-                                _texto_temp = ", ".join(_itens_temp)
+                            # ---- um parágrafo (um item de _partes_temp) por prestador — nome +
+                            # UF/Cidade/Cluster na 1ª linha, Qtde proced/Qtde por prestador
+                            # (Cidade)/CS/CS da Cidade/Índice de Atenção na 2ª — mesma estrutura
+                            # do resumo do PDF (ver _linha_prestador_pdf_temp), só que em HTML de
+                            # e-mail em vez de flowable do reportlab.
+                            def _linha_prestador_email_temp(row, mostrar_desvio=False):
+                                _uf_temp = getattr(row, "UF", None) or "—"
+                                _cidade_temp = getattr(row, "CIDADE_PRESTADOR", None) or "—"
+                                _cluster_temp = getattr(row, "CLUSTER", None) or "—"
+                                _extra_desvio_temp = ""
+                                if mostrar_desvio and hasattr(row, "desvio_pct_temp"):
+                                    _sinal_temp = "+" if row.desvio_pct_temp >= 0 else ""
+                                    _extra_desvio_temp = (
+                                        f" · Desvio: {_sinal_temp}{row.desvio_pct_temp:.0f}%"
+                                    )
+                                return (
+                                    f"<strong>{html.escape(_nome_prest_email_temp(row))}</strong> — "
+                                    f"{html.escape(str(_uf_temp))}, {html.escape(str(_cidade_temp))} "
+                                    f"— Cluster {html.escape(str(_cluster_temp))}<br>"
+                                    f"Qtde proced: {fmt_int(row.qtd_procedimentos)} · "
+                                    f"Qtde por prestador (Cidade): {fmt_float2(row.qtd_por_prestador_cidade)} · "
+                                    f"CS: {_fmt_cs_temp(row.cs)} · CS da Cidade: {_fmt_cs_temp(row.cs_cidade)} · "
+                                    f"Índice de Atenção: {html.escape(row.indice_atencao_volume_rotulo)}"
+                                    f"{_extra_desvio_temp}"
+                                )
+
+                            def _bloco_prestadores_email_temp(partes, df_lista, titulo_html,
+                                                               limite=5, mostrar_desvio=False):
+                                partes.append(titulo_html)
+                                for r in df_lista.head(limite).itertuples():
+                                    partes.append(_linha_prestador_email_temp(r, mostrar_desvio))
                                 if len(df_lista) > limite:
-                                    _texto_temp += f" e mais {len(df_lista) - limite}"
-                                return _texto_temp
+                                    partes.append(
+                                        f"<em>...e mais {len(df_lista) - limite} prestador(es) "
+                                        f"nesta seleção.</em>"
+                                    )
 
                             _ALTO_HTML_TEMP = (
                                 '<span style="color:#e74c3c;font-weight:bold;">alerta forte</span>'
@@ -3285,26 +3322,12 @@ elif st.session_state.pagina == "severidade":
                                     f"(entre 2× e 5×)."
                                 )
                                 if not _flag_alto_email_temp.empty:
-                                    _partes_temp.append(
-                                        f"{_ALTO_HTML_TEMP}: " + _lista_nomeada_email_temp(
-                                            _flag_alto_email_temp,
-                                            lambda r: (
-                                                f"{html.escape(_nome_prest_email_temp(r))} "
-                                                f"({html.escape(r.indice_atencao_volume_rotulo)}, "
-                                                f"CS {_fmt_cs_temp(r.cs)})"
-                                            ),
-                                        ) + "."
+                                    _bloco_prestadores_email_temp(
+                                        _partes_temp, _flag_alto_email_temp, f"{_ALTO_HTML_TEMP}:"
                                     )
                                 if not _flag_medio_email_temp.empty:
-                                    _partes_temp.append(
-                                        f"{_MEDIO_HTML_TEMP}: " + _lista_nomeada_email_temp(
-                                            _flag_medio_email_temp,
-                                            lambda r: (
-                                                f"{html.escape(_nome_prest_email_temp(r))} "
-                                                f"({html.escape(r.indice_atencao_volume_rotulo)}, "
-                                                f"CS {_fmt_cs_temp(r.cs)})"
-                                            ),
-                                        ) + "."
+                                    _bloco_prestadores_email_temp(
+                                        _partes_temp, _flag_medio_email_temp, f"{_MEDIO_HTML_TEMP}:"
                                     )
 
                             _cs_validos_email_temp = rank_df[rank_df["cs"].notna()].copy()
@@ -3321,6 +3344,7 @@ elif st.session_state.pagina == "severidade":
                                         f"de <strong>{abs(_desvio0_temp):.0f}% {_direcao0_temp}</strong> "
                                         f"da prática esperada (CS 10 = praticado igual à taxa nacional)."
                                     )
+                                    _partes_temp.append(_linha_prestador_email_temp(_r0_temp))
                                 else:
                                     _acima_email_temp = _cs_validos_email_temp[
                                         _cs_validos_email_temp["cs"] > 10
@@ -3328,27 +3352,17 @@ elif st.session_state.pagina == "severidade":
                                     _abaixo_email_temp = _cs_validos_email_temp[
                                         _cs_validos_email_temp["cs"] < 10
                                     ].sort_values("cs", ascending=True)
-
-                                    def _fmt_desvio_email_temp(r):
-                                        _sinal_temp = "+" if r.desvio_pct_temp >= 0 else ""
-                                        return (
-                                            f"{html.escape(_nome_prest_email_temp(r))} "
-                                            f"(CS {_fmt_cs_temp(r.cs)}, {_sinal_temp}{r.desvio_pct_temp:.0f}%)"
-                                        )
-
                                     if not _acima_email_temp.empty:
-                                        _partes_temp.append(
-                                            "<strong>Acima do esperado (CS &gt; 10):</strong> "
-                                            + _lista_nomeada_email_temp(
-                                                _acima_email_temp, _fmt_desvio_email_temp, limite=6
-                                            ) + "."
+                                        _bloco_prestadores_email_temp(
+                                            _partes_temp, _acima_email_temp,
+                                            "<strong>Acima do esperado (CS &gt; 10):</strong>",
+                                            mostrar_desvio=True,
                                         )
                                     if not _abaixo_email_temp.empty:
-                                        _partes_temp.append(
-                                            "<strong>Abaixo do esperado (CS &lt; 10):</strong> "
-                                            + _lista_nomeada_email_temp(
-                                                _abaixo_email_temp, _fmt_desvio_email_temp, limite=6
-                                            ) + "."
+                                        _bloco_prestadores_email_temp(
+                                            _partes_temp, _abaixo_email_temp,
+                                            "<strong>Abaixo do esperado (CS &lt; 10):</strong>",
+                                            mostrar_desvio=True,
                                         )
 
                             return _partes_temp
