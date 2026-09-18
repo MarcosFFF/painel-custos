@@ -2102,30 +2102,29 @@ elif st.session_state.pagina == "severidade":
             # selectbox, lista vazia no multiselect) já na próxima rodada. Não dá pra só
             # reatribuir o valor aqui porque o widget já foi instanciado nesta mesma rodada —
             # Streamlit não permite mudar o valor de um widget já criado sem passar pelo
-            # session_state + rerun. Campo e botão recebem cada um sua PRÓPRIA coluna já no
-            # nível de cima (nada de coluna dentro de coluna — colunas aninhadas dão erro em
-            # algumas versões do Streamlit, o que deixava o botão sem funcionar). Definidas
-            # aqui (antes do primeiro uso, no bloco de Mês/Plano/Especialidade logo abaixo) e
-            # reaproveitadas também nos 6 filtros da aba e no "Ranquear por" mais adiante.
-            def _selectbox_com_limpar_temp(col_campo, col_vassoura, label, opcoes, chave):
-                with col_campo:
+            # session_state + rerun. Campo e botão ficam na MESMA coluna, um embaixo do
+            # outro (nada de coluna extra pro botão) — assim o botão não fica espremido
+            # numa coluna estreita demais pro texto/ícone aparecer (era isso que deixava
+            # ele com cara de "vazio"), e continua pequeno porque não usa
+            # use_container_width (o botão só ocupa o espaço do próprio conteúdo, não a
+            # largura toda da coluna). Definidas aqui (antes do primeiro uso, no bloco de
+            # Mês/Plano/Especialidade logo abaixo) e reaproveitadas também nos 6 filtros da
+            # aba e no "Ranquear por" mais adiante.
+            def _selectbox_com_limpar_temp(coluna, label, opcoes, chave):
+                with coluna:
                     valor = st.selectbox(label, opcoes, key=chave)
-                with col_vassoura:
-                    st.markdown("<div style='height: 1.7rem'></div>", unsafe_allow_html=True)
                     if st.button(
-                        "🧹", key=f"limpar_campo_temp_{chave}", help="Limpar este filtro"
+                        "🧹 limpar", key=f"limpar_campo_temp_{chave}", help="Limpar este filtro"
                     ):
                         st.session_state.pop(chave, None)
                         st.rerun()
                 return valor
 
-            def _multiselect_com_limpar_temp(col_campo, col_vassoura, label, opcoes, chave):
-                with col_campo:
+            def _multiselect_com_limpar_temp(coluna, label, opcoes, chave):
+                with coluna:
                     valor = st.multiselect(label, options=opcoes, key=chave)
-                with col_vassoura:
-                    st.markdown("<div style='height: 1.7rem'></div>", unsafe_allow_html=True)
                     if st.button(
-                        "🧹", key=f"limpar_campo_temp_{chave}", help="Limpar este filtro"
+                        "🧹 limpar", key=f"limpar_campo_temp_{chave}", help="Limpar este filtro"
                     ):
                         st.session_state.pop(chave, None)
                         st.rerun()
@@ -2141,11 +2140,11 @@ elif st.session_state.pagina == "severidade":
                 # Desenhado só na aba Temporária (identificada pelo sufixo "_legado") — evita
                 # campo duplicado, já que Mês/Plano/Especialidade são únicos pra página toda,
                 # não por aba (mesmo se "Coeficiente de Severidade" for religada ao lado dela).
-                fmt1, fmt1v, fmt2, fmt2v, fmt3, fmt3v = st.columns([6, 1, 6, 1, 6, 1])
-                _multiselect_com_limpar_temp(fmt1, fmt1v, "Mês", opcoes_mes_temp, "temp_filtro_mes")
-                _multiselect_com_limpar_temp(fmt2, fmt2v, "Plano", opcoes_plano_temp, "temp_filtro_plano")
+                fmt1, fmt2, fmt3 = st.columns(3)
+                _multiselect_com_limpar_temp(fmt1, "Mês", opcoes_mes_temp, "temp_filtro_mes")
+                _multiselect_com_limpar_temp(fmt2, "Plano", opcoes_plano_temp, "temp_filtro_plano")
                 _multiselect_com_limpar_temp(
-                    fmt3, fmt3v, "Especialidade", opcoes_especialidade_temp, "temp_filtro_especialidade"
+                    fmt3, "Especialidade", opcoes_especialidade_temp, "temp_filtro_especialidade"
                 )
 
             # Mapa código -> nome do procedimento, dentro dos filtros ativos. Sem restrição
@@ -2225,42 +2224,31 @@ elif st.session_state.pagina == "severidade":
                                 "o nome está exatamente assim na base."
                             )
 
-                # ---- cada filtro com seu próprio "🧹 limpar" ao lado, em vez de um botão só
-                # que limpa tudo de uma vez — _selectbox_com_limpar_temp/_multiselect_com_
-                # limpar_temp já foram definidas mais acima (antes do bloco Mês/Plano/
-                # Especialidade), reaproveitadas aqui. Campo e botão de cada filtro já nascem
-                # como colunas irmãs no mesmo st.columns (sem aninhar), então os 6 filtros
-                # viram 12 colunas de uma vez só.
+                # ---- cada filtro com seu próprio "🧹 limpar" embaixo, em vez de um botão só
+                # que limpa tudo de uma vez — _selectbox_com_limpar_temp já foi definida mais
+                # acima (antes do bloco Mês/Plano/Especialidade), reaproveitada aqui. 1 coluna
+                # por filtro (o botão fica na mesma coluna do campo, embaixo dele).
                 (
-                    fc_proc_temp, fc_proc_v_temp,
-                    fc_prest_temp, fc_prest_v_temp,
-                    fc_uf_temp, fc_uf_v_temp,
-                    fc_regiao_temp, fc_regiao_v_temp,
-                    fc_cidade_temp, fc_cidade_v_temp,
-                    fc_cluster_temp, fc_cluster_v_temp,
-                ) = st.columns([6, 1, 6, 1, 6, 1, 6, 1, 6, 1, 6, 1])
+                    fc_proc_temp, fc_prest_temp, fc_uf_temp,
+                    fc_regiao_temp, fc_cidade_temp, fc_cluster_temp,
+                ) = st.columns(6)
                 proc_sel_temp = _selectbox_com_limpar_temp(
-                    fc_proc_temp, fc_proc_v_temp, "Procedimento", opcoes_proc_temp,
-                    f"temp_filtro_procedimento{_sufixo_aba_temp}",
+                    fc_proc_temp, "Procedimento", opcoes_proc_temp, f"temp_filtro_procedimento{_sufixo_aba_temp}"
                 )
                 prest_sel_temp = _selectbox_com_limpar_temp(
-                    fc_prest_temp, fc_prest_v_temp, "Prestador", opcoes_prestador_temp,
-                    f"temp_filtro_prestador{_sufixo_aba_temp}",
+                    fc_prest_temp, "Prestador", opcoes_prestador_temp, f"temp_filtro_prestador{_sufixo_aba_temp}"
                 )
                 uf_sel_temp = _selectbox_com_limpar_temp(
-                    fc_uf_temp, fc_uf_v_temp, "UF", opcoes_uf_temp, f"temp_filtro_uf{_sufixo_aba_temp}"
+                    fc_uf_temp, "UF", opcoes_uf_temp, f"temp_filtro_uf{_sufixo_aba_temp}"
                 )
                 regiao_sel_temp = _selectbox_com_limpar_temp(
-                    fc_regiao_temp, fc_regiao_v_temp, "Região", opcoes_regiao_temp,
-                    f"temp_filtro_regiao{_sufixo_aba_temp}",
+                    fc_regiao_temp, "Região", opcoes_regiao_temp, f"temp_filtro_regiao{_sufixo_aba_temp}"
                 )
                 cidade_sel_temp = _selectbox_com_limpar_temp(
-                    fc_cidade_temp, fc_cidade_v_temp, "Cidade", opcoes_cidade_temp,
-                    f"temp_filtro_cidade{_sufixo_aba_temp}",
+                    fc_cidade_temp, "Cidade", opcoes_cidade_temp, f"temp_filtro_cidade{_sufixo_aba_temp}"
                 )
                 cluster_sel_temp = _selectbox_com_limpar_temp(
-                    fc_cluster_temp, fc_cluster_v_temp, "Cluster", opcoes_cluster_temp,
-                    f"temp_filtro_cluster{_sufixo_aba_temp}",
+                    fc_cluster_temp, "Cluster", opcoes_cluster_temp, f"temp_filtro_cluster{_sufixo_aba_temp}"
                 )
 
                 # ---- "Ranquear por" — só na aba "📊 Ranking": reordena a grade pela métrica
@@ -2279,10 +2267,10 @@ elif st.session_state.pagina == "severidade":
                         "CS da Cidade": "cs_cidade",
                         "Índice de Atenção (Volume)": "indice_atencao_volume",
                     }
-                    fc_ranquear_temp, fc_ranquear_v_temp, _fc_ranquear_vazio_temp = st.columns([2, 1, 3])
+                    fc_ranquear_temp, _fc_ranquear_vazio_temp = st.columns([2, 4])
                     ranquear_por_temp = _selectbox_com_limpar_temp(
-                        fc_ranquear_temp, fc_ranquear_v_temp, "Ranquear por",
-                        list(_OPCOES_RANQUEAR_TEMP.keys()), f"temp_ranquear_por{_sufixo_aba_temp}",
+                        fc_ranquear_temp, "Ranquear por", list(_OPCOES_RANQUEAR_TEMP.keys()),
+                        f"temp_ranquear_por{_sufixo_aba_temp}",
                     )
 
                 # Sem nenhum dos 6 filtros desta aba aplicado, o corte comparado tende a se
@@ -3111,38 +3099,13 @@ elif st.session_state.pagina == "severidade":
                             "Índice de Atenção (Volume)": _textos_proc_temp,
                         })
 
-                    if _sufixo_aba_temp == "_ranking" and not rank_temp.empty:
-                        st.caption(
-                            "Abra um prestador abaixo pra ver o detalhamento por procedimento "
-                            "(mesmas colunas de antes, uma linha por procedimento em vez de "
-                            "somadas). O título já traz o resumo do prestador."
-                        )
-                        for _linha_prest_exp_temp in rank_temp.itertuples():
-                            _cd_prest_exp_temp = _linha_prest_exp_temp.CD_PRESTADOR
-                            _resumo_prest_exp_temp = (
-                                f"{_linha_prest_exp_temp.rotulo}  —  "
-                                f"{fmt_int(_linha_prest_exp_temp.qtd_usuarios)} vidas · "
-                                f"{fmt_int(_linha_prest_exp_temp.qtd_procedimentos)} proced. · "
-                                f"CS {_fmt_cs_temp(_linha_prest_exp_temp.cs)} · "
-                                f"CS Cidade {_fmt_cs_temp(_linha_prest_exp_temp.cs_cidade)} · "
-                                f"{_linha_prest_exp_temp.indice_atencao_volume_rotulo}"
-                            )
-                            with st.expander(_resumo_prest_exp_temp):
-                                _exib_detalhe_proc_temp = _detalhe_procedimentos_prestador_temp(
-                                    _cd_prest_exp_temp
-                                )
-                                if _exib_detalhe_proc_temp is None:
-                                    st.caption("Sem procedimentos pra detalhar.")
-                                else:
-                                    _tabela_html_temp(_exib_detalhe_proc_temp, scroll=False)
-
                     if _sufixo_aba_temp == "_ranking":
                         # ============================================================
                         # PDF — "Gerar PDF" exporta esta aba (Ranking) com os filtros atuais:
                         # cabeçalho com a logo, período trabalhado e filtros aplicados, legenda,
                         # 2 gráficos (dispersão CS × volume e Top 10 pela métrica escolhida em
                         # "Ranquear por") e o detalhamento por prestador já "aberto" (mesmo
-                        # conteúdo dos expanders acima — não dá pra ter expander de verdade num
+                        # conteúdo dos expanders logo abaixo — não dá pra ter expander de verdade num
                         # PDF, então cada prestador vira uma seção com a tabela de procedimentos
                         # logo abaixo, na mesma ordem da tela). reportlab e matplotlib são
                         # importados só aqui dentro (nunca no topo do arquivo) — se ainda não
@@ -3533,7 +3496,7 @@ elif st.session_state.pagina == "severidade":
                             "período trabalhado e filtros aplicados, legenda, gráficos (dispersão "
                             "CS × volume e Top 10 pela métrica de \"Ranquear por\") e o "
                             "detalhamento por prestador já \"aberto\" (mesmo conteúdo dos "
-                            "expanders acima)."
+                            "expanders logo abaixo)."
                         )
                         col_gerar_pdf_temp, col_baixar_pdf_temp = st.columns([1, 2])
                         with col_gerar_pdf_temp:
@@ -3559,6 +3522,31 @@ elif st.session_state.pagina == "severidade":
                                     key="baixar_pdf_ranking_temp",
                                     use_container_width=True,
                                 )
+
+                    if _sufixo_aba_temp == "_ranking" and not rank_temp.empty:
+                        st.caption(
+                            "Abra um prestador abaixo pra ver o detalhamento por procedimento "
+                            "(mesmas colunas de antes, uma linha por procedimento em vez de "
+                            "somadas). O título já traz o resumo do prestador."
+                        )
+                        for _linha_prest_exp_temp in rank_temp.itertuples():
+                            _cd_prest_exp_temp = _linha_prest_exp_temp.CD_PRESTADOR
+                            _resumo_prest_exp_temp = (
+                                f"{_linha_prest_exp_temp.rotulo}  —  "
+                                f"{fmt_int(_linha_prest_exp_temp.qtd_usuarios)} vidas · "
+                                f"{fmt_int(_linha_prest_exp_temp.qtd_procedimentos)} proced. · "
+                                f"CS {_fmt_cs_temp(_linha_prest_exp_temp.cs)} · "
+                                f"CS Cidade {_fmt_cs_temp(_linha_prest_exp_temp.cs_cidade)} · "
+                                f"{_linha_prest_exp_temp.indice_atencao_volume_rotulo}"
+                            )
+                            with st.expander(_resumo_prest_exp_temp):
+                                _exib_detalhe_proc_temp = _detalhe_procedimentos_prestador_temp(
+                                    _cd_prest_exp_temp
+                                )
+                                if _exib_detalhe_proc_temp is None:
+                                    st.caption("Sem procedimentos pra detalhar.")
+                                else:
+                                    _tabela_html_temp(_exib_detalhe_proc_temp, scroll=False)
 
                 # ============================================================
                 # BENCHMARK — 30 prestadores de volume médio, em cidades/UFs/clusters
