@@ -2048,10 +2048,15 @@ elif st.session_state.pagina == "severidade":
                     "Aba dedicada pra investigar o volume de procedimentos (550, 110, 100 e "
                     "510) da SMILE DENTAL CLINICA ODONTOLOGICA LTDA ME em São Paulo — filtro "
                     "Prestador já vem travado nela; troque livremente se quiser comparar com "
-                    "outro prestador. \"CS da Cidade\"/\"Cálculo do CS Cidade\" mostram o CS de "
-                    "todos os prestadores da mesma cidade, lado a lado com o CS da própria "
-                    "clínica (colunas CS/Cálculo do CS), pra ajudar a enxergar se o volume dela "
-                    "realmente destoa do praticado ao redor."
+                    "outro prestador.  \n"
+                    "\"Qtde por prestador Nacional\"/\"Qtde por prestador - Cidade\" = qtd total "
+                    "daquele procedimento (Brasil todo / só a cidade de referência) ÷ qtd de "
+                    "prestadores distintos que o fazem — quanto, em média, UM prestador "
+                    "qualquer faz daquele procedimento; compare com \"Qtde proced\" ao lado, que "
+                    "é o volume real da própria clínica.  \n"
+                    "\"CS da Cidade\"/\"Cálculo do CS Cidade\" mostram o CS de todos os "
+                    "prestadores da mesma cidade, lado a lado com o CS da própria clínica "
+                    "(colunas CS/Cálculo do CS)."
                 )
 
             st.caption(
@@ -2359,6 +2364,16 @@ elif st.session_state.pagina == "severidade":
                 ].rename(columns={
                     "qtd_procedimentos": "qtd_procedimentos_nacional", "qtd_usuarios": "qtd_vidas_nacional",
                 })
+                # Qtde de prestadores distintos (Brasil todo, sem filtro nenhum) que fazem cada
+                # procedimento — junto com qtd_procedimentos_nacional acima, dá pra calcular
+                # "Qtde por prestador nacional" (quanto, em média, um prestador qualquer no
+                # Brasil faz daquele procedimento).
+                _prestadores_nacional_temp = agregado.groupby(
+                    "NOME_PROCEDIMENTO", observed=True
+                )["CD_PRESTADOR"].nunique()
+                nacional_temp_flat["qtd_prestadores_nacional"] = nacional_temp_flat["NOME_PROCEDIMENTO"].map(
+                    _prestadores_nacional_temp
+                )
 
                 def _base_nacional_temp(nome_proc):
                     if nome_proc not in nacional_temp.index:
@@ -2369,6 +2384,15 @@ elif st.session_state.pagina == "severidade":
                     )
 
                 rank_temp = rank_temp.merge(nacional_temp_flat, on="NOME_PROCEDIMENTO", how="left")
+
+                # ---- Qtde por prestador (Nacional) = qtd_procedimentos_nacional ÷ qtd de
+                # prestadores distintos que fazem esse procedimento no Brasil todo — quanto, em
+                # média, cada prestador nacional faz daquele procedimento. Serve pra comparar com
+                # o volume de UM prestador específico (ex.: a SMILE DENTAL) e ver se ele destoa
+                # muito da média por prestador. ----
+                rank_temp["qtd_por_prestador_nacional"] = (
+                    rank_temp["qtd_procedimentos_nacional"] / rank_temp["qtd_prestadores_nacional"]
+                )
 
                 # ---- FASE (esperado) / QP (praticado) / CS — regra só desta aba ----
                 # NÃO mexe em severidade.py: o FASE oficial (Frequência × Intensidade × Peso do
@@ -2451,9 +2475,20 @@ elif st.session_state.pagina == "severidade":
                     rank_cidade_temp["cs_cidade"] = (
                         rank_cidade_temp["qtd_procedimentos"] / rank_cidade_temp["fase_esperado_cidade"]
                     ) * 10
+                    # Qtde de prestadores distintos NA CIDADE de referência que fazem cada
+                    # procedimento — junto com qtd_procedimentos (da cidade) acima, dá "Qtde por
+                    # prestador (Cidade)": quanto, em média, um prestador qualquer da cidade faz
+                    # daquele procedimento, pra comparar com o volume do prestador investigado.
+                    _prestadores_cidade_temp = df_cidade_ref_temp.groupby(
+                        "NOME_PROCEDIMENTO", observed=True
+                    )["CD_PRESTADOR"].nunique()
+                    rank_cidade_temp["qtd_prestadores_cidade"] = rank_cidade_temp["NOME_PROCEDIMENTO"].map(
+                        _prestadores_cidade_temp
+                    )
                     rank_temp = rank_temp.merge(
                         rank_cidade_temp[[
                             "NOME_PROCEDIMENTO", "cs_cidade", "qtd_procedimentos", "fase_esperado_cidade",
+                            "qtd_prestadores_cidade",
                         ]].rename(columns={"qtd_procedimentos": "qtd_procedimentos_cidade"}),
                         on="NOME_PROCEDIMENTO", how="left",
                     )
@@ -2461,6 +2496,11 @@ elif st.session_state.pagina == "severidade":
                     rank_temp["cs_cidade"] = float("nan")
                     rank_temp["qtd_procedimentos_cidade"] = float("nan")
                     rank_temp["fase_esperado_cidade"] = float("nan")
+                    rank_temp["qtd_prestadores_cidade"] = float("nan")
+
+                rank_temp["qtd_por_prestador_cidade"] = (
+                    rank_temp["qtd_procedimentos_cidade"] / rank_temp["qtd_prestadores_cidade"]
+                )
 
                 # ---- coluna com o CS formatado com 3 casas decimais (padrão fmt_float2 usa só 2) ----
                 def _fmt_cs_temp(v):
@@ -2516,6 +2556,14 @@ elif st.session_state.pagina == "severidade":
                 exib_rank_temp["uso_por_vida"] = exib_rank_temp["uso_por_vida"].map(fmt_float2)
                 exib_rank_temp["fase_esperado"] = exib_rank_temp["fase_esperado"].map(fmt_float2)
                 exib_rank_temp["qp_praticado"] = exib_rank_temp["qp_praticado"].map(fmt_int)
+                # Qtde por prestador (Nacional/Cidade) — "—" quando não dá pra calcular (sem
+                # cidade de referência, no caso da Cidade; fmt_float2 já cobre o NaN).
+                exib_rank_temp["qtd_por_prestador_nacional"] = exib_rank_temp["qtd_por_prestador_nacional"].map(
+                    fmt_float2
+                )
+                exib_rank_temp["qtd_por_prestador_cidade"] = exib_rank_temp["qtd_por_prestador_cidade"].map(
+                    fmt_float2
+                )
                 # CS Geral é sempre a referência "sem os filtros desta aba" — mostra o valor de
                 # verdade mesmo quando nenhum_filtro_temp é True (nesse caso ele só coincide
                 # com o CS ao lado, já que os dois corte ficam iguais).
@@ -2531,8 +2579,12 @@ elif st.session_state.pagina == "severidade":
                     exib_rank_temp["cs"] = exib_rank_temp["cs"].map(_fmt_cs_temp)
                 # "Cálculo do QP"/"QP" ficam de fora quando a aba pede (_mostrar_calculo_qp_temp
                 # = False, hoje só a "🔎 SMILE DENTAL") — o resto das colunas é igual pra todas.
+                # "Qtde por prestador Nacional/Cidade" ficam logo depois de "Qtde proced", pra
+                # comparar de cara o volume do corte com a média por prestador (Brasil/cidade).
                 _colunas_exib_rank_temp = [
-                    "rotulo", "qtd_procedimentos", "qtd_usuarios", "quantidade_uso",
+                    "rotulo", "qtd_procedimentos",
+                    "qtd_por_prestador_nacional", "qtd_por_prestador_cidade",
+                    "qtd_usuarios", "quantidade_uso",
                     "uso_por_procedimento", "uso_por_vida",
                     "calculo_fase_esperado", "fase_esperado",
                 ]
@@ -2541,15 +2593,11 @@ elif st.session_state.pagina == "severidade":
                 _colunas_exib_rank_temp += [
                     "calculo_cs", "cs", "cs_geral", "calculo_cs_cidade", "cs_cidade",
                 ]
-                # Rótulo da 1ª coluna deixa explícito que cada linha já está filtrada pelo
-                # prestador travado desta aba (hoje só a "🔎 SMILE DENTAL") — nas demais abas
-                # continua "Procedimento" simples, já que lá o Prestador é um filtro livre.
-                _rotulo_coluna_procedimento_temp = (
-                    "Procedimento por Prestador" if _prestador_fixo_temp is not None else "Procedimento"
-                )
                 exib_rank_temp = exib_rank_temp[_colunas_exib_rank_temp].rename(columns={
-                    "rotulo": _rotulo_coluna_procedimento_temp,
+                    "rotulo": "Procedimento",
                     "qtd_procedimentos": "Qtde proced",
+                    "qtd_por_prestador_nacional": "Qtde por prestador Nacional",
+                    "qtd_por_prestador_cidade": "Qtde por prestador - Cidade",
                     "qtd_usuarios": "Qtd vidas",
                     "quantidade_uso": "Soma de uso",
                     "uso_por_procedimento": "Uso/proced",
