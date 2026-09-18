@@ -3113,6 +3113,17 @@ elif st.session_state.pagina == "severidade":
                         # normalmente; só o botão avisa o que falta instalar.
                         # ============================================================
                         def _gerar_pdf_ranking_temp():
+                            # Trava de segurança contra PDF com a base toda (nunca pode sair
+                            # sem recorte) — mesma checagem que já desabilita o botão "Gerar
+                            # PDF" na tela, repetida aqui como segunda linha de defesa, caso
+                            # esta função algum dia seja chamada de outro lugar sem passar por
+                            # aquele botão.
+                            if uf_sel_temp == "Todos" and cidade_sel_temp == "Todos" and cluster_sel_temp == "Todos":
+                                st.error(
+                                    "Selecione pelo menos UF, Cidade ou Cluster antes de gerar "
+                                    "o PDF — não é permitido gerar com a base toda."
+                                )
+                                return None
                             try:
                                 import matplotlib
                                 matplotlib.use("Agg")
@@ -3498,10 +3509,24 @@ elif st.session_state.pagina == "severidade":
                             "detalhamento por prestador já \"aberto\" (mesmo conteúdo dos "
                             "expanders logo abaixo)."
                         )
+                        # Trava: nunca deixa gerar o PDF com a base toda (sem nenhum recorte
+                        # geográfico) — obrigatório escolher pelo menos UF, Cidade ou Cluster
+                        # ali em cima. Procedimento/Prestador/Região sozinhos não contam (o
+                        # pedido foi especificamente UF, Cidade ou Cluster).
+                        _tem_filtro_pdf_temp = (
+                            uf_sel_temp != "Todos" or cidade_sel_temp != "Todos"
+                            or cluster_sel_temp != "Todos"
+                        )
+                        if not _tem_filtro_pdf_temp:
+                            st.warning(
+                                "Selecione pelo menos UF, Cidade ou Cluster nos filtros acima "
+                                "pra liberar o PDF — ele nunca pode ser gerado com a base toda."
+                            )
                         col_gerar_pdf_temp, col_baixar_pdf_temp = st.columns([1, 2])
                         with col_gerar_pdf_temp:
                             if st.button(
-                                "📄 Gerar PDF", key="gerar_pdf_ranking_temp", use_container_width=True
+                                "📄 Gerar PDF", key="gerar_pdf_ranking_temp", use_container_width=True,
+                                disabled=not _tem_filtro_pdf_temp,
                             ):
                                 with st.spinner("Gerando PDF..."):
                                     _pdf_bytes_temp = _gerar_pdf_ranking_temp()
