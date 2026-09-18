@@ -2541,8 +2541,14 @@ elif st.session_state.pagina == "severidade":
                 _colunas_exib_rank_temp += [
                     "calculo_cs", "cs", "cs_geral", "calculo_cs_cidade", "cs_cidade",
                 ]
+                # Rótulo da 1ª coluna deixa explícito que cada linha já está filtrada pelo
+                # prestador travado desta aba (hoje só a "🔎 SMILE DENTAL") — nas demais abas
+                # continua "Procedimento" simples, já que lá o Prestador é um filtro livre.
+                _rotulo_coluna_procedimento_temp = (
+                    "Procedimento por Prestador" if _prestador_fixo_temp is not None else "Procedimento"
+                )
                 exib_rank_temp = exib_rank_temp[_colunas_exib_rank_temp].rename(columns={
-                    "rotulo": "Procedimento",
+                    "rotulo": _rotulo_coluna_procedimento_temp,
                     "qtd_procedimentos": "Qtde proced",
                     "qtd_usuarios": "Qtd vidas",
                     "quantidade_uso": "Soma de uso",
