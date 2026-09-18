@@ -2633,10 +2633,13 @@ elif st.session_state.pagina == "severidade":
                             # PDF" na tela, repetida aqui como segunda linha de defesa, caso
                             # esta função algum dia seja chamada de outro lugar sem passar por
                             # aquele botão.
-                            if uf_sel_temp == "Todos" and cidade_sel_temp == "Todos" and cluster_sel_temp == "Todos":
+                            if (
+                                uf_sel_temp == "Todos" and cidade_sel_temp == "Todos"
+                                and cluster_sel_temp == "Todos" and prest_sel_temp == "Todos"
+                            ):
                                 st.error(
-                                    "Selecione pelo menos UF, Cidade ou Cluster antes de gerar "
-                                    "o PDF — não é permitido gerar com a base toda."
+                                    "Selecione pelo menos UF, Cidade, Cluster ou Prestador "
+                                    "antes de gerar o PDF — não é permitido gerar com a base toda."
                                 )
                                 return None
                             try:
@@ -2880,6 +2883,155 @@ elif st.session_state.pagina == "severidade":
                             story.append(_tabela_legenda_temp)
                             story.append(Spacer(1, 8))
 
+                            # ---- resumo em texto: o que chama a atenção (Índice de Atenção de
+                            # Volume, mesmos 🚩/⚠️ e limiares 2×/5× já usados na grade) e o que
+                            # desvia (CS acima/abaixo de 10, a prática esperada) nesta seleção —
+                            # narrado em texto corrido em vez de tabela, como um resumo executivo
+                            # antes dos gráficos e do detalhamento prestador a prestador. Com um
+                            # único prestador filtrado, vira um parágrafo específico sobre ele.
+                            story.append(Paragraph("Resumo — o que chama a atenção", estilo_secao))
+                            if rank_temp.empty:
+                                story.append(Paragraph("Nenhum prestador nos filtros atuais.", estilo_corpo))
+                            else:
+                                def _nome_prest_pdf_temp(row):
+                                    _nome_temp = getattr(row, "NOME_PRESTADOR", None)
+                                    if not _nome_temp or str(_nome_temp).strip() in ("", "—"):
+                                        return f"Prestador {int(row.CD_PRESTADOR)}"
+                                    return str(_nome_temp)
+
+                                def _lista_nomeada_pdf_temp(df_lista, formatador, limite=8):
+                                    _itens_temp = [
+                                        formatador(_r_temp) for _r_temp in df_lista.head(limite).itertuples()
+                                    ]
+                                    _texto_temp = ", ".join(_itens_temp)
+                                    if len(df_lista) > limite:
+                                        _texto_temp += f" e mais {len(df_lista) - limite}"
+                                    return _texto_temp
+
+                                _total_prest_pdf_temp = len(rank_temp)
+                                _validos_atencao_pdf_temp = rank_temp[rank_temp["indice_atencao_volume"].notna()]
+                                _flag_alto_pdf_temp = _validos_atencao_pdf_temp[
+                                    _validos_atencao_pdf_temp["indice_atencao_volume"] >= LIMIAR_ATENCAO_ALTO_TEMP
+                                ].sort_values("indice_atencao_volume", ascending=False)
+                                _flag_medio_pdf_temp = _validos_atencao_pdf_temp[
+                                    (_validos_atencao_pdf_temp["indice_atencao_volume"] >= LIMIAR_ATENCAO_MEDIO_TEMP)
+                                    & (_validos_atencao_pdf_temp["indice_atencao_volume"] < LIMIAR_ATENCAO_ALTO_TEMP)
+                                ].sort_values("indice_atencao_volume", ascending=False)
+
+                                # Cores em vez de 🚩/⚠️ (a fonte padrão do reportlab não tem
+                                # esses glyphs — mesma solução já usada nas tabelas de
+                                # procedimento, cor no texto em vez do emoji).
+                                _ROTULO_ALTO_PDF_TEMP = '<font color="#e74c3c"><b>alerta forte</b></font>'
+                                _ROTULO_MEDIO_PDF_TEMP = '<font color="#c98a00"><b>atenção moderada</b></font>'
+
+                                if _total_prest_pdf_temp == 1:
+                                    _r0_temp = next(rank_temp.itertuples())
+                                    _nome0_temp = html.escape(_nome_prest_pdf_temp(_r0_temp))
+                                    if pd.notna(_r0_temp.indice_atencao_volume):
+                                        _nivel0_temp = (
+                                            _ROTULO_ALTO_PDF_TEMP if _r0_temp.indice_atencao_volume >= LIMIAR_ATENCAO_ALTO_TEMP
+                                            else _ROTULO_MEDIO_PDF_TEMP if _r0_temp.indice_atencao_volume >= LIMIAR_ATENCAO_MEDIO_TEMP
+                                            else "dentro do padrão esperado"
+                                        )
+                                        story.append(Paragraph(
+                                            f"<b>{_nome0_temp}</b> está com volume "
+                                            f"{html.escape(_r0_temp.indice_atencao_volume_rotulo)} por prestador "
+                                            f"({_nivel0_temp}).",
+                                            estilo_corpo,
+                                        ))
+                                    else:
+                                        story.append(Paragraph(
+                                            f"<b>{_nome0_temp}</b> não tem referência de volume por "
+                                            f"prestador pra comparar nesta seleção (sem cidade/nacional "
+                                            f"disponível).",
+                                            estilo_corpo,
+                                        ))
+                                else:
+                                    story.append(Paragraph(
+                                        f"Nos filtros atuais aparecem <b>{_total_prest_pdf_temp}</b> "
+                                        f"prestadores no Ranking. Desses, "
+                                        f"<b>{len(_flag_alto_pdf_temp)}</b> está(ão) em {_ROTULO_ALTO_PDF_TEMP} "
+                                        f"(volume ≥ 5× a média por prestador) e "
+                                        f"<b>{len(_flag_medio_pdf_temp)}</b> em {_ROTULO_MEDIO_PDF_TEMP} "
+                                        f"(entre 2× e 5×).",
+                                        estilo_corpo,
+                                    ))
+                                    if not _flag_alto_pdf_temp.empty:
+                                        story.append(Paragraph(
+                                            f"{_ROTULO_ALTO_PDF_TEMP}: " + _lista_nomeada_pdf_temp(
+                                                _flag_alto_pdf_temp,
+                                                lambda r: (
+                                                    f"{html.escape(_nome_prest_pdf_temp(r))} "
+                                                    f"({html.escape(r.indice_atencao_volume_rotulo)}, "
+                                                    f"CS {_fmt_cs_temp(r.cs)})"
+                                                ),
+                                            ) + ".",
+                                            estilo_corpo,
+                                        ))
+                                    if not _flag_medio_pdf_temp.empty:
+                                        story.append(Paragraph(
+                                            f"{_ROTULO_MEDIO_PDF_TEMP}: " + _lista_nomeada_pdf_temp(
+                                                _flag_medio_pdf_temp,
+                                                lambda r: (
+                                                    f"{html.escape(_nome_prest_pdf_temp(r))} "
+                                                    f"({html.escape(r.indice_atencao_volume_rotulo)}, "
+                                                    f"CS {_fmt_cs_temp(r.cs)})"
+                                                ),
+                                            ) + ".",
+                                            estilo_corpo,
+                                        ))
+                                story.append(Spacer(1, 3))
+
+                                # ---- desvio de CS: 10 é a prática esperada (QP praticado igual
+                                # à taxa nacional aplicada às vidas do corte) — acima de 10 é mais
+                                # severo que o esperado, abaixo é menos. ----
+                                _cs_validos_pdf_temp = rank_temp[rank_temp["cs"].notna()].copy()
+                                if not _cs_validos_pdf_temp.empty:
+                                    _cs_validos_pdf_temp["desvio_pct_temp"] = (
+                                        _cs_validos_pdf_temp["cs"] / 10 - 1
+                                    ) * 100
+                                    if _total_prest_pdf_temp == 1:
+                                        _r0b_temp = next(_cs_validos_pdf_temp.itertuples())
+                                        _desvio0_temp = _r0b_temp.desvio_pct_temp
+                                        _direcao0_temp = "acima" if _desvio0_temp >= 0 else "abaixo"
+                                        story.append(Paragraph(
+                                            f"CS de <b>{_fmt_cs_temp(_r0b_temp.cs)}</b> — desvio de "
+                                            f"<b>{abs(_desvio0_temp):.0f}% {_direcao0_temp}</b> da prática "
+                                            f"esperada (CS 10 = praticado igual à taxa nacional).",
+                                            estilo_corpo,
+                                        ))
+                                    else:
+                                        _acima_pdf_temp = _cs_validos_pdf_temp[
+                                            _cs_validos_pdf_temp["cs"] > 10
+                                        ].sort_values("cs", ascending=False)
+                                        _abaixo_pdf_temp = _cs_validos_pdf_temp[
+                                            _cs_validos_pdf_temp["cs"] < 10
+                                        ].sort_values("cs", ascending=True)
+
+                                        def _fmt_desvio_pdf_temp(r):
+                                            _sinal_temp = "+" if r.desvio_pct_temp >= 0 else ""
+                                            return (
+                                                f"{html.escape(_nome_prest_pdf_temp(r))} "
+                                                f"(CS {_fmt_cs_temp(r.cs)}, "
+                                                f"{_sinal_temp}{r.desvio_pct_temp:.0f}%)"
+                                            )
+
+                                        if not _acima_pdf_temp.empty:
+                                            story.append(Paragraph(
+                                                "<b>Acima do esperado (CS &gt; 10):</b> " + _lista_nomeada_pdf_temp(
+                                                    _acima_pdf_temp, _fmt_desvio_pdf_temp, limite=6
+                                                ) + ".",
+                                                estilo_corpo,
+                                            ))
+                                        if not _abaixo_pdf_temp.empty:
+                                            story.append(Paragraph(
+                                                "<b>Abaixo do esperado (CS &lt; 10):</b> " + _lista_nomeada_pdf_temp(
+                                                    _abaixo_pdf_temp, _fmt_desvio_pdf_temp, limite=6
+                                                ) + ".",
+                                                estilo_corpo,
+                                            ))
+                                story.append(Spacer(1, 8))
+
                             # ---- gráficos ----
                             if not rank_temp.empty:
                                 story.append(Paragraph("Visão geral", estilo_secao))
@@ -3019,23 +3171,24 @@ elif st.session_state.pagina == "severidade":
                         st.markdown("**📄 Relatório em PDF**")
                         st.caption(
                             "Gera um PDF com os filtros atuais desta aba: cabeçalho com a logo, "
-                            "período trabalhado e filtros aplicados, legenda, gráficos (dispersão "
-                            "CS × volume e Top 10 pela métrica de \"Ranquear por\") e o "
-                            "detalhamento por prestador já \"aberto\" (mesmo conteúdo dos "
-                            "expanders logo abaixo)."
+                            "período trabalhado e filtros aplicados, legenda, um resumo em texto "
+                            "do que chama a atenção (🚩/⚠️) e do que desvia (CS acima/abaixo de "
+                            "10) nesta seleção, gráficos (dispersão CS × volume e Top 10 pela "
+                            "métrica de \"Ranquear por\") e o detalhamento por prestador já "
+                            "\"aberto\" (mesmo conteúdo dos expanders logo abaixo)."
                         )
-                        # Trava: nunca deixa gerar o PDF com a base toda (sem nenhum recorte
-                        # geográfico) — obrigatório escolher pelo menos UF, Cidade ou Cluster
-                        # ali em cima. Procedimento/Prestador/Região sozinhos não contam (o
-                        # pedido foi especificamente UF, Cidade ou Cluster).
+                        # Trava: nunca deixa gerar o PDF com a base toda (sem nenhum recorte) —
+                        # obrigatório escolher pelo menos UF, Cidade, Cluster ou Prestador ali
+                        # em cima. Procedimento/Região sozinhos não contam.
                         _tem_filtro_pdf_temp = (
                             uf_sel_temp != "Todos" or cidade_sel_temp != "Todos"
-                            or cluster_sel_temp != "Todos"
+                            or cluster_sel_temp != "Todos" or prest_sel_temp != "Todos"
                         )
                         if not _tem_filtro_pdf_temp:
                             st.warning(
-                                "Selecione pelo menos UF, Cidade ou Cluster nos filtros acima "
-                                "pra liberar o PDF — ele nunca pode ser gerado com a base toda."
+                                "Selecione pelo menos UF, Cidade, Cluster ou Prestador nos "
+                                "filtros acima pra liberar o PDF — ele nunca pode ser gerado "
+                                "com a base toda."
                             )
                         col_gerar_pdf_temp, col_baixar_pdf_temp = st.columns([1, 2])
                         with col_gerar_pdf_temp:
