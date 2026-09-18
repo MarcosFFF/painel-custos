@@ -744,8 +744,11 @@ elif st.session_state.pagina == "severidade":
     # que era.
     MOSTRAR_FILTROS_TOPO = False
     # Grade "por procedimento" (Qtde proced/Qtd vidas/Soma de uso/Uso.../Cálculo do FASE/FASE/
-    # Cálculo do QP/QP/Cálculo do CS/CS/CS Geral), que aparece logo antes do bloco "Onde estão
-    # as severidades" — fica oculta por enquanto, não apagada — troque pra True pra reexibi-la.
+    # Cálculo do QP/QP/Cálculo do CS/CS/CS Geral/CS da Cidade), que aparece logo antes do bloco
+    # "Onde estão as severidades" — fica oculta por padrão, mas volta a aparecer sozinha assim
+    # que um prestador específico é selecionado no filtro da aba (ver _mostrar_grade_cs_temp
+    # logo antes da chamada que desenha a grade). Deixe True aqui pra forçar ela sempre visível,
+    # mesmo sem prestador selecionado.
     MOSTRAR_GRADE_CS_PROCEDIMENTO_TEMP = False
     col_titulo_sev, col_atualizar_sev = st.columns([5, 1])
     with col_titulo_sev:
@@ -2323,6 +2326,54 @@ elif st.session_state.pagina == "severidade":
                     rank_geral_temp[["NOME_PROCEDIMENTO", "cs_geral"]], on="NOME_PROCEDIMENTO", how="left"
                 )
 
+                # ---- CS da Cidade: mesmo cálculo do CS Geral, mas em vez de tirar TODOS os
+                # filtros desta aba, mantém só o recorte de cidade — a cidade escolhida no
+                # filtro "Cidade" (se houver) ou, com um prestador específico selecionado e
+                # sem cidade escolhida, a cidade onde esse prestador atua (moda de
+                # CIDADE_PRESTADOR dentro do recorte já filtrado por prestador). Serve pra
+                # comparar o CS de uma clínica/prestador específico com o CS de todo mundo
+                # que atua na mesma cidade pra aquele procedimento — sem cidade de
+                # referência (nem filtro de Cidade, nem Prestador selecionado), fica "—".
+                _cidade_referencia_temp = None
+                if cidade_sel_temp != "Todos":
+                    _cidade_referencia_temp = cidade_sel_temp
+                elif (
+                    prest_sel_temp != "Todos"
+                    and "CIDADE_PRESTADOR" in df_temp.columns
+                    and not df_temp.empty
+                ):
+                    _moda_cidade_temp = df_temp["CIDADE_PRESTADOR"].mode()
+                    if not _moda_cidade_temp.empty:
+                        _cidade_referencia_temp = _moda_cidade_temp.iloc[0]
+
+                if (
+                    _cidade_referencia_temp is not None
+                    and "CIDADE_PRESTADOR" in df_temp_base.columns
+                    and "CIDADE_PRESTADOR" in usuarios_filtrado.columns
+                ):
+                    df_cidade_ref_temp = df_temp_base[
+                        df_temp_base["CIDADE_PRESTADOR"] == _cidade_referencia_temp
+                    ]
+                    usuarios_cidade_ref_temp = usuarios_filtrado[
+                        usuarios_filtrado["NOME_PROCEDIMENTO"].isin(nomes_temp)
+                        & (usuarios_filtrado["CIDADE_PRESTADOR"] == _cidade_referencia_temp)
+                    ]
+                    rank_cidade_temp = ranking_severidade(
+                        df_cidade_ref_temp, "NOME_PROCEDIMENTO", top_n=1_000_000, usuarios=usuarios_cidade_ref_temp
+                    ).copy()
+                    rank_cidade_temp = rank_cidade_temp.merge(nacional_temp_flat, on="NOME_PROCEDIMENTO", how="left")
+                    rank_cidade_temp["fase_esperado_cidade"] = (
+                        rank_cidade_temp["qtd_procedimentos_nacional"] / rank_cidade_temp["qtd_vidas_nacional"]
+                    ) * rank_cidade_temp["qtd_usuarios"]
+                    rank_cidade_temp["cs_cidade"] = (
+                        rank_cidade_temp["qtd_procedimentos"] / rank_cidade_temp["fase_esperado_cidade"]
+                    ) * 10
+                    rank_temp = rank_temp.merge(
+                        rank_cidade_temp[["NOME_PROCEDIMENTO", "cs_cidade"]], on="NOME_PROCEDIMENTO", how="left"
+                    )
+                else:
+                    rank_temp["cs_cidade"] = float("nan")
+
                 # ---- coluna com o CS formatado com 3 casas decimais (padrão fmt_float2 usa só 2) ----
                 def _fmt_cs_temp(v):
                     if v is None or (isinstance(v, float) and pd.isna(v)):
@@ -2371,6 +2422,10 @@ elif st.session_state.pagina == "severidade":
                 # verdade mesmo quando nenhum_filtro_temp é True (nesse caso ele só coincide
                 # com o CS ao lado, já que os dois corte ficam iguais).
                 exib_rank_temp["cs_geral"] = exib_rank_temp["cs_geral"].map(_fmt_cs_temp)
+                # CS da Cidade segue a mesma regra do CS Geral — mostra o valor de verdade,
+                # com "—" só quando não há cidade de referência (função _fmt_cs_temp já cobre
+                # o NaN desse caso).
+                exib_rank_temp["cs_cidade"] = exib_rank_temp["cs_cidade"].map(_fmt_cs_temp)
                 if nenhum_filtro_temp:
                     exib_rank_temp["cs"] = "—"
                     exib_rank_temp["calculo_cs"] = "—"
@@ -2381,7 +2436,7 @@ elif st.session_state.pagina == "severidade":
                     "uso_por_procedimento", "uso_por_vida",
                     "calculo_fase_esperado", "fase_esperado",
                     "calculo_qp", "qp_praticado",
-                    "calculo_cs", "cs", "cs_geral",
+                    "calculo_cs", "cs", "cs_geral", "cs_cidade",
                 ]].rename(columns={
                     "rotulo": "Procedimento",
                     "qtd_procedimentos": "Qtde proced",
@@ -2396,6 +2451,7 @@ elif st.session_state.pagina == "severidade":
                     "calculo_cs": "Cálculo do CS",
                     "cs": "CS",
                     "cs_geral": "CS Geral",
+                    "cs_cidade": "CS da Cidade",
                 })
                 # Grade montada como tabela HTML própria, em vez de st.dataframe: o widget padrão do
                 # Streamlit desenha o conteúdo das células em canvas (glide-data-grid), então CSS de
@@ -2448,7 +2504,11 @@ elif st.session_state.pagina == "severidade":
                         unsafe_allow_html=True,
                     )
 
-                if MOSTRAR_GRADE_CS_PROCEDIMENTO_TEMP:
+                # A grade volta a aparecer sozinha assim que um prestador específico é
+                # selecionado (a flag no topo do arquivo só força ela sempre visível, mesmo
+                # sem prestador selecionado, se religada pra True).
+                _mostrar_grade_cs_temp = MOSTRAR_GRADE_CS_PROCEDIMENTO_TEMP or prest_sel_temp != "Todos"
+                if _mostrar_grade_cs_temp:
                     _tabela_html_temp(exib_rank_temp, scroll=True)
 
                 # ---- prestadores do procedimento selecionado, com FASE/QP/CS por prestador ----
