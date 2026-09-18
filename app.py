@@ -344,6 +344,48 @@ def enviar_email_projecao(view_year, view_month, label_projetado, projecao, acum
         return True, ""
     except Exception as e:
         return False, str(e)
+def enviar_email_resumo_ranking_temp(destinatarios, periodo_texto, ranqueado_por_texto,
+                                      filtros_texto, partes_resumo_html):
+    """E-mail pontual com o 'Resumo — o que chama a atenção' da aba Ranking (texto, sem
+    anexo) — mesmas credenciais/servidor SMTP de enviar_email_projecao, mas destinatários
+    vêm do campo na tela (não do EMAIL_DESTINATARIO fixo dos Secrets), porque esse resumo
+    muda de gente a depender do filtro aplicado (ex.: gestor de uma UF específica)."""
+    try:
+        remetente = st.secrets["EMAIL_REMETENTE"]
+        senha = st.secrets["EMAIL_SENHA_APP"]
+        smtp_host = st.secrets.get("EMAIL_SMTP_HOST", "smtp.gmail.com")
+        smtp_port = int(st.secrets.get("EMAIL_SMTP_PORT", 587))
+    except KeyError as e:
+        return False, f"Faltou configurar o segredo {e} em Settings → Secrets do Streamlit Cloud."
+    if not destinatarios:
+        return False, "Informe pelo menos um e-mail de destino válido."
+    _corpo_partes_temp = [
+        '<p style="margin:0 0 10px 0;"><strong>Resumo do Ranking — Odonto</strong></p>',
+        (
+            '<p style="margin:0 0 10px 0;">'
+            f"Período: {html.escape(periodo_texto)}<br>"
+            f"Ranqueado por: {html.escape(ranqueado_por_texto)}<br>"
+            f"Filtros: {html.escape(filtros_texto)}</p>"
+        ),
+    ]
+    _corpo_partes_temp += [f'<p style="margin:0 0 8px 0;">{p}</p>' for p in partes_resumo_html]
+    corpo_html = (
+        '<div style="font-family:Arial,Helvetica,sans-serif; font-size:14px; color:#1a1a1a;">'
+        + "".join(_corpo_partes_temp) + "</div>"
+    )
+    msg = MIMEMultipart()
+    msg["From"] = remetente
+    msg["To"] = ", ".join(destinatarios)
+    msg["Subject"] = f"Resumo do Ranking - Odonto ({periodo_texto})"
+    msg.attach(MIMEText(corpo_html, "html", "utf-8"))
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as servidor:
+            servidor.starttls()
+            servidor.login(remetente, senha)
+            servidor.sendmail(remetente, destinatarios, msg.as_string())
+        return True, ""
+    except Exception as e:
+        return False, str(e)
 # ---------- cálculos ----------
 def entradas_do_mes(y, m, total):
     return {
@@ -3167,6 +3209,150 @@ elif st.session_state.pagina == "severidade":
                             buf_pdf.seek(0)
                             return buf_pdf.getvalue()
 
+                        # ============================================================
+                        # E-MAIL — mesmo conteúdo do "Resumo — o que chama a atenção" do
+                        # PDF acima, só que em HTML pro corpo do e-mail (sem o PDF anexado
+                        # — é um resumo rápido, não o relatório completo). Lógica paralela
+                        # à de dentro de _gerar_pdf_ranking_temp (mesmas contas, mesmos
+                        # limiares) — se um dia mudar o critério de "o que chama a
+                        # atenção", replicar a mudança nos dois lugares.
+                        # ============================================================
+                        def _construir_partes_resumo_email_temp(rank_df):
+                            if rank_df.empty:
+                                return ["Nenhum prestador nos filtros atuais."]
+
+                            def _nome_prest_email_temp(row):
+                                _nome_temp = getattr(row, "NOME_PRESTADOR", None)
+                                if not _nome_temp or str(_nome_temp).strip() in ("", "—"):
+                                    return f"Prestador {int(row.CD_PRESTADOR)}"
+                                return str(_nome_temp)
+
+                            def _lista_nomeada_email_temp(df_lista, formatador, limite=8):
+                                _itens_temp = [
+                                    formatador(r) for r in df_lista.head(limite).itertuples()
+                                ]
+                                _texto_temp = ", ".join(_itens_temp)
+                                if len(df_lista) > limite:
+                                    _texto_temp += f" e mais {len(df_lista) - limite}"
+                                return _texto_temp
+
+                            _ALTO_HTML_TEMP = (
+                                '<span style="color:#e74c3c;font-weight:bold;">alerta forte</span>'
+                            )
+                            _MEDIO_HTML_TEMP = (
+                                '<span style="color:#c98a00;font-weight:bold;">atenção moderada</span>'
+                            )
+
+                            _total_email_temp = len(rank_df)
+                            _validos_atencao_email_temp = rank_df[rank_df["indice_atencao_volume"].notna()]
+                            _flag_alto_email_temp = _validos_atencao_email_temp[
+                                _validos_atencao_email_temp["indice_atencao_volume"] >= LIMIAR_ATENCAO_ALTO_TEMP
+                            ].sort_values("indice_atencao_volume", ascending=False)
+                            _flag_medio_email_temp = _validos_atencao_email_temp[
+                                (_validos_atencao_email_temp["indice_atencao_volume"] >= LIMIAR_ATENCAO_MEDIO_TEMP)
+                                & (_validos_atencao_email_temp["indice_atencao_volume"] < LIMIAR_ATENCAO_ALTO_TEMP)
+                            ].sort_values("indice_atencao_volume", ascending=False)
+
+                            _partes_temp = []
+
+                            if _total_email_temp == 1:
+                                _r0_temp = next(rank_df.itertuples())
+                                _nome0_temp = html.escape(_nome_prest_email_temp(_r0_temp))
+                                if pd.notna(_r0_temp.indice_atencao_volume):
+                                    _nivel0_temp = (
+                                        _ALTO_HTML_TEMP if _r0_temp.indice_atencao_volume >= LIMIAR_ATENCAO_ALTO_TEMP
+                                        else _MEDIO_HTML_TEMP if _r0_temp.indice_atencao_volume >= LIMIAR_ATENCAO_MEDIO_TEMP
+                                        else "dentro do padrão esperado"
+                                    )
+                                    _partes_temp.append(
+                                        f"<strong>{_nome0_temp}</strong> está com volume "
+                                        f"{html.escape(_r0_temp.indice_atencao_volume_rotulo)} por "
+                                        f"prestador ({_nivel0_temp})."
+                                    )
+                                else:
+                                    _partes_temp.append(
+                                        f"<strong>{_nome0_temp}</strong> não tem referência de volume "
+                                        f"por prestador pra comparar nesta seleção (sem cidade/nacional "
+                                        f"disponível)."
+                                    )
+                            else:
+                                _partes_temp.append(
+                                    f"Nos filtros atuais aparecem <strong>{_total_email_temp}</strong> "
+                                    f"prestadores no Ranking. Desses, "
+                                    f"<strong>{len(_flag_alto_email_temp)}</strong> está(ão) em "
+                                    f"{_ALTO_HTML_TEMP} (volume ≥ 5× a média por prestador) e "
+                                    f"<strong>{len(_flag_medio_email_temp)}</strong> em {_MEDIO_HTML_TEMP} "
+                                    f"(entre 2× e 5×)."
+                                )
+                                if not _flag_alto_email_temp.empty:
+                                    _partes_temp.append(
+                                        f"{_ALTO_HTML_TEMP}: " + _lista_nomeada_email_temp(
+                                            _flag_alto_email_temp,
+                                            lambda r: (
+                                                f"{html.escape(_nome_prest_email_temp(r))} "
+                                                f"({html.escape(r.indice_atencao_volume_rotulo)}, "
+                                                f"CS {_fmt_cs_temp(r.cs)})"
+                                            ),
+                                        ) + "."
+                                    )
+                                if not _flag_medio_email_temp.empty:
+                                    _partes_temp.append(
+                                        f"{_MEDIO_HTML_TEMP}: " + _lista_nomeada_email_temp(
+                                            _flag_medio_email_temp,
+                                            lambda r: (
+                                                f"{html.escape(_nome_prest_email_temp(r))} "
+                                                f"({html.escape(r.indice_atencao_volume_rotulo)}, "
+                                                f"CS {_fmt_cs_temp(r.cs)})"
+                                            ),
+                                        ) + "."
+                                    )
+
+                            _cs_validos_email_temp = rank_df[rank_df["cs"].notna()].copy()
+                            if not _cs_validos_email_temp.empty:
+                                _cs_validos_email_temp["desvio_pct_temp"] = (
+                                    _cs_validos_email_temp["cs"] / 10 - 1
+                                ) * 100
+                                if _total_email_temp == 1:
+                                    _r0b_temp = next(_cs_validos_email_temp.itertuples())
+                                    _desvio0_temp = _r0b_temp.desvio_pct_temp
+                                    _direcao0_temp = "acima" if _desvio0_temp >= 0 else "abaixo"
+                                    _partes_temp.append(
+                                        f"CS de <strong>{_fmt_cs_temp(_r0b_temp.cs)}</strong> — desvio "
+                                        f"de <strong>{abs(_desvio0_temp):.0f}% {_direcao0_temp}</strong> "
+                                        f"da prática esperada (CS 10 = praticado igual à taxa nacional)."
+                                    )
+                                else:
+                                    _acima_email_temp = _cs_validos_email_temp[
+                                        _cs_validos_email_temp["cs"] > 10
+                                    ].sort_values("cs", ascending=False)
+                                    _abaixo_email_temp = _cs_validos_email_temp[
+                                        _cs_validos_email_temp["cs"] < 10
+                                    ].sort_values("cs", ascending=True)
+
+                                    def _fmt_desvio_email_temp(r):
+                                        _sinal_temp = "+" if r.desvio_pct_temp >= 0 else ""
+                                        return (
+                                            f"{html.escape(_nome_prest_email_temp(r))} "
+                                            f"(CS {_fmt_cs_temp(r.cs)}, {_sinal_temp}{r.desvio_pct_temp:.0f}%)"
+                                        )
+
+                                    if not _acima_email_temp.empty:
+                                        _partes_temp.append(
+                                            "<strong>Acima do esperado (CS &gt; 10):</strong> "
+                                            + _lista_nomeada_email_temp(
+                                                _acima_email_temp, _fmt_desvio_email_temp, limite=6
+                                            ) + "."
+                                        )
+                                    if not _abaixo_email_temp.empty:
+                                        _partes_temp.append(
+                                            "<strong>Abaixo do esperado (CS &lt; 10):</strong> "
+                                            + _lista_nomeada_email_temp(
+                                                _abaixo_email_temp, _fmt_desvio_email_temp, limite=6
+                                            ) + "."
+                                        )
+
+                            return _partes_temp
+
                         st.divider()
                         st.markdown("**📄 Relatório em PDF**")
                         st.caption(
@@ -3215,6 +3401,74 @@ elif st.session_state.pagina == "severidade":
                                     key="baixar_pdf_ranking_temp",
                                     use_container_width=True,
                                 )
+
+                        st.markdown("**📧 Resumo por e-mail**")
+                        st.caption(
+                            "Envia por e-mail só o texto do \"Resumo — o que chama a atenção\" "
+                            "desta seleção (sem anexar o PDF) — mesma trava de filtro do PDF "
+                            "acima: nunca envia com a base toda."
+                        )
+                        _destino_email_resumo_temp = st.text_input(
+                            "E-mail(s) de destino (separe por vírgula)",
+                            key="destino_email_resumo_ranking_temp",
+                            placeholder="nome@empresa.com, outro@empresa.com",
+                        )
+                        if st.button(
+                            "📧 Enviar resumo por e-mail", key="enviar_email_resumo_ranking_temp",
+                            disabled=not _tem_filtro_pdf_temp,
+                        ):
+                            _destinatarios_resumo_temp = [
+                                e.strip() for e in _destino_email_resumo_temp.split(",") if e.strip()
+                            ]
+                            _invalidos_email_temp = [e for e in _destinatarios_resumo_temp if "@" not in e]
+                            if not _destinatarios_resumo_temp:
+                                st.error("Informe pelo menos um e-mail de destino.")
+                            elif _invalidos_email_temp:
+                                st.error(f"E-mail(s) inválido(s): {', '.join(_invalidos_email_temp)}")
+                            else:
+                                # Mesmos metadados (período/filtros) montados dentro de
+                                # _gerar_pdf_ranking_temp acima, recalculados aqui porque são
+                                # locais aquela função — mantenha os dois em sincronia se o
+                                # formato mudar.
+                                _periodo_email_temp = (
+                                    _periodo_considerado_temp(df_temp)
+                                    or "Base completa (sem recorte de período)"
+                                )
+                                _filtros_ativos_email_temp = []
+                                if f_mes:
+                                    _filtros_ativos_email_temp.append(f"Mês: {', '.join(f_mes)}")
+                                if f_plano:
+                                    _filtros_ativos_email_temp.append(f"Plano: {', '.join(f_plano)}")
+                                if f_especialidade:
+                                    _filtros_ativos_email_temp.append(
+                                        f"Especialidade: {', '.join(f_especialidade)}"
+                                    )
+                                for _rotulo_filtro_temp, _valor_filtro_temp in (
+                                    ("Procedimento", proc_sel_temp), ("Prestador", prest_sel_temp),
+                                    ("UF", uf_sel_temp), ("Região", regiao_sel_temp),
+                                    ("Cidade", cidade_sel_temp), ("Cluster", cluster_sel_temp),
+                                ):
+                                    if _valor_filtro_temp != "Todos":
+                                        _filtros_ativos_email_temp.append(
+                                            f"{_rotulo_filtro_temp}: {_valor_filtro_temp}"
+                                        )
+                                _texto_filtros_email_temp = (
+                                    "; ".join(_filtros_ativos_email_temp) if _filtros_ativos_email_temp
+                                    else "Nenhum filtro adicional — todos os prestadores/procedimentos do período"
+                                )
+                                with st.spinner("Enviando e-mail..."):
+                                    _partes_resumo_email_temp = _construir_partes_resumo_email_temp(rank_temp)
+                                    _ok_email_resumo_temp, _erro_email_resumo_temp = (
+                                        enviar_email_resumo_ranking_temp(
+                                            _destinatarios_resumo_temp, _periodo_email_temp,
+                                            ranquear_por_temp, _texto_filtros_email_temp,
+                                            _partes_resumo_email_temp,
+                                        )
+                                    )
+                                if _ok_email_resumo_temp:
+                                    st.success(f"E-mail enviado para {', '.join(_destinatarios_resumo_temp)}.")
+                                else:
+                                    st.error(f"Erro ao enviar e-mail: {_erro_email_resumo_temp}")
 
                     if _sufixo_aba_temp == "_ranking" and not rank_temp.empty:
                         st.caption(
