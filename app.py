@@ -80,14 +80,34 @@ div[data-testid="stVerticalBlock"] { gap: 0.35rem !important; }
 hr { margin: 0.4rem 0 !important; }
 div[data-testid="stMetric"] { padding: 0.15rem 0 !important; }
 div.element-container { margin-bottom: 0.1rem !important; }
-/* Botão "🧹" de limpar campo individual (um por filtro) — pequeno, alinhado com o
-   campo ao lado (não empurrado pra baixo pelo rótulo do campo, que o botão não tem) */
-div[class*="st-key-limpar_campo_temp_"] { margin-top: 1.6rem !important; }
+/* Botão "🧹" de limpar campo individual (um por filtro) — quadradinho neutro (cinza),
+   do tamanho do campo ao lado, alinhado com a caixa (não com o rótulo, que o botão
+   não tem) */
+div[class*="st-key-limpar_campo_temp_"] {
+    margin-top: 1.55rem !important;
+}
 div[class*="st-key-limpar_campo_temp_"] button {
-    padding: 0rem 0.4rem !important;
-    min-height: 1.7rem !important;
-    height: 1.7rem !important;
-    font-size: 0.85rem !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 2.2rem !important;
+    height: 2.2rem !important;
+    min-height: 2.2rem !important;
+    padding: 0 !important;
+    border-radius: 6px !important;
+    background-color: #f2f4f6 !important;
+    border: 1px solid #d8dee3 !important;
+    font-size: 1rem !important;
+    line-height: 1 !important;
+    box-shadow: none !important;
+}
+div[class*="st-key-limpar_campo_temp_"] button:hover {
+    background-color: #e7ebee !important;
+    border-color: #b9c2ca !important;
+}
+div[class*="st-key-limpar_campo_temp_"] button p {
+    font-size: 1rem !important;
+    margin: 0 !important;
     line-height: 1 !important;
 }
 /* Fonte menor nos filtros da aba Severidade */
