@@ -2945,7 +2945,20 @@ elif st.session_state.pagina == "severidade":
                         text-align: left !important;
                         max-width: 260px; overflow: hidden; text-overflow: ellipsis;
                     }
-                    .grade-cs-temp th { font-weight: 600; }
+                    /* Cabeçalho congelado: fica parado no topo ao rolar a grade (só tem
+                    efeito visível na variante com scroll vertical — grade-cs-temp-wrap-scroll,
+                    max-height: 165px — nas grades sem scroll vertical o "sticky" não muda
+                    nada). Precisa de fundo sólido, senão as linhas por trás aparecem por baixo
+                    do texto do cabeçalho ao rolar — var(--background-color) acompanha o tema
+                    claro/escuro do Streamlit; sem essa variável (temas mais antigos), cai pro
+                    branco do fallback. */
+                    .grade-cs-temp th {
+                        font-weight: 600;
+                        position: sticky;
+                        top: 0;
+                        background-color: var(--background-color, #ffffff);
+                        z-index: 1;
+                    }
                     </style>
                     """,
                     unsafe_allow_html=True,
