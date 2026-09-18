@@ -3529,24 +3529,30 @@ elif st.session_state.pagina == "severidade":
                             "(mesmas colunas de antes, uma linha por procedimento em vez de "
                             "somadas). O título já traz o resumo do prestador."
                         )
-                        for _linha_prest_exp_temp in rank_temp.itertuples():
-                            _cd_prest_exp_temp = _linha_prest_exp_temp.CD_PRESTADOR
-                            _resumo_prest_exp_temp = (
-                                f"{_linha_prest_exp_temp.rotulo}  —  "
-                                f"{fmt_int(_linha_prest_exp_temp.qtd_usuarios)} vidas · "
-                                f"{fmt_int(_linha_prest_exp_temp.qtd_procedimentos)} proced. · "
-                                f"CS {_fmt_cs_temp(_linha_prest_exp_temp.cs)} · "
-                                f"CS Cidade {_fmt_cs_temp(_linha_prest_exp_temp.cs_cidade)} · "
-                                f"{_linha_prest_exp_temp.indice_atencao_volume_rotulo}"
-                            )
-                            with st.expander(_resumo_prest_exp_temp):
-                                _exib_detalhe_proc_temp = _detalhe_procedimentos_prestador_temp(
-                                    _cd_prest_exp_temp
+                        # st.container(height=...) — caixa com rolagem própria (recurso nativo
+                        # do Streamlit, não é gambiarra de CSS): a lista de prestadores rola
+                        # AQUI DENTRO, sem precisar rolar a página inteira até o fim pra
+                        # alcançar o que vem depois (benchmark, gráficos etc.). Altura fixa em
+                        # pixels — 480px dá pra uns 4-5 expanders fechados por vez.
+                        with st.container(height=480):
+                            for _linha_prest_exp_temp in rank_temp.itertuples():
+                                _cd_prest_exp_temp = _linha_prest_exp_temp.CD_PRESTADOR
+                                _resumo_prest_exp_temp = (
+                                    f"{_linha_prest_exp_temp.rotulo}  —  "
+                                    f"{fmt_int(_linha_prest_exp_temp.qtd_usuarios)} vidas · "
+                                    f"{fmt_int(_linha_prest_exp_temp.qtd_procedimentos)} proced. · "
+                                    f"CS {_fmt_cs_temp(_linha_prest_exp_temp.cs)} · "
+                                    f"CS Cidade {_fmt_cs_temp(_linha_prest_exp_temp.cs_cidade)} · "
+                                    f"{_linha_prest_exp_temp.indice_atencao_volume_rotulo}"
                                 )
-                                if _exib_detalhe_proc_temp is None:
-                                    st.caption("Sem procedimentos pra detalhar.")
-                                else:
-                                    _tabela_html_temp(_exib_detalhe_proc_temp, scroll=False)
+                                with st.expander(_resumo_prest_exp_temp):
+                                    _exib_detalhe_proc_temp = _detalhe_procedimentos_prestador_temp(
+                                        _cd_prest_exp_temp
+                                    )
+                                    if _exib_detalhe_proc_temp is None:
+                                        st.caption("Sem procedimentos pra detalhar.")
+                                    else:
+                                        _tabela_html_temp(_exib_detalhe_proc_temp, scroll=False)
 
                 # ============================================================
                 # BENCHMARK — 30 prestadores de volume médio, em cidades/UFs/clusters
