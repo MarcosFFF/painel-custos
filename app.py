@@ -80,6 +80,16 @@ div[data-testid="stVerticalBlock"] { gap: 0.35rem !important; }
 hr { margin: 0.4rem 0 !important; }
 div[data-testid="stMetric"] { padding: 0.15rem 0 !important; }
 div.element-container { margin-bottom: 0.1rem !important; }
+/* Botão "🧹" de limpar campo individual (um por filtro) — pequeno, alinhado com o
+   campo ao lado (não empurrado pra baixo pelo rótulo do campo, que o botão não tem) */
+div[class*="st-key-limpar_campo_temp_"] { margin-top: 1.6rem !important; }
+div[class*="st-key-limpar_campo_temp_"] button {
+    padding: 0rem 0.4rem !important;
+    min-height: 1.7rem !important;
+    height: 1.7rem !important;
+    font-size: 0.85rem !important;
+    line-height: 1 !important;
+}
 /* Fonte menor nos filtros da aba Severidade */
 div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stWidgetLabel"] p {
     font-size: 0.7rem !important;
@@ -2106,18 +2116,28 @@ elif st.session_state.pagina == "severidade":
             # no "Ranquear por" mais adiante.
             def _selectbox_com_limpar_temp(coluna, label, opcoes, chave):
                 with coluna:
-                    valor = st.selectbox(label, opcoes, key=chave)
-                    if st.button("✕ limpar", key=f"limpar_campo_temp_{chave}", use_container_width=True):
-                        st.session_state.pop(chave, None)
-                        st.rerun()
+                    sub_campo_temp, sub_vassoura_temp = st.columns([6, 1])
+                    with sub_campo_temp:
+                        valor = st.selectbox(label, opcoes, key=chave)
+                    with sub_vassoura_temp:
+                        if st.button(
+                            "🧹", key=f"limpar_campo_temp_{chave}", help="Limpar este filtro"
+                        ):
+                            st.session_state.pop(chave, None)
+                            st.rerun()
                 return valor
 
             def _multiselect_com_limpar_temp(coluna, label, opcoes, chave):
                 with coluna:
-                    valor = st.multiselect(label, options=opcoes, key=chave)
-                    if st.button("✕ limpar", key=f"limpar_campo_temp_{chave}", use_container_width=True):
-                        st.session_state.pop(chave, None)
-                        st.rerun()
+                    sub_campo_temp, sub_vassoura_temp = st.columns([6, 1])
+                    with sub_campo_temp:
+                        valor = st.multiselect(label, options=opcoes, key=chave)
+                    with sub_vassoura_temp:
+                        if st.button(
+                            "🧹", key=f"limpar_campo_temp_{chave}", help="Limpar este filtro"
+                        ):
+                            st.session_state.pop(chave, None)
+                            st.rerun()
                 return valor
 
             if not MOSTRAR_FILTROS_TOPO and _sufixo_aba_temp == "_legado":
