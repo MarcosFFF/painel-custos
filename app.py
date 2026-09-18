@@ -725,17 +725,12 @@ if st.session_state.pagina == "projecao":
 # PÁGINA: SEVERIDADE
 # ============================================================
 elif st.session_state.pagina == "severidade":
-    # Aba "Coeficiente de Severidade" (cobre TODOS os procedimentos, sem a lista fixa de 13
-    # códigos) fica oculta, não apagada — troque pra True pra reexibi-la. Com ela oculta, a
-    # aba "📊 Ranking" ganha os filtros de Mês/Plano/Especialidade que antes só apareciam na
-    # Coeficiente de Severidade (ver MOSTRAR_FILTROS_TOPO logo abaixo).
-    MOSTRAR_ABA_CS_TEMP = False
     # Quadro "Filtros" do topo da página (Mês/Região/Plano/UF/Especialidade/Cluster/Cidade +
     # volume mínimo) fica oculto — Mês/Plano/Especialidade continuam funcionando do mesmo
     # jeito (mesmo efeito sobre df_filtrado/usuarios_filtrado), só que os campos aparecem
     # agora dentro da aba "📊 Ranking"; Região/UF/Cluster/Cidade da página ficam sem filtro
-    # próprio (já têm equivalente dentro das abas de Coeficiente de Severidade/Ranking) e o
-    # volume mínimo volta pro padrão antigo
+    # próprio (já têm equivalente dentro da aba Ranking) e o volume mínimo volta pro padrão
+    # antigo
     # (30). Troque pra True pra restaurar o quadro original (os 7 campos + slider) do jeito
     # que era.
     MOSTRAR_FILTROS_TOPO = False
@@ -761,7 +756,7 @@ elif st.session_state.pagina == "severidade":
         st.warning(aviso_carga)
     # ---------- filtros ----------
     # Opções sempre calculadas (servem tanto pro quadro original, se reativado, quanto pros
-    # campos de Mês/Plano/Especialidade agora dentro da aba Coeficiente de Severidade).
+    # campos de Mês/Plano/Especialidade agora dentro da aba Ranking).
     opcoes_mes_temp = sorted(agregado["MES"].dropna().unique(), reverse=True)
     opcoes_plano_temp = sorted(agregado["NR_PLANO"].dropna().unique())
     opcoes_especialidade_temp = sorted(agregado["ESPECIALIDADE"].dropna().unique())
@@ -774,7 +769,7 @@ elif st.session_state.pagina == "severidade":
     f_plano = st.session_state.get("temp_filtro_plano", [])
     f_especialidade = st.session_state.get("temp_filtro_especialidade", [])
     # Região/UF/Cluster/Cidade da página ficam sem filtro próprio aqui — já têm equivalente
-    # dentro da aba Coeficiente de Severidade, que filtra em cima do resultado destes.
+    # dentro da aba Ranking, que filtra em cima do resultado destes.
     f_regiao, f_uf, f_cluster, f_cidade = [], [], [], []
     volume_minimo = 30
     if MOSTRAR_FILTROS_TOPO:
@@ -856,31 +851,20 @@ elif st.session_state.pagina == "severidade":
     m4.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
     m5.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
     st.divider()
-    # Sequência das abas: Ranking, Projeção, Resumo — "Coeficiente de Severidade" fica fora
-    # da lista (oculta) a menos que MOSTRAR_ABA_CS_TEMP seja religado.
-    _labels_abas_temp = [
-        "📊 Ranking", "📍 Projeção de Credenciamento", "Resumo",
-    ]
-    if MOSTRAR_ABA_CS_TEMP:
-        _labels_abas_temp.append("Coeficiente de Severidade")
+    # Sequência das abas: Ranking, Projeção, Resumo.
+    _labels_abas_temp = ["📊 Ranking", "📍 Projeção de Credenciamento", "Resumo"]
     _abas_criadas_temp = st.tabs(_labels_abas_temp)
     tab_ranking_temp, tab_credenciamento, tab_resumo = (
         _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2],
     )
-    _prox_idx_aba_temp = 3
-    if MOSTRAR_ABA_CS_TEMP:
-        tab_temp = _abas_criadas_temp[_prox_idx_aba_temp]
-        _prox_idx_aba_temp += 1
     # (tab_obj, título exibido, lista de códigos que restringe a aba — None = todos os
     # procedimentos, sufixo pra deixar as keys dos widgets únicas por aba, nome do prestador
     # travado por padrão no filtro Prestador dessa aba — None = sem trava, nenhum, mostra as
     # colunas Cálculo do QP/QP — True mostra, False esconde) — o corpo da aba (logo abaixo)
-    # roda uma vez por item desta lista, reaproveitando o mesmo código pra todas.
+    # roda uma vez por item desta lista; hoje só a "📊 Ranking" usa esse corpo.
     _config_abas_cs_temp = [
         (tab_ranking_temp, "📊 Ranking", None, "_ranking", None, False),
     ]
-    if MOSTRAR_ABA_CS_TEMP:
-        _config_abas_cs_temp.append((tab_temp, "Coeficiente de Severidade", None, "", None, True))
     # ---------- RESUMO (mês vs. mês anterior, por variação % de uso) ----------
     with tab_resumo:
         st.markdown("#### 📌 Resumo do mês vs. mês anterior")
@@ -1609,9 +1593,8 @@ elif st.session_state.pagina == "severidade":
                                                 ),
                                             )
     # ============================================================
-    # COEFICIENTE DE SEVERIDADE — mesmo corpo de código rodado uma vez por aba (ver
-    # _config_abas_cs_temp acima); hoje só a aba "📊 Ranking" usa esse corpo (+ "Coeficiente
-    # de Severidade", que cobre todos os procedimentos, quando MOSTRAR_ABA_CS_TEMP é religado).
+    # Corpo da aba "📊 Ranking" — desenhado num loop (ver _config_abas_cs_temp acima) que
+    # reaproveita o mesmo código pra qualquer aba que venha a entrar nessa lista no futuro.
     # ============================================================
     for (
         _tab_obj_cs_temp, _titulo_aba_temp, _codigos_restritos_temp, _sufixo_aba_temp,
@@ -1691,7 +1674,7 @@ elif st.session_state.pagina == "severidade":
                 # afeta o resultado já calculado nesta rodada.
                 # Desenhado só na aba Ranking (identificada pelo sufixo "_ranking") — evita
                 # campo duplicado, já que Mês/Plano/Especialidade são únicos pra página toda,
-                # não por aba (mesmo se "Coeficiente de Severidade" for religada ao lado dela).
+                # não por aba.
                 fmt1, fmt2, fmt3 = st.columns(3)
                 _multiselect_com_limpar_temp(fmt1, "Mês", opcoes_mes_temp, "temp_filtro_mes")
                 _multiselect_com_limpar_temp(fmt2, "Plano", opcoes_plano_temp, "temp_filtro_plano")
@@ -1932,30 +1915,9 @@ elif st.session_state.pagina == "severidade":
                 # página + os dois filtros extras desta aba (procedimento e prestador) aplicados —
                 # não usa mais "peso do grupo" (era só usado pelo FASE oficial, que esta aba não
                 # exibe mais), então não precisa mais calcular sobre a base toda antes de recortar.
-                # A aba "📊 Ranking" pediu a grade agrupada por PRESTADOR, não por procedimento
-                # — a aba "Coeficiente de Severidade" (quando religada) continua ranqueando
-                # por procedimento, como sempre. Monta rank_temp com o rótulo certo pra cada caso;
-                # o cálculo de FASE/CS/Qtde-por-prestador (que depende de qual dimensão virou
-                # linha) só termina mais abaixo, depois de ter a base nacional (nacional_temp_flat)
-                # pronta — usada pelos dois caminhos.
-                if _sufixo_aba_temp != "_ranking":
-                    rank_temp = ranking_severidade(
-                        df_temp, "NOME_PROCEDIMENTO", top_n=1_000_000, usuarios=usuarios_temp
-                    ).copy()
-                    nome_para_codigo_temp = {v: k for k, v in mapa_cod_nome_temp.items()}
-                    rank_temp["CD_PROCEDIMENTO"] = rank_temp["NOME_PROCEDIMENTO"].map(nome_para_codigo_temp)
-                    # Lista de compreensão em vez de concatenar Series com "+": como
-                    # NOME_PROCEDIMENTO (e CD_PROCEDIMENTO depois do .map() logo acima) ficam em
-                    # dtype category/arrow, o "+" vetorizado do pandas pode estourar TypeError
-                    # ("operation 'add' not supported for dtype 'str' with dtype 'category'")
-                    # dependendo da versão do pandas/pyarrow — inclusive .astype(str)/.map(str)
-                    # sozinhos não bastam, porque Series.map em coluna category devolve outra
-                    # category. Iterando com zip(), cada valor já sai como escalar Python comum,
-                    # então o f-string nunca encosta em operação vetorizada de Series.
-                    rank_temp["rotulo"] = [
-                        f"{int(cod)} — {nome}"
-                        for cod, nome in zip(rank_temp["CD_PROCEDIMENTO"], rank_temp["NOME_PROCEDIMENTO"])
-                    ]
+                # A aba "📊 Ranking" pede a grade agrupada por PRESTADOR, não por procedimento —
+                # rank_temp é montado logo abaixo, já com o cálculo de FASE/CS/Qtde-por-prestador,
+                # depois de ter a base nacional (nacional_temp_flat) pronta.
 
                 # ---- base nacional (sem filtro nenhum) por procedimento — referência do "esperado" ----
                 # Taxa nacional = qtd_procedimentos ÷ qtd_vidas, calculada sobre `agregado`/`base_usuarios`
@@ -3361,9 +3323,9 @@ elif st.session_state.pagina == "severidade":
                             height=280, margin=dict(l=10, r=10, t=40, b=10),
                             coloraxis_showscale=False, xaxis_title="Qtd vidas (escala log)", yaxis_title="CS",
                         )
-                        # key único (por aba + título do gráfico) — evita colisão de ID quando o
-                        # mesmo gráfico é desenhado duas vezes (uma por aba, no laço que reusa
-                        # este bloco pra "Coeficiente de Severidade" e pra aba legada de 13 códigos).
+                        # key único (por aba + título do gráfico) — evita colisão de ID se esse
+                        # bloco vier a ser reaproveitado por outra aba no futuro (ver
+                        # _config_abas_cs_temp acima).
                         st.plotly_chart(
                             fig, use_container_width=True,
                             key=f"grafico_disp_temp_{titulo}{_sufixo_aba_temp}",
