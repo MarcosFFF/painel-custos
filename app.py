@@ -2518,19 +2518,22 @@ elif st.session_state.pagina == "severidade":
                 # "Todos", ou sem referência pra comparar, fica "—". NÃO é prova de fraude — é
                 # só um sinal pra priorizar revisão manual, calculado de um jeito auditável
                 # (mesma lógica simples de razão usada no resto da aba).
-                LIMIAR_ATENCAO_MEDIO_TEMP = 2.0   # ⚠️ a partir de quantas vezes a média já chama atenção
-                LIMIAR_ATENCAO_ALTO_TEMP = 5.0    # 🚩 a partir de quantas vezes a média é alerta forte
+                LIMIAR_ATENCAO_MEDIO_TEMP = 2.0   # ⚠️ triângulo amarelo a partir de quantas vezes a média
+                LIMIAR_ATENCAO_ALTO_TEMP = 5.0    # 🚩 bandeirinha vermelha a partir de quantas vezes a média
 
-                def _rotulo_indice_atencao_temp(razao):
-                    txt = f"×{razao:.1f} a média".replace(".", ",")
+                def _texto_indice_atencao_temp(razao):
+                    return f"×{razao:.1f} a média".replace(".", ",")
+
+                def _icone_indice_atencao_temp(razao):
                     if razao >= LIMIAR_ATENCAO_ALTO_TEMP:
-                        return f"🚩 {txt}"
+                        return "🚩 "
                     if razao >= LIMIAR_ATENCAO_MEDIO_TEMP:
-                        return f"⚠️ {txt}"
-                    return txt
+                        return "⚠️ "
+                    return ""
 
                 _indices_atencao_temp = []
                 _rotulos_atencao_temp = []
+                _icones_atencao_temp = []
                 for _qtd_prest_idx_temp, _qtd_pp_cidade_idx_temp, _qtd_pp_nacional_idx_temp in zip(
                     rank_temp["qtd_procedimentos"], rank_temp["qtd_por_prestador_cidade"],
                     rank_temp["qtd_por_prestador_nacional"],
@@ -2546,12 +2549,22 @@ elif st.session_state.pagina == "severidade":
                     ):
                         _indices_atencao_temp.append(float("nan"))
                         _rotulos_atencao_temp.append("—")
+                        _icones_atencao_temp.append("")
                         continue
                     _razao_idx_temp = _qtd_prest_idx_temp / _ref_idx_temp
                     _indices_atencao_temp.append(_razao_idx_temp)
-                    _rotulos_atencao_temp.append(_rotulo_indice_atencao_temp(_razao_idx_temp))
+                    _rotulos_atencao_temp.append(_texto_indice_atencao_temp(_razao_idx_temp))
+                    _icones_atencao_temp.append(_icone_indice_atencao_temp(_razao_idx_temp))
                 rank_temp["indice_atencao_volume"] = _indices_atencao_temp
                 rank_temp["indice_atencao_volume_rotulo"] = _rotulos_atencao_temp
+                # ---- bandeirinha/triângulo já direto ao lado do nome do procedimento (coluna
+                # "Procedimento"), em vez de só na coluna do índice — assim salta aos olhos
+                # rolando a grade sem precisar olhar a última coluna. A legenda dos ícones
+                # aparece logo acima da grade (ver st.caption antes do _tabela_html_temp). ----
+                rank_temp["rotulo"] = [
+                    f"{_icone_temp}{_rotulo_temp}"
+                    for _icone_temp, _rotulo_temp in zip(_icones_atencao_temp, rank_temp["rotulo"])
+                ]
 
                 # ---- coluna com o CS formatado com 3 casas decimais (padrão fmt_float2 usa só 2) ----
                 def _fmt_cs_temp(v):
@@ -2721,6 +2734,12 @@ elif st.session_state.pagina == "severidade":
                 # sem prestador selecionado, se religada pra True).
                 _mostrar_grade_cs_temp = MOSTRAR_GRADE_CS_PROCEDIMENTO_TEMP or prest_sel_temp != "Todos"
                 if _mostrar_grade_cs_temp:
+                    st.caption(
+                        "🚩 bandeirinha vermelha: volume ≥ 5× a média por prestador (alerta "
+                        "forte)  \n"
+                        "⚠️ triângulo amarelo: volume ≥ 2× a média por prestador (atenção "
+                        "moderada)"
+                    )
                     _tabela_html_temp(exib_rank_temp, scroll=True)
 
                 # ---- prestadores do procedimento selecionado, com FASE/QP/CS por prestador ----
