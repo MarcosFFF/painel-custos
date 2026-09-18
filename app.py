@@ -2056,7 +2056,13 @@ elif st.session_state.pagina == "severidade":
                     "é o volume real da própria clínica.  \n"
                     "\"CS da Cidade\"/\"Cálculo do CS Cidade\" mostram o CS de todos os "
                     "prestadores da mesma cidade, lado a lado com o CS da própria clínica "
-                    "(colunas CS/Cálculo do CS)."
+                    "(colunas CS/Cálculo do CS).  \n"
+                    "**Índice de Atenção (Volume)** = quantas vezes o volume da clínica está "
+                    "acima da média por prestador (cidade, ou nacional se não houver "
+                    "referência de cidade) — ⚠️ a partir de 2× a média, 🚩 a partir de 5×. "
+                    "Não é prova de fraude, é um sinal pra priorizar revisão manual — o cálculo "
+                    "é a razão simples \"Qtde proced\" ÷ \"Qtde por prestador\", auditável célula "
+                    "por célula, os limiares (2× e 5×) são configuráveis no código."
                 )
 
             st.caption(
@@ -2502,6 +2508,51 @@ elif st.session_state.pagina == "severidade":
                     rank_temp["qtd_procedimentos_cidade"] / rank_temp["qtd_prestadores_cidade"]
                 )
 
+                # ---- Índice de Atenção (Volume) — quantas vezes o volume do PRESTADOR
+                # selecionado neste filtro está acima da média por prestador (referência: a
+                # cidade dele, se houver; senão, o Brasil todo) — pra sinalizar concentração de
+                # volume que o CS sozinho pode não capturar (CS é normalizado por vidas/taxa
+                # nacional, então pode ficar perto de 10 mesmo com volume concentrado). Só faz
+                # sentido com UM prestador específico selecionado (senão "Qtde proced" é a soma
+                # de vários prestadores misturados, e a razão não quer dizer nada) — com
+                # "Todos", ou sem referência pra comparar, fica "—". NÃO é prova de fraude — é
+                # só um sinal pra priorizar revisão manual, calculado de um jeito auditável
+                # (mesma lógica simples de razão usada no resto da aba).
+                LIMIAR_ATENCAO_MEDIO_TEMP = 2.0   # ⚠️ a partir de quantas vezes a média já chama atenção
+                LIMIAR_ATENCAO_ALTO_TEMP = 5.0    # 🚩 a partir de quantas vezes a média é alerta forte
+
+                def _rotulo_indice_atencao_temp(razao):
+                    txt = f"×{razao:.1f} a média".replace(".", ",")
+                    if razao >= LIMIAR_ATENCAO_ALTO_TEMP:
+                        return f"🚩 {txt}"
+                    if razao >= LIMIAR_ATENCAO_MEDIO_TEMP:
+                        return f"⚠️ {txt}"
+                    return txt
+
+                _indices_atencao_temp = []
+                _rotulos_atencao_temp = []
+                for _qtd_prest_idx_temp, _qtd_pp_cidade_idx_temp, _qtd_pp_nacional_idx_temp in zip(
+                    rank_temp["qtd_procedimentos"], rank_temp["qtd_por_prestador_cidade"],
+                    rank_temp["qtd_por_prestador_nacional"],
+                ):
+                    _ref_idx_temp = (
+                        _qtd_pp_cidade_idx_temp if pd.notna(_qtd_pp_cidade_idx_temp)
+                        else _qtd_pp_nacional_idx_temp
+                    )
+                    if (
+                        prest_sel_temp == "Todos"
+                        or pd.isna(_ref_idx_temp) or _ref_idx_temp == 0
+                        or pd.isna(_qtd_prest_idx_temp)
+                    ):
+                        _indices_atencao_temp.append(float("nan"))
+                        _rotulos_atencao_temp.append("—")
+                        continue
+                    _razao_idx_temp = _qtd_prest_idx_temp / _ref_idx_temp
+                    _indices_atencao_temp.append(_razao_idx_temp)
+                    _rotulos_atencao_temp.append(_rotulo_indice_atencao_temp(_razao_idx_temp))
+                rank_temp["indice_atencao_volume"] = _indices_atencao_temp
+                rank_temp["indice_atencao_volume_rotulo"] = _rotulos_atencao_temp
+
                 # ---- coluna com o CS formatado com 3 casas decimais (padrão fmt_float2 usa só 2) ----
                 def _fmt_cs_temp(v):
                     if v is None or (isinstance(v, float) and pd.isna(v)):
@@ -2592,6 +2643,7 @@ elif st.session_state.pagina == "severidade":
                     _colunas_exib_rank_temp += ["calculo_qp", "qp_praticado"]
                 _colunas_exib_rank_temp += [
                     "calculo_cs", "cs", "cs_geral", "calculo_cs_cidade", "cs_cidade",
+                    "indice_atencao_volume_rotulo",
                 ]
                 exib_rank_temp = exib_rank_temp[_colunas_exib_rank_temp].rename(columns={
                     "rotulo": "Procedimento",
@@ -2604,6 +2656,7 @@ elif st.session_state.pagina == "severidade":
                     "uso_por_vida": "Uso/vida",
                     "calculo_fase_esperado": "Cálculo do FASE",
                     "fase_esperado": "FASE",
+                    "indice_atencao_volume_rotulo": "Índice de Atenção (Volume)",
                     "calculo_qp": "Cálculo do QP",
                     "qp_praticado": "QP",
                     "calculo_cs": "Cálculo do CS",
