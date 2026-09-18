@@ -15,10 +15,10 @@ import plotly.graph_objects as go
 from projecao_sinistro import projetar_sinistro_mes_atual, projetar_dias_restantes, eh_dia_util
 try:
     from severidade import (
-        carregar_base_severidade, aplicar_filtros, evolucao_mensal,
-        ranking_severidade, identificar_ofensores, calcular_desvios, montar_watchlist,
-        comparacao_mensal, resumo_comparativo, alertas_prestador_procedimento,
-        identificar_desvios_solicitacao, calcular_media_nacional, vidas_por,
+        carregar_base_severidade, aplicar_filtros,
+        ranking_severidade,
+        resumo_comparativo, alertas_prestador_procedimento,
+        calcular_media_nacional, vidas_por,
         _casar_colunas, _corrigir_mojibake,
     )
 except Exception as _erro_import_severidade:
@@ -725,10 +725,6 @@ if st.session_state.pagina == "projecao":
 # PÁGINA: SEVERIDADE
 # ============================================================
 elif st.session_state.pagina == "severidade":
-    # Abas oficiais antigas (Ranking/Evolução mensal/Ofensores/Desvios de Solicitações) e o
-    # bloco de Informações Técnicas que as explica ficam ocultos (não apagados) — troque pra
-    # True pra reexibir os dois juntos.
-    MOSTRAR_ABAS_OFICIAIS_EXTRAS = False
     # Aba "Coeficiente de Severidade" (cobre TODOS os procedimentos, sem a lista fixa de 13
     # códigos) fica oculta, não apagada — troque pra True pra reexibi-la. Com ela oculta, a
     # aba "📊 Ranking" ganha os filtros de Mês/Plano/Especialidade que antes só apareciam na
@@ -757,53 +753,6 @@ elif st.session_state.pagina == "severidade":
         if st.button("🔄 Recarregar", use_container_width=True):
             carregar_base_severidade.clear()
             st.rerun()
-    if MOSTRAR_ABAS_OFICIAIS_EXTRAS:
-        with st.expander("ℹ️ Informações Técnicas - Aba Severidade"):
-            st.markdown(
-                "A aba Severidade mede padrão de utilização — não custo.\n\n"
-                "**Objetivo:** identificar onde a utilização foge do esperado (especialidade, região, "
-                "procedimento ou prestador).\n\n"
-                "**A pergunta que a aba responde:** Esse grupo está usando mais do que deveria, e isso é "
-                "relevante em volume ou é ruído estatístico de uma amostra pequena?\n\n"
-                "---\n\n"
-                "**FASE (Fator de Severidade):** é o produto de três componentes, calculado para qualquer "
-                "grupo (uma especialidade, uma UF, um procedimento, um prestador...):\n\n"
-                "**FASE = Frequência × Intensidade × Peso do grupo**\n\n"
-                "- **Frequência:** Procedimentos ÷ Vidas *(quantos procedimentos por paciente distinto)*\n"
-                "- **Intensidade:** Procedimentos ÷ Uso *(quantos procedimentos reais acontecem para cada "
-                "unidade de 'uso' (peso do procedimento) consumida)*\n"
-                "- **Peso do grupo:** (Procedimentos do grupo ÷ Procedimentos totais) × 100 *(relevância do "
-                "grupo dentro da base — filtra ruído de amostra pequena)*\n\n"
-                "FASE só faz sentido em ranking comparativo: quanto maior, mais severo em relação aos outros "
-                "grupos do mesmo filtro (um grupo minúsculo não aparece como severo só por ter uma métrica "
-                "bruta alta).\n\n"
-                "Um procedimento caro não é, por si só, sinal de má utilização — e um procedimento barato "
-                "usado em excesso pode ser um problema maior.\n\n"
-                "---\n\n"
-                "A lista de prestadores exibida respeita os filtros ativos (UF, especialidade, cidade). Isso "
-                "evita comparar um prestador com uma \"média\" que já foi recortada artificialmente pelo "
-                "filtro.\n\n"
-                "Todas as comparações mês a mês (comparação mensal, resumo, alerta de qtde+valor) usam o "
-                "mesmo período do mês nos dois lados: se o mês mais recente só tem dados até o dia 07, o mês "
-                "anterior entra na conta também só até o dia 07 — para não comparar um mês fechado inteiro "
-                "com um mês ainda em andamento.\n\n"
-                "---\n\n"
-                "**Volume mínimo de procedimentos para considerar uma variação relevante.**\n\n"
-                "Padrão: 30\n"
-                "Evita que um grupo com pouquíssimos procedimentos apareça com uma variação % gigante.\n"
-                "Ele afeta especificamente dois pontos do painel:\n\n"
-                "- **Aba Ofensores**\n"
-                "- **Aba Resumo**\n\n"
-                "**Não** afeta o Ranking de Severidade (FASE)\n\n"
-                "Se colocar 1: Risco: ruído estatístico.\n"
-                "**Com 30 (padrão):** um equilíbrio — filtra o ruído de grupos muito pequenos, mas ainda "
-                "inclui volume moderado.\n"
-                "**Com 100:** Fica mais rigoroso. Reduz falso positivo, mas pode esconder um "
-                "desvio real que ainda está com volume moderado.\n"
-                "**Com 200:** Bem restritivo — só os maiores grupos aparecem. Bom para focar nos "
-                "pode deixar passar despercebido um grupo médio que está crescendo rápido mas ainda não bateu esse "
-                "patamar de volume."
-            )
     agregado, base_usuarios, aviso_carga = carregar_base_severidade(".")
     if agregado is None:
         st.error(f"Não consegui carregar os dados de severidade: {aviso_carga}")
@@ -914,8 +863,6 @@ elif st.session_state.pagina == "severidade":
     ]
     if MOSTRAR_ABA_CS_TEMP:
         _labels_abas_temp.append("Coeficiente de Severidade")
-    if MOSTRAR_ABAS_OFICIAIS_EXTRAS:
-        _labels_abas_temp += ["Ranking de Severidade", "Evolução mensal", "Ofensores", "Desvios de Solicitações"]
     _abas_criadas_temp = st.tabs(_labels_abas_temp)
     tab_ranking_temp, tab_credenciamento, tab_resumo = (
         _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2],
@@ -924,11 +871,6 @@ elif st.session_state.pagina == "severidade":
     if MOSTRAR_ABA_CS_TEMP:
         tab_temp = _abas_criadas_temp[_prox_idx_aba_temp]
         _prox_idx_aba_temp += 1
-    if MOSTRAR_ABAS_OFICIAIS_EXTRAS:
-        tab_rank, tab_evolucao, tab_ofensores, tab_desvios = (
-            _abas_criadas_temp[_prox_idx_aba_temp], _abas_criadas_temp[_prox_idx_aba_temp + 1],
-            _abas_criadas_temp[_prox_idx_aba_temp + 2], _abas_criadas_temp[_prox_idx_aba_temp + 3],
-        )
     # (tab_obj, título exibido, lista de códigos que restringe a aba — None = todos os
     # procedimentos, sufixo pra deixar as keys dos widgets únicas por aba, nome do prestador
     # travado por padrão no filtro Prestador dessa aba — None = sem trava, nenhum, mostra as
@@ -939,357 +881,6 @@ elif st.session_state.pagina == "severidade":
     ]
     if MOSTRAR_ABA_CS_TEMP:
         _config_abas_cs_temp.append((tab_temp, "Coeficiente de Severidade", None, "", None, True))
-    if MOSTRAR_ABAS_OFICIAIS_EXTRAS:
-        # ---------- RANKING DE SEVERIDADE (FASE — só gráficos, sem tabelas) ----------
-        JANELA_5_BARRAS = 300  # altura fixa (px) que mostra ~5 barras; o resto rola dentro do quadro
-        def _grafico_severidade(df_rank, coluna, titulo, altura=None, janela=None):
-            df_plot = df_rank.sort_values("fase", ascending=True).reset_index(drop=True)
-            if janela:
-                # altura total cresce com a quantidade de itens (barra do mesmo tamanho sempre),
-                # o quadro em volta é que fica fixo em `janela` e ganha rolagem quando sobra.
-                altura_total = max(janela, 90 + len(df_plot) * 40)
-            else:
-                altura_total = altura or max(350, len(df_plot) * 35)
-            fig = px.bar(
-                df_plot, x="fase", y=coluna, orientation="h",
-                custom_data=[coluna, "fase", "uso_por_procedimento", "uso_por_vida", "qtd_usuarios"],
-                title=titulo,
-                color="fase",
-                color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"],
-            )
-            fig.update_traces(
-                texttemplate="%{x:,.4f}",
-                textposition="outside",
-                textfont=dict(size=10),
-                hovertemplate=(
-                    "<b>%{customdata[0]}</b><br>"
-                    "FASE: %{customdata[1]:,.4f}<br>"
-                    "Uso por procedimento: %{customdata[2]:.2f}<br>"
-                    "Uso por vida: %{customdata[3]:.2f}<br>"
-                    "Qtde de vidas: %{customdata[4]:,.0f}"
-                    "<extra></extra>"
-                ),
-                cliponaxis=False,
-            )
-            fig.update_layout(
-                height=altura_total,
-                margin=dict(l=10, r=60, t=40, b=10),
-                yaxis_type="category",
-                coloraxis_showscale=False,
-            )
-            fig.update_yaxes(tickfont=dict(size=10))
-            if janela:
-                with st.container(height=janela):
-                    st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.plotly_chart(fig, use_container_width=True)
-        with tab_rank:
-            st.info(
-                "O **FASE (Fator de Severidade)** é o produto de três indicadores do grupo "
-                "(especialidade, UF, procedimento, região ou prestador):\n\n"
-                "- **Frequência** = procedimentos ÷ vidas\n"
-                "- **Intensidade** = procedimentos ÷ uso\n"
-                "- **Peso do grupo** = (procedimentos do grupo ÷ procedimentos totais da base) × 100\n\n"
-                "**FASE = Frequência × Intensidade × Peso do grupo**\n\n"
-                "Não existe um valor fixo de referência (não é mais '1,00 = média') — o número só "
-                "faz sentido comparando um grupo com o outro no mesmo ranking: quanto maior o FASE, "
-                "mais severo. Grupos de volume muito baixo têm o Peso do grupo pequeno, o que já os "
-                "afasta do topo do ranking mesmo que a frequência/intensidade bruta deles seja alta. "
-                "Não considera valores em R$."
-            )
-            rc1, rc2 = st.columns(2)
-            with rc1:
-                _grafico_severidade(ranking_severidade(df_filtrado, "ESPECIALIDADE", top_n=40, usuarios=usuarios_filtrado), "ESPECIALIDADE", "Por especialidade", janela=JANELA_5_BARRAS)
-                _grafico_severidade(ranking_severidade(df_filtrado, "UF", top_n=30, usuarios=usuarios_filtrado), "UF", "Por UF", janela=JANELA_5_BARRAS)
-            with rc2:
-                _grafico_severidade(ranking_severidade(df_filtrado, "NOME_PROCEDIMENTO", top_n=50, usuarios=usuarios_filtrado), "NOME_PROCEDIMENTO", "Por procedimento", janela=JANELA_5_BARRAS)
-                _grafico_severidade(ranking_severidade(df_filtrado, "REGIAO", usuarios=usuarios_filtrado), "REGIAO", "Por região", janela=JANELA_5_BARRAS)
-            st.divider()
-            st.markdown("#### Severidade por outras dimensões")
-            dims = {
-                "Região": "REGIAO", "Cidade": "CIDADE_PRESTADOR", "Prestador (código)": "CD_PRESTADOR",
-                "Procedimento": "NOME_PROCEDIMENTO", "Cluster": "CLUSTER",
-            }
-            dim_escolhida = st.selectbox("Dimensão", list(dims.keys()))
-            rank_sev = ranking_severidade(df_filtrado, dims[dim_escolhida], usuarios=usuarios_filtrado)
-            if not rank_sev.empty:
-                _grafico_severidade(rank_sev, dims[dim_escolhida], f"Severidade por {dim_escolhida}", altura=450)
-            else:
-                st.info("Sem dados para a dimensão selecionada.")
-        with tab_evolucao:
-            evolucao = evolucao_mensal(df_filtrado, usuarios_filtrado)
-            # Dois gráficos lado a lado: à esquerda, uso por procedimento e uso por vida
-            # (mesma escala, dá pra comparar as duas linhas juntas); à direita, procedimento
-            # por vida (frequência) sozinho — a escala dele é bem menor (perto de 1) e ficaria
-            # achatado se dividisse o mesmo eixo com as métricas de uso.
-            col_uso, col_proc_vida = st.columns(2)
-            with col_uso:
-                fig_uso = go.Figure()
-                fig_uso.add_trace(
-                    go.Scatter(x=evolucao["MES"], y=evolucao["uso_por_procedimento"], mode="lines+markers",
-                               name="Uso por procedimento", line=dict(color="#1f6fb2"))
-                )
-                fig_uso.add_trace(
-                    go.Scatter(x=evolucao["MES"], y=evolucao["uso_por_vida"], mode="lines+markers",
-                               name="Uso por vida", line=dict(color="#87CEEB"))
-                )
-                fig_uso.update_layout(
-                    title="Uso por procedimento e uso por vida",
-                    height=350, margin=dict(l=10, r=10, t=40, b=10), legend_title_text="",
-                    yaxis_title="Uso",
-                )
-                st.plotly_chart(fig_uso, use_container_width=True)
-            with col_proc_vida:
-                fig_proc_vida = px.line(
-                    evolucao, x="MES", y="procedimento_por_vida", markers=True, text="procedimento_por_vida",
-                    title="Procedimento por vida",
-                )
-                fig_proc_vida.update_traces(
-                    texttemplate="%{text:,.3f}", textposition="top center",
-                    line=dict(color="#e07b39"),
-                )
-                fig_proc_vida.update_layout(
-                    height=350, margin=dict(l=10, r=10, t=40, b=10), yaxis_title="Procedimento por vida",
-                )
-                st.plotly_chart(fig_proc_vida, use_container_width=True)
-            fig_isr = px.line(
-                evolucao, x="MES", y="fase", markers=True, text="fase", title="FASE por mês",
-            )
-            fig_isr.update_traces(texttemplate="%{text:,.4f}", textposition="top center")
-            fig_isr.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10), yaxis_title="FASE")
-            st.plotly_chart(fig_isr, use_container_width=True)
-            fig_uso_total = px.line(evolucao, x="MES", y="quantidade_uso", markers=True, text="quantidade_uso", title="Uso total por mês")
-            fig_uso_total.update_traces(texttemplate="%{text:,.0f}", textposition="top center")
-            fig_uso_total.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10))
-            st.plotly_chart(fig_uso_total, use_container_width=True)
-        # ---------- OFENSORES (baseado só em volume e uso) ----------
-        with tab_ofensores:
-            st.markdown("#### 🚨 Prestadores ofensores")
-            st.caption(
-                "Calculado por **prestador + especialidade** (não mistura as especialidades de um "
-                "mesmo prestador numa conta só). Um prestador+especialidade é marcado como **ofensor** "
-                "quando bate em **≥ 2 de 3 critérios**, todos no top 5% (percentil 95) da base filtrada: "
-                "volume de procedimentos, uso por procedimento e uso por vida."
-            )
-            with st.expander("📖 Como ler as colunas criterios_atingidos, relevante e justificativa"):
-                st.markdown(
-                    "- 📊 **criterios_atingidos** = quantos dos 3 critérios acima foram batidos (0 a 3)."
-                    "\n"
-                    "- 🚨 **relevante** é marcado quando **criterios_atingidos ≥ 2** — "
-                    "é o flag que marca o prestador+especialidade como ofensor de fato."
-                    "\n"
-                    "- 📝 **justificativa** = texto explicando **exatamente quais critérios** "
-                    "foram acionados e quais os valores/limiares correspondentes."
-                )
-            ofensores = identificar_ofensores(df_filtrado, usuarios=usuarios_filtrado)
-            if not ofensores.empty:
-                # Formatar tabela para exibição — já vem ordenada do mais para o menos severo (FASE)
-                exib_of = ofensores.copy()
-                exib_of["qtd_procedimentos"] = exib_of["qtd_procedimentos"].map(fmt_int)
-                exib_of["qtd_usuarios"] = exib_of["qtd_usuarios"].map(fmt_int)
-                exib_of["quantidade_uso"] = exib_of["quantidade_uso"].map(fmt_int)
-                exib_of["uso_por_procedimento"] = exib_of["uso_por_procedimento"].map(fmt_float2)
-                exib_of["uso_por_vida"] = exib_of["uso_por_vida"].map(fmt_float2)
-                exib_of["fase"] = exib_of["fase"].map(fmt_fase)
-                exib_of["criterios_atingidos"] = exib_of["criterios_atingidos"].map(lambda v: f"{v}/3")
-                exib_of["relevante"] = exib_of["relevante"].map(lambda b: "🚨 OFENSOR" if b else "—")
-                exib_of = exib_of.drop(columns=["alerta_volume", "alerta_uso_procedimento", "alerta_uso_vida"], errors="ignore")
-                # Nomes de coluna mais curtos, só nessa grade, pra ficar mais fácil de visualizar
-                exib_of = exib_of.rename(columns={
-                    "qtd_procedimentos": "qtd_proced",
-                    "qtd_usuarios": "qtd_usu",
-                    "quantidade_uso": "qtde_USO",
-                    "uso_por_procedimento": "USO/proced",
-                    "uso_por_vida": "USO/vidas",
-                    "fase": "FASE",
-                })
-                st.dataframe(exib_of, hide_index=True, use_container_width=True)
-                # Destaque para ofensores relevantes com justificativa — retrátil e pesquisável
-                relevantes = ofensores[ofensores["relevante"]].copy()
-                if not relevantes.empty:
-                    st.divider()
-                    # A lista inteira fica retrátil (expander). Streamlit não permite expander
-                    # dentro de expander, então cada ofensor vira um container com borda em vez
-                    # de um expander individual.
-                    with st.expander(f"📝 Justificativa dos ofensores ({len(relevantes)})", expanded=False):
-                        busca_ofensor = st.text_input(
-                            "🔎 Buscar prestador (nome, código, CPF/CNPJ ou especialidade)", key="busca_ofensor"
-                        )
-                        if busca_ofensor.strip():
-                            termo = busca_ofensor.strip().upper()
-                            def _bate_busca(row):
-                                campos = [
-                                    str(row.get("CD_PRESTADOR", "")), str(row.get("NOME_PRESTADOR", "")),
-                                    str(row.get("CNPJ_CPF_PRESTADOR", "")), str(row.get("ESPECIALIDADE", "")),
-                                ]
-                                return any(termo in campo.upper() for campo in campos)
-                            relevantes_filtrados = relevantes[relevantes.apply(_bate_busca, axis=1)]
-                        else:
-                            relevantes_filtrados = relevantes
-                        st.caption(f"{len(relevantes_filtrados)} de {len(relevantes)} ofensores exibidos.")
-                        for _, row in relevantes_filtrados.iterrows():
-                            nome_prestador = row.get("NOME_PRESTADOR") or "—"
-                            cnpj_prestador = row.get("CNPJ_CPF_PRESTADOR") or "—"
-                            titulo_exp = f"Prestador {int(row['CD_PRESTADOR'])} — {nome_prestador} · FASE {row['fase']:.4f}"
-                            with st.container(border=True):
-                                st.markdown(f"**{titulo_exp}**")
-                                st.markdown(
-                                    f"CPF/CNPJ: {cnpj_prestador} — {row['UF']} · {row['CIDADE']} · Cluster: {row['CLUSTER']}"
-                                )
-                                st.markdown(f"> {row['justificativa']}")
-                                st.caption(
-                                    f"Especialidade principal: {row['ESPECIALIDADE']} · Procedimentos: {int(row['qtd_procedimentos'])} · "
-                                    f"Uso por procedimento: {fmt_float2(row['uso_por_procedimento'])} · Uso por vida: {fmt_float2(row['uso_por_vida'])}"
-                                )
-            else:
-                st.info("Nenhum ofensor encontrado com os filtros atuais.")
-            st.divider()
-            st.markdown("**Desvios** (prestador vs. média da própria especialidade)")
-            desvios = calcular_desvios(df_filtrado, usuarios=usuarios_filtrado)
-            if not desvios.empty:
-                exib_desv = desvios.copy()
-                exib_desv["qtd_procedimentos"] = exib_desv["qtd_procedimentos"].map(fmt_int)
-                exib_desv["uso_por_procedimento"] = exib_desv["uso_por_procedimento"].map(fmt_float2)
-                exib_desv["uso_por_procedimento_esp"] = exib_desv["uso_por_procedimento_esp"].map(fmt_float2)
-                exib_desv["desvio_uso_procedimento_pct"] = exib_desv["desvio_uso_procedimento_pct"].map(lambda v: f"{v:+.1f}%")
-                exib_desv["uso_por_vida"] = exib_desv["uso_por_vida"].map(fmt_float2)
-                exib_desv["uso_por_vida_esp"] = exib_desv["uso_por_vida_esp"].map(fmt_float2)
-                exib_desv["desvio_uso_vida_pct"] = exib_desv["desvio_uso_vida_pct"].map(lambda v: f"{v:+.1f}%")
-                st.dataframe(exib_desv, hide_index=True, use_container_width=True)
-            else:
-                st.info("Sem dados para calcular desvios.")
-            st.divider()
-            st.markdown("**Comparação com o mês anterior** (respeitando o volume mínimo)")
-            comp, msg_comp = comparacao_mensal(df_filtrado, "NOME_PROCEDIMENTO", volume_minimo=volume_minimo, usuarios=usuarios_filtrado)
-            st.caption(msg_comp)
-            if not comp.empty:
-                comp_relevante = comp[comp["relevante"]].drop(columns=["relevante"])
-                comp_ignorado = comp[~comp["relevante"]].drop(columns=["relevante"])
-                st.markdown(f"*Variações relevantes (volume atual ≥ {volume_minimo}):*")
-                st.dataframe(comp_relevante, hide_index=True, use_container_width=True)
-                with st.expander(f"Ver também as {len(comp_ignorado)} variações abaixo do volume mínimo"):
-                    st.dataframe(comp_ignorado, hide_index=True, use_container_width=True)
-            st.divider()
-            st.markdown("#### 🎯 Prestadores que merecem atenção")
-            watchlist = montar_watchlist(df_filtrado, usuarios=usuarios_filtrado)
-            if not watchlist.empty:
-                # Preparar DataFrame para o gráfico — garantir tipos corretos
-                wl_plot = watchlist.copy()
-                for col in ["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"]:
-                    if col not in wl_plot.columns:
-                        wl_plot[col] = "—"
-                    wl_plot[col] = wl_plot[col].fillna("—").astype(str)
-                # Rótulo do eixo Y — dois prestadores (CD_PRESTADOR diferentes, ex.: unidades/CNPJs
-                # distintos da mesma rede) podem ter o mesmo NOME_PRESTADOR. Usar só o nome faria o
-                # Plotly empilhar as barras deles na mesma categoria (barra mais comprida que
-                # qualquer um dos dois valores individuais). Desambigua com o CNPJ/CPF só quando
-                # o nome se repete.
-                wl_plot["rotulo_grafico"] = wl_plot["NOME_PRESTADOR"]
-                duplicados = wl_plot["NOME_PRESTADOR"].duplicated(keep=False)
-                if duplicados.any():
-                    wl_plot.loc[duplicados, "rotulo_grafico"] = (
-                        wl_plot.loc[duplicados, "NOME_PRESTADOR"]
-                        + " (CNPJ/CPF " + wl_plot.loc[duplicados, "CNPJ_CPF_PRESTADOR"] + ")"
-                    )
-                fig_watch = px.bar(
-                    wl_plot.sort_values("fase", ascending=True), x="fase",
-                    y="rotulo_grafico", orientation="h",
-                    text="fase", title="Prestadores que merecem atenção",
-                    custom_data=["CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"],
-                )
-                fig_watch.update_traces(
-                    texttemplate="%{text:,.4f}",
-                    textposition="outside",
-                    hovertemplate=(
-                        "<b>%{y}</b><br>"
-                        "FASE: %{x:,.4f}<br>"
-                        "UF: %{customdata[1]}<br>"
-                        "Cidade: %{customdata[2]}<br>"
-                        "Cluster: %{customdata[3]}"
-                        "<extra></extra>"
-                    ),
-                )
-                fig_watch.update_layout(height=350, margin=dict(l=10, r=10, t=40, b=10), yaxis_type="category")
-                st.plotly_chart(fig_watch, use_container_width=True)
-                # Tabela com info do prestador (sem o código, com nome)
-                exib_watch = watchlist.drop(columns=["CD_PRESTADOR"], errors="ignore").copy()
-                exib_watch["qtd_procedimentos"] = exib_watch["qtd_procedimentos"].map(fmt_int)
-                exib_watch["qtd_usuarios"] = exib_watch["qtd_usuarios"].map(fmt_int)
-                exib_watch["quantidade_uso"] = exib_watch["quantidade_uso"].map(fmt_int)
-                exib_watch["uso_por_procedimento"] = exib_watch["uso_por_procedimento"].map(fmt_float2)
-                exib_watch["uso_por_vida"] = exib_watch["uso_por_vida"].map(fmt_float2)
-                exib_watch["fase"] = exib_watch["fase"].map(fmt_fase)
-                exib_watch["evolucao_pct"] = exib_watch["evolucao_pct"].map(lambda v: f"{v:+.1f}%")
-                # Nomes de coluna mais curtos, só nessa grade, pra ficar mais fácil de visualizar
-                exib_watch = exib_watch.rename(columns={
-                    "qtd_procedimentos": "qtd_proced",
-                    "qtd_usuarios": "qtd_usu",
-                    "quantidade_uso": "qtde_USO",
-                    "uso_por_procedimento": "USO/proced",
-                    "uso_por_vida": "USO/vidas",
-                    "fase": "FASE",
-                    "evolucao_pct": "Evolução",
-                })
-                st.dataframe(exib_watch, hide_index=True, use_container_width=True)
-            else:
-                st.info("Sem dados para montar a watchlist.")
-        # ---------- DESVIOS DE SOLICITAÇÕES (qtde do prestador vs. média nacional) ----------
-        with tab_desvios:
-            st.markdown("#### 📐 Desvios de Solicitações")
-            st.caption(
-                "Compara a quantidade de solicitações de cada prestador, por procedimento e por mês, "
-                "com a média nacional de solicitações por prestador para aquele mesmo procedimento "
-                "naquele mesmo mês (soma nacional ÷ nº de prestadores que fizeram o procedimento)."
-            )
-            with st.expander("📖 Critérios considerados", expanded=True):
-                st.markdown(
-                    "Um prestador só entra na lista quando **as duas condições** abaixo são verdadeiras "
-                    "ao mesmo tempo:\n"
-                    "- **Volume**: mais de **30 procedimentos no mês**, para aquele procedimento específico.\n"
-                    "- **Desvio**: quantidade **pelo menos 50% acima** da média nacional de solicitações "
-                    "por prestador para aquele procedimento, naquele mês.\n\n"
-                    "**Exemplo:** 1.000 solicitações de um procedimento, feitas por 100 prestadores "
-                    "diferentes → média nacional = 10 por prestador. Um prestador que solicitou 250 "
-                    "está bem acima da média — entra na lista.\n\n"
-                    "A média nacional é sempre calculada sobre a base nacional completa (sem os filtros "
-                    "da tela) — só a lista de prestadores respeita os filtros ativos (UF, especialidade, "
-                    "cidade etc.), pra facilitar a exploração."
-                )
-            opcoes_procedimento_desvio = sorted(df_filtrado["NOME_PROCEDIMENTO"].dropna().unique())
-            procedimento_desvio = st.selectbox(
-                "Procedimento",
-                options=["(Todos os procedimentos)"] + opcoes_procedimento_desvio,
-                key="desvio_procedimento",
-            )
-            filtro_procedimento_desvio = None if procedimento_desvio == "(Todos os procedimentos)" else procedimento_desvio
-            desvios_sol, msg_desvios_sol = identificar_desvios_solicitacao(
-                df_filtrado, agregado_nacional=agregado, procedimento=filtro_procedimento_desvio
-            )
-            if desvios_sol.empty:
-                st.info(msg_desvios_sol)
-            else:
-                st.caption(f"{len(desvios_sol)} prestador(es) com desvio de solicitações identificados.")
-                exib_desv_sol = desvios_sol.copy()
-                exib_desv_sol["MES"] = exib_desv_sol["MES"].map(label_mes)
-                for c in ["NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER"]:
-                    if c not in exib_desv_sol.columns:
-                        exib_desv_sol[c] = "—"
-                    exib_desv_sol[c] = exib_desv_sol[c].fillna("—")
-                exib_desv_sol["qtd_procedimentos"] = exib_desv_sol["qtd_procedimentos"].map(fmt_int)
-                exib_desv_sol["media_nacional"] = exib_desv_sol["media_nacional"].map(fmt_float2)
-                exib_desv_sol["desvio_pct"] = exib_desv_sol["desvio_pct"].map(lambda v: f"+{v:.1f}%")
-                colunas_ordem = [
-                    "MES", "NOME_PRESTADOR", "CNPJ_CPF_PRESTADOR", "UF", "CIDADE", "CLUSTER",
-                    "ESPECIALIDADE", "NOME_PROCEDIMENTO", "media_nacional", "qtd_procedimentos", "desvio_pct",
-                ]
-                colunas_ordem = [c for c in colunas_ordem if c in exib_desv_sol.columns]
-                exib_desv_sol = exib_desv_sol[colunas_ordem].rename(columns={
-                    "MES": "Mês", "NOME_PRESTADOR": "Prestador", "CNPJ_CPF_PRESTADOR": "CPF/CNPJ",
-                    "ESPECIALIDADE": "Especialidade", "NOME_PROCEDIMENTO": "Procedimento",
-                    "media_nacional": "Média nacional", "qtd_procedimentos": "Qtde do prestador",
-                    "desvio_pct": "Desvio",
-                })
-                st.dataframe(exib_desv_sol, hide_index=True, use_container_width=True)
     # ---------- RESUMO (mês vs. mês anterior, por variação % de uso) ----------
     with tab_resumo:
         st.markdown("#### 📌 Resumo do mês vs. mês anterior")
