@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import html
 import os
+import io
 import glob
 import calendar
 import smtplib
@@ -80,36 +81,6 @@ div[data-testid="stVerticalBlock"] { gap: 0.35rem !important; }
 hr { margin: 0.4rem 0 !important; }
 div[data-testid="stMetric"] { padding: 0.15rem 0 !important; }
 div.element-container { margin-bottom: 0.1rem !important; }
-/* Botão "🧹" de limpar campo individual (um por filtro) — quadradinho neutro (cinza),
-   do tamanho do campo ao lado, alinhado com a caixa (não com o rótulo, que o botão
-   não tem) */
-div[class*="st-key-limpar_campo_temp_"] {
-    margin-top: 1.55rem !important;
-}
-div[class*="st-key-limpar_campo_temp_"] button {
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    width: 2.2rem !important;
-    height: 2.2rem !important;
-    min-height: 2.2rem !important;
-    padding: 0 !important;
-    border-radius: 6px !important;
-    background-color: #f2f4f6 !important;
-    border: 1px solid #d8dee3 !important;
-    font-size: 1rem !important;
-    line-height: 1 !important;
-    box-shadow: none !important;
-}
-div[class*="st-key-limpar_campo_temp_"] button:hover {
-    background-color: #e7ebee !important;
-    border-color: #b9c2ca !important;
-}
-div[class*="st-key-limpar_campo_temp_"] button p {
-    font-size: 1rem !important;
-    margin: 0 !important;
-    line-height: 1 !important;
-}
 /* Fonte menor nos filtros da aba Severidade */
 div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stWidgetLabel"] p {
     font-size: 0.7rem !important;
@@ -2131,33 +2102,33 @@ elif st.session_state.pagina == "severidade":
             # selectbox, lista vazia no multiselect) já na próxima rodada. Não dá pra só
             # reatribuir o valor aqui porque o widget já foi instanciado nesta mesma rodada —
             # Streamlit não permite mudar o valor de um widget já criado sem passar pelo
-            # session_state + rerun. Definidas aqui (antes do primeiro uso, no bloco de Mês/
-            # Plano/Especialidade logo abaixo) e reaproveitadas também nos 6 filtros da aba e
-            # no "Ranquear por" mais adiante.
-            def _selectbox_com_limpar_temp(coluna, label, opcoes, chave):
-                with coluna:
-                    sub_campo_temp, sub_vassoura_temp = st.columns([6, 1])
-                    with sub_campo_temp:
-                        valor = st.selectbox(label, opcoes, key=chave)
-                    with sub_vassoura_temp:
-                        if st.button(
-                            "🧹", key=f"limpar_campo_temp_{chave}", help="Limpar este filtro"
-                        ):
-                            st.session_state.pop(chave, None)
-                            st.rerun()
+            # session_state + rerun. Campo e botão recebem cada um sua PRÓPRIA coluna já no
+            # nível de cima (nada de coluna dentro de coluna — colunas aninhadas dão erro em
+            # algumas versões do Streamlit, o que deixava o botão sem funcionar). Definidas
+            # aqui (antes do primeiro uso, no bloco de Mês/Plano/Especialidade logo abaixo) e
+            # reaproveitadas também nos 6 filtros da aba e no "Ranquear por" mais adiante.
+            def _selectbox_com_limpar_temp(col_campo, col_vassoura, label, opcoes, chave):
+                with col_campo:
+                    valor = st.selectbox(label, opcoes, key=chave)
+                with col_vassoura:
+                    st.markdown("<div style='height: 1.7rem'></div>", unsafe_allow_html=True)
+                    if st.button(
+                        "🧹", key=f"limpar_campo_temp_{chave}", help="Limpar este filtro"
+                    ):
+                        st.session_state.pop(chave, None)
+                        st.rerun()
                 return valor
 
-            def _multiselect_com_limpar_temp(coluna, label, opcoes, chave):
-                with coluna:
-                    sub_campo_temp, sub_vassoura_temp = st.columns([6, 1])
-                    with sub_campo_temp:
-                        valor = st.multiselect(label, options=opcoes, key=chave)
-                    with sub_vassoura_temp:
-                        if st.button(
-                            "🧹", key=f"limpar_campo_temp_{chave}", help="Limpar este filtro"
-                        ):
-                            st.session_state.pop(chave, None)
-                            st.rerun()
+            def _multiselect_com_limpar_temp(col_campo, col_vassoura, label, opcoes, chave):
+                with col_campo:
+                    valor = st.multiselect(label, options=opcoes, key=chave)
+                with col_vassoura:
+                    st.markdown("<div style='height: 1.7rem'></div>", unsafe_allow_html=True)
+                    if st.button(
+                        "🧹", key=f"limpar_campo_temp_{chave}", help="Limpar este filtro"
+                    ):
+                        st.session_state.pop(chave, None)
+                        st.rerun()
                 return valor
 
             if not MOSTRAR_FILTROS_TOPO and _sufixo_aba_temp == "_legado":
@@ -2170,10 +2141,12 @@ elif st.session_state.pagina == "severidade":
                 # Desenhado só na aba Temporária (identificada pelo sufixo "_legado") — evita
                 # campo duplicado, já que Mês/Plano/Especialidade são únicos pra página toda,
                 # não por aba (mesmo se "Coeficiente de Severidade" for religada ao lado dela).
-                fmt1, fmt2, fmt3 = st.columns(3)
-                _multiselect_com_limpar_temp(fmt1, "Mês", opcoes_mes_temp, "temp_filtro_mes")
-                _multiselect_com_limpar_temp(fmt2, "Plano", opcoes_plano_temp, "temp_filtro_plano")
-                _multiselect_com_limpar_temp(fmt3, "Especialidade", opcoes_especialidade_temp, "temp_filtro_especialidade")
+                fmt1, fmt1v, fmt2, fmt2v, fmt3, fmt3v = st.columns([6, 1, 6, 1, 6, 1])
+                _multiselect_com_limpar_temp(fmt1, fmt1v, "Mês", opcoes_mes_temp, "temp_filtro_mes")
+                _multiselect_com_limpar_temp(fmt2, fmt2v, "Plano", opcoes_plano_temp, "temp_filtro_plano")
+                _multiselect_com_limpar_temp(
+                    fmt3, fmt3v, "Especialidade", opcoes_especialidade_temp, "temp_filtro_especialidade"
+                )
 
             # Mapa código -> nome do procedimento, dentro dos filtros ativos. Sem restrição
             # (_codigos_restritos_temp is None), cobre TODOS os procedimentos presentes; com
@@ -2252,31 +2225,42 @@ elif st.session_state.pagina == "severidade":
                                 "o nome está exatamente assim na base."
                             )
 
-                # ---- cada filtro com seu próprio "✕ limpar" embaixo, em vez de um botão só
+                # ---- cada filtro com seu próprio "🧹 limpar" ao lado, em vez de um botão só
                 # que limpa tudo de uma vez — _selectbox_com_limpar_temp/_multiselect_com_
                 # limpar_temp já foram definidas mais acima (antes do bloco Mês/Plano/
-                # Especialidade), reaproveitadas aqui.
+                # Especialidade), reaproveitadas aqui. Campo e botão de cada filtro já nascem
+                # como colunas irmãs no mesmo st.columns (sem aninhar), então os 6 filtros
+                # viram 12 colunas de uma vez só.
                 (
-                    fc_proc_temp, fc_prest_temp, fc_uf_temp,
-                    fc_regiao_temp, fc_cidade_temp, fc_cluster_temp,
-                ) = st.columns(6)
+                    fc_proc_temp, fc_proc_v_temp,
+                    fc_prest_temp, fc_prest_v_temp,
+                    fc_uf_temp, fc_uf_v_temp,
+                    fc_regiao_temp, fc_regiao_v_temp,
+                    fc_cidade_temp, fc_cidade_v_temp,
+                    fc_cluster_temp, fc_cluster_v_temp,
+                ) = st.columns([6, 1, 6, 1, 6, 1, 6, 1, 6, 1, 6, 1])
                 proc_sel_temp = _selectbox_com_limpar_temp(
-                    fc_proc_temp, "Procedimento", opcoes_proc_temp, f"temp_filtro_procedimento{_sufixo_aba_temp}"
+                    fc_proc_temp, fc_proc_v_temp, "Procedimento", opcoes_proc_temp,
+                    f"temp_filtro_procedimento{_sufixo_aba_temp}",
                 )
                 prest_sel_temp = _selectbox_com_limpar_temp(
-                    fc_prest_temp, "Prestador", opcoes_prestador_temp, f"temp_filtro_prestador{_sufixo_aba_temp}"
+                    fc_prest_temp, fc_prest_v_temp, "Prestador", opcoes_prestador_temp,
+                    f"temp_filtro_prestador{_sufixo_aba_temp}",
                 )
                 uf_sel_temp = _selectbox_com_limpar_temp(
-                    fc_uf_temp, "UF", opcoes_uf_temp, f"temp_filtro_uf{_sufixo_aba_temp}"
+                    fc_uf_temp, fc_uf_v_temp, "UF", opcoes_uf_temp, f"temp_filtro_uf{_sufixo_aba_temp}"
                 )
                 regiao_sel_temp = _selectbox_com_limpar_temp(
-                    fc_regiao_temp, "Região", opcoes_regiao_temp, f"temp_filtro_regiao{_sufixo_aba_temp}"
+                    fc_regiao_temp, fc_regiao_v_temp, "Região", opcoes_regiao_temp,
+                    f"temp_filtro_regiao{_sufixo_aba_temp}",
                 )
                 cidade_sel_temp = _selectbox_com_limpar_temp(
-                    fc_cidade_temp, "Cidade", opcoes_cidade_temp, f"temp_filtro_cidade{_sufixo_aba_temp}"
+                    fc_cidade_temp, fc_cidade_v_temp, "Cidade", opcoes_cidade_temp,
+                    f"temp_filtro_cidade{_sufixo_aba_temp}",
                 )
                 cluster_sel_temp = _selectbox_com_limpar_temp(
-                    fc_cluster_temp, "Cluster", opcoes_cluster_temp, f"temp_filtro_cluster{_sufixo_aba_temp}"
+                    fc_cluster_temp, fc_cluster_v_temp, "Cluster", opcoes_cluster_temp,
+                    f"temp_filtro_cluster{_sufixo_aba_temp}",
                 )
 
                 # ---- "Ranquear por" — só na aba "📊 Ranking": reordena a grade pela métrica
@@ -2295,10 +2279,10 @@ elif st.session_state.pagina == "severidade":
                         "CS da Cidade": "cs_cidade",
                         "Índice de Atenção (Volume)": "indice_atencao_volume",
                     }
-                    fc_ranquear_temp, _fc_ranquear_vazio_temp = st.columns([2, 4])
+                    fc_ranquear_temp, fc_ranquear_v_temp, _fc_ranquear_vazio_temp = st.columns([2, 1, 3])
                     ranquear_por_temp = _selectbox_com_limpar_temp(
-                        fc_ranquear_temp, "Ranquear por", list(_OPCOES_RANQUEAR_TEMP.keys()),
-                        f"temp_ranquear_por{_sufixo_aba_temp}",
+                        fc_ranquear_temp, fc_ranquear_v_temp, "Ranquear por",
+                        list(_OPCOES_RANQUEAR_TEMP.keys()), f"temp_ranquear_por{_sufixo_aba_temp}",
                     )
 
                 # Sem nenhum dos 6 filtros desta aba aplicado, o corte comparado tende a se
@@ -3042,96 +3026,539 @@ elif st.session_state.pagina == "severidade":
                         "⚠️ triângulo amarelo: volume ≥ 2× a média por prestador (atenção "
                         "moderada)"
                     )
-                    _tabela_html_temp(exib_rank_temp, scroll=True)
+                    # Na aba "📊 Ranking" a grade somada por prestador foi substituída pela
+                    # lista de expanders logo abaixo (cada prestador já mostra seu resumo no
+                    # próprio título do expander) — nas outras abas a grade continua igual.
+                    if _sufixo_aba_temp != "_ranking":
+                        _tabela_html_temp(exib_rank_temp, scroll=True)
 
                     # ---- Detalhamento por procedimento, um expander por prestador — só na
-                    # aba "📊 Ranking" (cada linha da grade acima já é a soma de todos os
-                    # procedimentos do prestador; abrir o expander mostra o "por dentro" dele,
-                    # uma linha por procedimento, com as mesmas colunas). Mesma ordem da grade
-                    # (rank_temp já está ordenado pelo "Ranquear por" escolhido acima) —
-                    # _base_rank_prest_temp (por prestador+procedimento, ainda não somado por
-                    # prestador) foi montada mais acima, na construção da grade desta aba.
+                    # aba "📊 Ranking". O título do expander já traz o resumo do prestador
+                    # (mesmos números que antes apareciam na grade); abrir mostra o "por
+                    # dentro" dele, uma linha por procedimento, com as mesmas colunas. Mesma
+                    # ordem da grade (rank_temp já está ordenado pelo "Ranquear por" escolhido
+                    # acima). _base_rank_prest_temp (por prestador+procedimento, ainda não
+                    # somado por prestador) foi montada mais acima, na construção da grade
+                    # desta aba — _detalhe_procedimentos_prestador_temp fica disponível pra
+                    # reaproveitar também no PDF (botão "Gerar PDF" logo abaixo).
+                    def _cs_procedimento_temp(qp, fase):
+                        v = _div_segura_rank_temp(qp, fase)
+                        return v * 10 if pd.notna(v) else float("nan")
+
+                    def _detalhe_procedimentos_prestador_temp(cd_prestador):
+                        _detalhe_proc_temp = _base_rank_prest_temp[
+                            _base_rank_prest_temp["CD_PRESTADOR"] == cd_prestador
+                        ].sort_values("qtd_procedimentos", ascending=False).copy()
+                        if _detalhe_proc_temp.empty:
+                            return None
+
+                        _detalhe_proc_temp["cs_proc"] = [
+                            _cs_procedimento_temp(qp, fase)
+                            for qp, fase in zip(
+                                _detalhe_proc_temp["qtd_procedimentos"],
+                                _detalhe_proc_temp["fase_esperado_linha"],
+                            )
+                        ]
+                        _detalhe_proc_temp["cs_cidade_proc"] = [
+                            _cs_procedimento_temp(qpc, fasec)
+                            for qpc, fasec in zip(
+                                _detalhe_proc_temp["qtd_procedimentos_cidade"],
+                                _detalhe_proc_temp["fase_esperado_cidade_linha"],
+                            )
+                        ]
+                        # mesma regra do Índice de Atenção (Volume) da grade principal: ícone
+                        # junto do nome (aqui, do Procedimento), texto puro ("×X,X a média")
+                        # na coluna do índice.
+                        _icones_proc_temp = []
+                        _textos_proc_temp = []
+                        for _qp_proc_temp, _pp_cidade_proc_temp, _pp_nacional_proc_temp in zip(
+                            _detalhe_proc_temp["qtd_procedimentos"],
+                            _detalhe_proc_temp["qtd_por_prestador_cidade_linha"],
+                            _detalhe_proc_temp["qtd_por_prestador_nacional_linha"],
+                        ):
+                            _ref_proc_temp = (
+                                _pp_cidade_proc_temp if pd.notna(_pp_cidade_proc_temp)
+                                else _pp_nacional_proc_temp
+                            )
+                            if (
+                                pd.isna(_ref_proc_temp) or _ref_proc_temp == 0
+                                or pd.isna(_qp_proc_temp)
+                            ):
+                                _icones_proc_temp.append("")
+                                _textos_proc_temp.append("—")
+                                continue
+                            _razao_proc_temp = _qp_proc_temp / _ref_proc_temp
+                            _icones_proc_temp.append(_icone_indice_atencao_temp(_razao_proc_temp))
+                            _textos_proc_temp.append(_texto_indice_atencao_temp(_razao_proc_temp))
+
+                        return pd.DataFrame({
+                            "Procedimento": [
+                                f"{icone}{nome}" for icone, nome in zip(
+                                    _icones_proc_temp, _detalhe_proc_temp["NOME_PROCEDIMENTO"]
+                                )
+                            ],
+                            "Qtd vidas": _detalhe_proc_temp["qtd_usuarios"].map(fmt_int),
+                            "Qtde proced": _detalhe_proc_temp["qtd_procedimentos"].map(fmt_int),
+                            "Qtde por prestador Nacional": _detalhe_proc_temp[
+                                "qtd_por_prestador_nacional_linha"
+                            ].map(fmt_float2),
+                            "Qtde por prestador - Cidade": _detalhe_proc_temp[
+                                "qtd_por_prestador_cidade_linha"
+                            ].map(fmt_float2),
+                            "FASE": _detalhe_proc_temp["fase_esperado_linha"].map(fmt_float2),
+                            "CS": _detalhe_proc_temp["cs_proc"].map(_fmt_cs_temp),
+                            "CS da Cidade": _detalhe_proc_temp["cs_cidade_proc"].map(_fmt_cs_temp),
+                            "Índice de Atenção (Volume)": _textos_proc_temp,
+                        })
+
                     if _sufixo_aba_temp == "_ranking" and not rank_temp.empty:
                         st.caption(
                             "Abra um prestador abaixo pra ver o detalhamento por procedimento "
-                            "(mesmas colunas de cima, uma linha por procedimento em vez de "
-                            "somadas)."
+                            "(mesmas colunas de antes, uma linha por procedimento em vez de "
+                            "somadas). O título já traz o resumo do prestador."
                         )
-
-                        def _cs_procedimento_temp(qp, fase):
-                            v = _div_segura_rank_temp(qp, fase)
-                            return v * 10 if pd.notna(v) else float("nan")
-
                         for _linha_prest_exp_temp in rank_temp.itertuples():
                             _cd_prest_exp_temp = _linha_prest_exp_temp.CD_PRESTADOR
-                            _rotulo_prest_exp_temp = _linha_prest_exp_temp.rotulo
-                            with st.expander(_rotulo_prest_exp_temp):
-                                _detalhe_proc_temp = _base_rank_prest_temp[
-                                    _base_rank_prest_temp["CD_PRESTADOR"] == _cd_prest_exp_temp
-                                ].sort_values("qtd_procedimentos", ascending=False).copy()
-                                if _detalhe_proc_temp.empty:
+                            _resumo_prest_exp_temp = (
+                                f"{_linha_prest_exp_temp.rotulo}  —  "
+                                f"{fmt_int(_linha_prest_exp_temp.qtd_usuarios)} vidas · "
+                                f"{fmt_int(_linha_prest_exp_temp.qtd_procedimentos)} proced. · "
+                                f"CS {_fmt_cs_temp(_linha_prest_exp_temp.cs)} · "
+                                f"CS Cidade {_fmt_cs_temp(_linha_prest_exp_temp.cs_cidade)} · "
+                                f"{_linha_prest_exp_temp.indice_atencao_volume_rotulo}"
+                            )
+                            with st.expander(_resumo_prest_exp_temp):
+                                _exib_detalhe_proc_temp = _detalhe_procedimentos_prestador_temp(
+                                    _cd_prest_exp_temp
+                                )
+                                if _exib_detalhe_proc_temp is None:
                                     st.caption("Sem procedimentos pra detalhar.")
-                                    continue
+                                else:
+                                    _tabela_html_temp(_exib_detalhe_proc_temp, scroll=False)
 
-                                _detalhe_proc_temp["cs_proc"] = [
-                                    _cs_procedimento_temp(qp, fase)
-                                    for qp, fase in zip(
-                                        _detalhe_proc_temp["qtd_procedimentos"],
-                                        _detalhe_proc_temp["fase_esperado_linha"],
-                                    )
-                                ]
-                                _detalhe_proc_temp["cs_cidade_proc"] = [
-                                    _cs_procedimento_temp(qpc, fasec)
-                                    for qpc, fasec in zip(
-                                        _detalhe_proc_temp["qtd_procedimentos_cidade"],
-                                        _detalhe_proc_temp["fase_esperado_cidade_linha"],
-                                    )
-                                ]
-                                # mesma regra do Índice de Atenção (Volume) da grade principal:
-                                # ícone junto do nome (aqui, do Procedimento), texto puro
-                                # ("×X,X a média") na coluna do índice.
-                                _icones_proc_temp = []
-                                _textos_proc_temp = []
-                                for _qp_proc_temp, _pp_cidade_proc_temp, _pp_nacional_proc_temp in zip(
-                                    _detalhe_proc_temp["qtd_procedimentos"],
-                                    _detalhe_proc_temp["qtd_por_prestador_cidade_linha"],
-                                    _detalhe_proc_temp["qtd_por_prestador_nacional_linha"],
-                                ):
-                                    _ref_proc_temp = (
-                                        _pp_cidade_proc_temp if pd.notna(_pp_cidade_proc_temp)
-                                        else _pp_nacional_proc_temp
-                                    )
-                                    if (
-                                        pd.isna(_ref_proc_temp) or _ref_proc_temp == 0
-                                        or pd.isna(_qp_proc_temp)
-                                    ):
-                                        _icones_proc_temp.append("")
-                                        _textos_proc_temp.append("—")
-                                        continue
-                                    _razao_proc_temp = _qp_proc_temp / _ref_proc_temp
-                                    _icones_proc_temp.append(_icone_indice_atencao_temp(_razao_proc_temp))
-                                    _textos_proc_temp.append(_texto_indice_atencao_temp(_razao_proc_temp))
+                    if _sufixo_aba_temp == "_ranking":
+                        # ============================================================
+                        # PDF — "Gerar PDF" exporta esta aba (Ranking) com os filtros atuais:
+                        # cabeçalho com a logo, período trabalhado e filtros aplicados, legenda,
+                        # 2 gráficos (dispersão CS × volume e Top 10 pela métrica escolhida em
+                        # "Ranquear por") e o detalhamento por prestador já "aberto" (mesmo
+                        # conteúdo dos expanders acima — não dá pra ter expander de verdade num
+                        # PDF, então cada prestador vira uma seção com a tabela de procedimentos
+                        # logo abaixo, na mesma ordem da tela). reportlab e matplotlib são
+                        # importados só aqui dentro (nunca no topo do arquivo) — se ainda não
+                        # estiverem no requirements.txt, o resto do painel continua funcionando
+                        # normalmente; só o botão avisa o que falta instalar.
+                        # ============================================================
+                        def _gerar_pdf_ranking_temp():
+                            try:
+                                import matplotlib
+                                matplotlib.use("Agg")
+                                import matplotlib.pyplot as plt
+                                from matplotlib.colors import LinearSegmentedColormap
+                                from reportlab.lib.pagesizes import A4
+                                from reportlab.lib.units import mm
+                                from reportlab.lib import colors as rl_colors
+                                from reportlab.platypus import (
+                                    SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer,
+                                    Image as RLImage,
+                                )
+                                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                            except ImportError as _erro_libs_pdf_temp:
+                                st.error(
+                                    "Pra gerar o PDF faltam bibliotecas no ambiente (`reportlab` "
+                                    "e/ou `matplotlib`). Adicione as duas ao requirements.txt e "
+                                    f"reinicie o app. Detalhe técnico: {_erro_libs_pdf_temp}"
+                                )
+                                return None
 
-                                _exib_detalhe_proc_temp = pd.DataFrame({
-                                    "Procedimento": [
-                                        f"{icone}{nome}" for icone, nome in zip(
-                                            _icones_proc_temp, _detalhe_proc_temp["NOME_PROCEDIMENTO"]
+                            _COR_PRIMARIA_PDF_TEMP = rl_colors.HexColor("#0f5f8c")
+                            _COR_PRIMARIA_CLARA_PDF_TEMP = rl_colors.HexColor("#e8f2f8")
+                            _COR_ALERTA_PDF_TEMP = rl_colors.HexColor("#e74c3c")
+                            _COR_ATENCAO_PDF_TEMP = rl_colors.HexColor("#f1c40f")
+                            _COR_TEXTO_PDF_TEMP = rl_colors.HexColor("#1f2d3a")
+                            _COR_ZEBRA_PDF_TEMP = rl_colors.HexColor("#f6f8fa")
+                            _COR_BORDA_PDF_TEMP = rl_colors.HexColor("#d8dee3")
+                            _LARGURA_UTIL_PDF_TEMP = 182 * mm  # A4 (210mm) - 14mm de margem de cada lado
+
+                            def _truncar_nome_pdf_temp(nome, limite=38):
+                                nome = str(nome)
+                                return nome if len(nome) <= limite else nome[: limite - 1] + "…"
+
+                            def _grafico_dispersao_pdf_temp(rank_df):
+                                dados = rank_df[
+                                    (rank_df["qtd_usuarios"] > 0) & rank_df["cs"].notna()
+                                ].copy()
+                                if dados.empty:
+                                    return None
+                                _cmap_temp = LinearSegmentedColormap.from_list(
+                                    "cs_pdf_temp", ["#2ecc71", "#f1c40f", "#e74c3c"]
+                                )
+                                fig, ax = plt.subplots(figsize=(7.2, 3.2), dpi=150)
+                                _tam_max_temp = dados["qtd_procedimentos"].max()
+                                _tamanhos_temp = 20 + (dados["qtd_procedimentos"] / _tam_max_temp) * 380
+                                sc = ax.scatter(
+                                    dados["qtd_usuarios"], dados["cs"].clip(0, 20), s=_tamanhos_temp,
+                                    c=dados["cs"].clip(0, 20), cmap=_cmap_temp, vmin=0, vmax=20,
+                                    alpha=0.85, edgecolors="white", linewidths=0.5,
+                                )
+                                ax.set_xscale("log")
+                                ax.axhline(10, color="#888888", linestyle="--", linewidth=1)
+                                ax.set_xlabel("Qtd vidas (escala log)", fontsize=9)
+                                ax.set_ylabel("CS", fontsize=9)
+                                ax.set_title(
+                                    "CS × volume por prestador", fontsize=11, fontweight="bold",
+                                    color="#0f5f8c",
+                                )
+                                ax.tick_params(labelsize=8)
+                                ax.grid(True, alpha=0.25)
+                                cbar = fig.colorbar(sc, ax=ax, pad=0.01)
+                                cbar.set_label("CS", fontsize=8)
+                                cbar.ax.tick_params(labelsize=7)
+                                fig.tight_layout()
+                                buf = io.BytesIO()
+                                fig.savefig(buf, format="png")
+                                plt.close(fig)
+                                buf.seek(0)
+                                return buf
+
+                            def _grafico_top10_pdf_temp(rank_df, coluna_metrica, rotulo_metrica):
+                                if coluna_metrica not in rank_df.columns:
+                                    return None
+                                dados = rank_df.head(10).sort_values(
+                                    coluna_metrica, ascending=True, na_position="first"
+                                ).copy()
+                                if dados.empty:
+                                    return None
+                                _nomes_temp = [
+                                    _truncar_nome_pdf_temp(
+                                        r.replace("🚩 ", "").replace("⚠️ ", "").split(" - ")[0]
+                                    )
+                                    for r in dados["rotulo"]
+                                ]
+                                _valores_temp = dados[coluna_metrica].fillna(0)
+                                fig, ax = plt.subplots(figsize=(7.2, 3.2), dpi=150)
+                                ax.barh(_nomes_temp, _valores_temp, color="#0f5f8c")
+                                ax.set_xlabel(rotulo_metrica, fontsize=9)
+                                ax.set_title(
+                                    f"Top 10 por {rotulo_metrica}", fontsize=11, fontweight="bold",
+                                    color="#0f5f8c",
+                                )
+                                ax.tick_params(labelsize=8)
+                                ax.grid(True, axis="x", alpha=0.25)
+                                fig.tight_layout()
+                                buf = io.BytesIO()
+                                fig.savefig(buf, format="png")
+                                plt.close(fig)
+                                buf.seek(0)
+                                return buf
+
+                            buf_pdf = io.BytesIO()
+                            doc = SimpleDocTemplate(
+                                buf_pdf, pagesize=A4,
+                                topMargin=18 * mm, bottomMargin=16 * mm,
+                                leftMargin=14 * mm, rightMargin=14 * mm,
+                                title="Ranking de Prestadores - Odonto",
+                            )
+
+                            styles = getSampleStyleSheet()
+                            estilo_titulo = ParagraphStyle(
+                                "TituloPdfTemp", parent=styles["Title"], fontSize=17,
+                                textColor=rl_colors.white, leading=20, spaceAfter=0,
+                            )
+                            estilo_subtitulo = ParagraphStyle(
+                                "SubtituloPdfTemp", parent=styles["Normal"], fontSize=10,
+                                textColor=rl_colors.white, leading=13,
+                            )
+                            estilo_secao = ParagraphStyle(
+                                "SecaoPdfTemp", parent=styles["Heading2"], fontSize=12.5,
+                                textColor=_COR_PRIMARIA_PDF_TEMP, spaceBefore=10, spaceAfter=4,
+                            )
+                            estilo_prestador = ParagraphStyle(
+                                "PrestadorPdfTemp", parent=styles["Normal"], fontSize=9.5,
+                                textColor=rl_colors.white, leading=12,
+                            )
+                            estilo_corpo = ParagraphStyle(
+                                "CorpoPdfTemp", parent=styles["Normal"], fontSize=8.5,
+                                textColor=_COR_TEXTO_PDF_TEMP, leading=11,
+                            )
+                            estilo_legenda = ParagraphStyle(
+                                "LegendaPdfTemp", parent=styles["Normal"], fontSize=8,
+                                textColor=_COR_TEXTO_PDF_TEMP, leading=11,
+                            )
+
+                            story = []
+
+                            # ---- cabeçalho: faixa azul com logo + título ----
+                            _logo_flowable_temp = ""
+                            if LOGO_PATH and os.path.exists(LOGO_PATH):
+                                try:
+                                    from PIL import Image as PILImageTemp
+                                    with PILImageTemp.open(LOGO_PATH) as _im_teste_temp:
+                                        _im_teste_temp.verify()
+                                    _logo_flowable_temp = RLImage(
+                                        LOGO_PATH, width=26 * mm, height=26 * mm, kind="proportional"
+                                    )
+                                except Exception:
+                                    _logo_flowable_temp = ""
+                            _titulo_cel_temp = [
+                                Paragraph("Painel de Gestão de Sinistro — Odonto", estilo_titulo),
+                                Paragraph("Ranking de prestadores", estilo_subtitulo),
+                            ]
+                            _tabela_cabecalho_temp = Table(
+                                [[_logo_flowable_temp, _titulo_cel_temp]],
+                                colWidths=[30 * mm, 152 * mm],
+                            )
+                            _tabela_cabecalho_temp.setStyle(TableStyle([
+                                ("BACKGROUND", (0, 0), (-1, -1), _COR_PRIMARIA_PDF_TEMP),
+                                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                ("ALIGN", (0, 0), (0, 0), "CENTER"),
+                                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                            ]))
+                            story.append(_tabela_cabecalho_temp)
+                            story.append(Spacer(1, 8))
+
+                            # ---- metadados: período, ranqueado por, filtros ativos, gerado em ----
+                            _periodo_pdf_temp = (
+                                _periodo_considerado_temp(df_temp) or "Base completa (sem recorte de período)"
+                            )
+                            _filtros_ativos_pdf_temp = []
+                            if f_mes:
+                                _filtros_ativos_pdf_temp.append(f"Mês: {', '.join(f_mes)}")
+                            if f_plano:
+                                _filtros_ativos_pdf_temp.append(f"Plano: {', '.join(f_plano)}")
+                            if f_especialidade:
+                                _filtros_ativos_pdf_temp.append(f"Especialidade: {', '.join(f_especialidade)}")
+                            for _rotulo_filtro_temp, _valor_filtro_temp in (
+                                ("Procedimento", proc_sel_temp), ("Prestador", prest_sel_temp),
+                                ("UF", uf_sel_temp), ("Região", regiao_sel_temp),
+                                ("Cidade", cidade_sel_temp), ("Cluster", cluster_sel_temp),
+                            ):
+                                if _valor_filtro_temp != "Todos":
+                                    _filtros_ativos_pdf_temp.append(f"{_rotulo_filtro_temp}: {_valor_filtro_temp}")
+                            _texto_filtros_pdf_temp = (
+                                "; ".join(_filtros_ativos_pdf_temp) if _filtros_ativos_pdf_temp
+                                else "Nenhum filtro adicional — todos os prestadores/procedimentos do período"
+                            )
+                            _linhas_meta_temp = [
+                                ("Período considerado", _periodo_pdf_temp),
+                                ("Ranqueado por", ranquear_por_temp),
+                                ("Filtros aplicados", _texto_filtros_pdf_temp),
+                                ("Gerado em", datetime.now().strftime("%d/%m/%Y às %H:%M")),
+                            ]
+                            _tabela_meta_temp = Table(
+                                [
+                                    [Paragraph(f"<b>{html.escape(k)}</b>", estilo_corpo),
+                                     Paragraph(html.escape(v), estilo_corpo)]
+                                    for k, v in _linhas_meta_temp
+                                ],
+                                colWidths=[38 * mm, 144 * mm],
+                            )
+                            _tabela_meta_temp.setStyle(TableStyle([
+                                ("BACKGROUND", (0, 0), (-1, -1), _COR_ZEBRA_PDF_TEMP),
+                                ("BOX", (0, 0), (-1, -1), 0.5, _COR_BORDA_PDF_TEMP),
+                                ("INNERGRID", (0, 0), (-1, -1), 0.5, rl_colors.white),
+                                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                            ]))
+                            story.append(_tabela_meta_temp)
+                            story.append(Spacer(1, 6))
+
+                            # ---- legenda ----
+                            story.append(Paragraph("Alerta de volume", estilo_secao))
+                            _tabela_legenda_temp = Table(
+                                [
+                                    ["", Paragraph(
+                                        "Volume ≥ 5× a média por prestador (alerta forte)", estilo_legenda
+                                    )],
+                                    ["", Paragraph(
+                                        "Volume ≥ 2× a média por prestador (atenção moderada)", estilo_legenda
+                                    )],
+                                ],
+                                colWidths=[6 * mm, 176 * mm], rowHeights=[6 * mm, 6 * mm],
+                            )
+                            _tabela_legenda_temp.setStyle(TableStyle([
+                                ("BACKGROUND", (0, 0), (0, 0), _COR_ALERTA_PDF_TEMP),
+                                ("BACKGROUND", (0, 1), (0, 1), _COR_ATENCAO_PDF_TEMP),
+                                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                            ]))
+                            story.append(_tabela_legenda_temp)
+                            story.append(Spacer(1, 8))
+
+                            # ---- gráficos ----
+                            if not rank_temp.empty:
+                                story.append(Paragraph("Visão geral", estilo_secao))
+                                _buf_disp_temp = _grafico_dispersao_pdf_temp(rank_temp)
+                                if _buf_disp_temp is not None:
+                                    story.append(RLImage(_buf_disp_temp, width=180 * mm, height=80 * mm))
+                                    story.append(Spacer(1, 4))
+                                _coluna_metrica_pdf_temp = _OPCOES_RANQUEAR_TEMP.get(ranquear_por_temp, "cs")
+                                _buf_top10_temp = _grafico_top10_pdf_temp(
+                                    rank_temp, _coluna_metrica_pdf_temp, ranquear_por_temp
+                                )
+                                if _buf_top10_temp is not None:
+                                    story.append(RLImage(_buf_top10_temp, width=180 * mm, height=80 * mm))
+                                story.append(Spacer(1, 8))
+
+                            # ---- detalhamento por prestador (mesmo conteúdo dos expanders, já "aberto") ----
+                            story.append(
+                                Paragraph(f"Detalhamento por prestador ({len(rank_temp)})", estilo_secao)
+                            )
+                            if rank_temp.empty:
+                                story.append(Paragraph("Nenhum prestador nos filtros atuais.", estilo_corpo))
+                            for _linha_pdf_temp in rank_temp.itertuples():
+                                _rotulo_bruto_temp = _linha_pdf_temp.rotulo
+                                if _rotulo_bruto_temp.startswith("🚩"):
+                                    _cor_fundo_prest_temp = _COR_ALERTA_PDF_TEMP
+                                elif _rotulo_bruto_temp.startswith("⚠️"):
+                                    _cor_fundo_prest_temp = _COR_ATENCAO_PDF_TEMP
+                                else:
+                                    _cor_fundo_prest_temp = _COR_PRIMARIA_PDF_TEMP
+                                _rotulo_limpo_temp = (
+                                    _rotulo_bruto_temp.replace("🚩", "").replace("⚠️", "").strip()
+                                )
+                                _resumo_pdf_temp = (
+                                    f"{html.escape(_rotulo_limpo_temp)}  —  "
+                                    f"{fmt_int(_linha_pdf_temp.qtd_usuarios)} vidas · "
+                                    f"{fmt_int(_linha_pdf_temp.qtd_procedimentos)} proced. · "
+                                    f"CS {_fmt_cs_temp(_linha_pdf_temp.cs)} · "
+                                    f"CS Cidade {_fmt_cs_temp(_linha_pdf_temp.cs_cidade)} · "
+                                    f"{html.escape(_linha_pdf_temp.indice_atencao_volume_rotulo)}"
+                                )
+                                _cabecalho_prest_temp = Table(
+                                    [[Paragraph(_resumo_pdf_temp, estilo_prestador)]],
+                                    colWidths=[_LARGURA_UTIL_PDF_TEMP],
+                                )
+                                _cabecalho_prest_temp.setStyle(TableStyle([
+                                    ("BACKGROUND", (0, 0), (-1, -1), _cor_fundo_prest_temp),
+                                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                                ]))
+                                story.append(_cabecalho_prest_temp)
+
+                                _detalhe_pdf_temp = _detalhe_procedimentos_prestador_temp(
+                                    _linha_pdf_temp.CD_PRESTADOR
+                                )
+                                if _detalhe_pdf_temp is None or _detalhe_pdf_temp.empty:
+                                    story.append(
+                                        Paragraph("Sem procedimentos pra detalhar.", estilo_corpo)
+                                    )
+                                else:
+                                    _cabecalho_tabela_temp = [
+                                        Paragraph(f"<b>{html.escape(str(c))}</b>", estilo_corpo)
+                                        for c in _detalhe_pdf_temp.columns
+                                    ]
+                                    # A 1ª coluna (Procedimento) vem com 🚩/⚠️ na tela — a
+                                    # fonte padrão do PDF não tem esses glyphs (viravam um
+                                    # quadradinho preto sem sentido); troca por cor no próprio
+                                    # texto (vermelho/laranja), mesma linguagem visual do
+                                    # cabeçalho colorido de cada prestador.
+                                    def _celula_procedimento_pdf_temp(valor):
+                                        texto = str(valor)
+                                        if texto.startswith("🚩"):
+                                            cor_temp = "#e74c3c"
+                                        elif texto.startswith("⚠️"):
+                                            cor_temp = "#c98a00"
+                                        else:
+                                            return Paragraph(html.escape(texto), estilo_corpo)
+                                        texto_limpo = texto.replace("🚩", "").replace("⚠️", "").strip()
+                                        return Paragraph(
+                                            f'<font color="{cor_temp}"><b>{html.escape(texto_limpo)}</b></font>',
+                                            estilo_corpo,
                                         )
-                                    ],
-                                    "Qtd vidas": _detalhe_proc_temp["qtd_usuarios"].map(fmt_int),
-                                    "Qtde proced": _detalhe_proc_temp["qtd_procedimentos"].map(fmt_int),
-                                    "Qtde por prestador Nacional": _detalhe_proc_temp[
-                                        "qtd_por_prestador_nacional_linha"
-                                    ].map(fmt_float2),
-                                    "Qtde por prestador - Cidade": _detalhe_proc_temp[
-                                        "qtd_por_prestador_cidade_linha"
-                                    ].map(fmt_float2),
-                                    "FASE": _detalhe_proc_temp["fase_esperado_linha"].map(fmt_float2),
-                                    "CS": _detalhe_proc_temp["cs_proc"].map(_fmt_cs_temp),
-                                    "CS da Cidade": _detalhe_proc_temp["cs_cidade_proc"].map(_fmt_cs_temp),
-                                    "Índice de Atenção (Volume)": _textos_proc_temp,
-                                })
-                                _tabela_html_temp(_exib_detalhe_proc_temp, scroll=False)
+
+                                    _linhas_tabela_temp = [
+                                        [
+                                            _celula_procedimento_pdf_temp(v) if i == 0
+                                            else Paragraph(html.escape(str(v)), estilo_corpo)
+                                            for i, v in enumerate(linha)
+                                        ]
+                                        for linha in _detalhe_pdf_temp.itertuples(index=False, name=None)
+                                    ]
+                                    _pesos_col_temp = [40] + [10] * (len(_detalhe_pdf_temp.columns) - 1)
+                                    _soma_pesos_temp = sum(_pesos_col_temp)
+                                    _larguras_proc_temp = [
+                                        _LARGURA_UTIL_PDF_TEMP * (w / _soma_pesos_temp) for w in _pesos_col_temp
+                                    ]
+                                    _tabela_proc_temp = Table(
+                                        [_cabecalho_tabela_temp] + _linhas_tabela_temp,
+                                        colWidths=_larguras_proc_temp, repeatRows=1,
+                                    )
+                                    _estilo_tabela_proc_temp = [
+                                        ("BACKGROUND", (0, 0), (-1, 0), _COR_PRIMARIA_CLARA_PDF_TEMP),
+                                        ("LINEBELOW", (0, 0), (-1, 0), 0.6, _COR_PRIMARIA_PDF_TEMP),
+                                        ("LINEBELOW", (0, 1), (-1, -1), 0.3, _COR_BORDA_PDF_TEMP),
+                                        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                                        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                                        ("TOPPADDING", (0, 0), (-1, -1), 3),
+                                        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                                    ]
+                                    for _i_zebra_temp in range(1, len(_linhas_tabela_temp) + 1, 2):
+                                        _estilo_tabela_proc_temp.append((
+                                            "BACKGROUND", (0, _i_zebra_temp), (-1, _i_zebra_temp),
+                                            _COR_ZEBRA_PDF_TEMP,
+                                        ))
+                                    _tabela_proc_temp.setStyle(TableStyle(_estilo_tabela_proc_temp))
+                                    story.append(_tabela_proc_temp)
+                                story.append(Spacer(1, 6))
+
+                            def _rodape_pdf_temp(canvas_temp, doc_temp):
+                                canvas_temp.saveState()
+                                canvas_temp.setFont("Helvetica", 7.5)
+                                canvas_temp.setFillColor(rl_colors.HexColor("#8a97a3"))
+                                canvas_temp.drawString(
+                                    14 * mm, 10 * mm,
+                                    "Painel de Gestão de Sinistro - Odonto — gerado automaticamente",
+                                )
+                                canvas_temp.drawRightString(
+                                    A4[0] - 14 * mm, 10 * mm, f"Página {doc_temp.page}"
+                                )
+                                canvas_temp.restoreState()
+
+                            doc.build(story, onFirstPage=_rodape_pdf_temp, onLaterPages=_rodape_pdf_temp)
+                            buf_pdf.seek(0)
+                            return buf_pdf.getvalue()
+
+                        st.divider()
+                        st.markdown("**📄 Relatório em PDF**")
+                        st.caption(
+                            "Gera um PDF com os filtros atuais desta aba: cabeçalho com a logo, "
+                            "período trabalhado e filtros aplicados, legenda, gráficos (dispersão "
+                            "CS × volume e Top 10 pela métrica de \"Ranquear por\") e o "
+                            "detalhamento por prestador já \"aberto\" (mesmo conteúdo dos "
+                            "expanders acima)."
+                        )
+                        col_gerar_pdf_temp, col_baixar_pdf_temp = st.columns([1, 2])
+                        with col_gerar_pdf_temp:
+                            if st.button(
+                                "📄 Gerar PDF", key="gerar_pdf_ranking_temp", use_container_width=True
+                            ):
+                                with st.spinner("Gerando PDF..."):
+                                    _pdf_bytes_temp = _gerar_pdf_ranking_temp()
+                                if _pdf_bytes_temp:
+                                    st.session_state["pdf_ranking_bytes_temp"] = _pdf_bytes_temp
+                                    st.session_state["pdf_ranking_nome_temp"] = (
+                                        f"ranking_odonto_{datetime.now():%Y%m%d_%H%M}.pdf"
+                                    )
+                        with col_baixar_pdf_temp:
+                            if st.session_state.get("pdf_ranking_bytes_temp"):
+                                st.download_button(
+                                    "⬇️ Baixar PDF",
+                                    data=st.session_state["pdf_ranking_bytes_temp"],
+                                    file_name=st.session_state.get(
+                                        "pdf_ranking_nome_temp", "ranking_odonto.pdf"
+                                    ),
+                                    mime="application/pdf",
+                                    key="baixar_pdf_ranking_temp",
+                                    use_container_width=True,
+                                )
 
                 # ============================================================
                 # BENCHMARK — 30 prestadores de volume médio, em cidades/UFs/clusters
