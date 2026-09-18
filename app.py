@@ -907,21 +907,22 @@ elif st.session_state.pagina == "severidade":
     m4.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
     m5.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
     st.divider()
-    # Sequência das abas: Temporária, Resumo, Projeção, SMILE DENTAL — "Coeficiente de
-    # Severidade" fica fora da lista (oculta) a menos que MOSTRAR_ABA_CS_TEMP seja religado.
+    # Sequência das abas: Temporária, Resumo, Projeção, SMILE DENTAL, Ranking — "Coeficiente
+    # de Severidade" fica fora da lista (oculta) a menos que MOSTRAR_ABA_CS_TEMP seja religado.
     _labels_abas_temp = [
         "🧪 Temp: procedimentos selecionados", "Resumo", "📍 Projeção de Credenciamento",
-        "🔎 SMILE DENTAL",
+        "🔎 SMILE DENTAL", "📊 Ranking",
     ]
     if MOSTRAR_ABA_CS_TEMP:
         _labels_abas_temp.append("Coeficiente de Severidade")
     if MOSTRAR_ABAS_OFICIAIS_EXTRAS:
         _labels_abas_temp += ["Ranking de Severidade", "Evolução mensal", "Ofensores", "Desvios de Solicitações"]
     _abas_criadas_temp = st.tabs(_labels_abas_temp)
-    tab_temp_legado, tab_resumo, tab_credenciamento, tab_smile_temp = (
-        _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2], _abas_criadas_temp[3]
+    tab_temp_legado, tab_resumo, tab_credenciamento, tab_smile_temp, tab_ranking_temp = (
+        _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2], _abas_criadas_temp[3],
+        _abas_criadas_temp[4],
     )
-    _prox_idx_aba_temp = 4
+    _prox_idx_aba_temp = 5
     if MOSTRAR_ABA_CS_TEMP:
         tab_temp = _abas_criadas_temp[_prox_idx_aba_temp]
         _prox_idx_aba_temp += 1
@@ -950,6 +951,7 @@ elif st.session_state.pagina == "severidade":
     _config_abas_cs_temp = [
         (tab_temp_legado, "🧪 Temp: procedimentos selecionados", CODIGOS_TEMP_LEGADO, "_legado", None, True),
         (tab_smile_temp, "🔎 SMILE DENTAL", None, "_smile", NOME_PRESTADOR_SMILE_TEMP, False),
+        (tab_ranking_temp, "📊 Ranking", None, "_ranking", None, False),
     ]
     if MOSTRAR_ABA_CS_TEMP:
         _config_abas_cs_temp.append((tab_temp, "Coeficiente de Severidade", None, "", None, True))
@@ -2065,6 +2067,19 @@ elif st.session_state.pagina == "severidade":
                     "por célula, os limiares (2× e 5×) são configuráveis no código."
                 )
 
+            if _sufixo_aba_temp == "_ranking":
+                st.caption(
+                    "Mesmos filtros e cálculos das outras abas (Procedimento, Prestador, UF, "
+                    "Região, Cidade, Cluster), mas a grade só traz as colunas de volume/"
+                    "severidade — sem trava de prestador. Use \"Ranquear por\" (abaixo dos "
+                    "filtros) pra reordenar a grade pela métrica que interessar — sempre do "
+                    "maior pro menor.  \n"
+                    "\"Qtde por prestador Nacional/Cidade\" e o \"Índice de Atenção (Volume)\" só "
+                    "fazem sentido comparando UM prestador específico contra a média — com o "
+                    "filtro Prestador em \"Todos\", o Índice de Atenção fica \"—\" (a \"Qtde "
+                    "proced\" ali vira a soma de vários prestadores misturados)."
+                )
+
             st.caption(
                 "CS (Coeficiente de Severidade) = (QP ÷ FASE) × 10 (Se o resultado igual a 10 "
                 "significa que o corte praticou exatamente o esperado pela taxa nacional; acima "
@@ -2202,6 +2217,27 @@ elif st.session_state.pagina == "severidade":
                         "Cluster", opcoes_cluster_temp, key=f"temp_filtro_cluster{_sufixo_aba_temp}"
                     )
 
+                # ---- "Ranquear por" — só na aba "📊 Ranking": reordena a grade pela métrica
+                # escolhida (sempre do maior pro menor), em vez do CS decrescente fixo usado
+                # nas outras abas. As chaves do dicionário são os mesmos nomes internos de
+                # coluna já calculados mais abaixo em rank_temp — reaproveitados no
+                # .sort_values() logo antes de montar a grade de exibição. ----
+                if _sufixo_aba_temp == "_ranking":
+                    _OPCOES_RANQUEAR_TEMP = {
+                        "Qtde de vidas": "qtd_usuarios",
+                        "Qtde de procedimentos": "qtd_procedimentos",
+                        "Qtde por prestador (Nacional)": "qtd_por_prestador_nacional",
+                        "Qtde por prestador (Cidade)": "qtd_por_prestador_cidade",
+                        "FASE": "fase_esperado",
+                        "CS": "cs",
+                        "CS da Cidade": "cs_cidade",
+                        "Índice de Atenção (Volume)": "indice_atencao_volume",
+                    }
+                    ranquear_por_temp = st.selectbox(
+                        "Ranquear por", list(_OPCOES_RANQUEAR_TEMP.keys()),
+                        key=f"temp_ranquear_por{_sufixo_aba_temp}",
+                    )
+
                 # ---- limpar filtros, de uma vez só ---- apaga a key do session_state de cada
                 # campo (Mês/Plano/Especialidade também, só na aba Temporária — são únicos pra
                 # página toda) e força um rerun; sem a key, o widget volta pro valor padrão dele
@@ -2221,6 +2257,8 @@ elif st.session_state.pagina == "severidade":
                     _chaves_filtro_aba_temp += [
                         "temp_filtro_mes", "temp_filtro_plano", "temp_filtro_especialidade",
                     ]
+                if _sufixo_aba_temp == "_ranking":
+                    _chaves_filtro_aba_temp.append(f"temp_ranquear_por{_sufixo_aba_temp}")
                 if st.button("🧹 Limpar filtros", key=f"limpar_filtros_temp{_sufixo_aba_temp}"):
                     for _chave_filtro_temp in _chaves_filtro_aba_temp:
                         st.session_state.pop(_chave_filtro_temp, None)
@@ -2609,8 +2647,16 @@ elif st.session_state.pagina == "severidade":
                     )
                 ]
 
-                # ---- ordena a grade por CS decrescente (do mais severo pro menos severo) ----
-                rank_temp = rank_temp.sort_values("cs", ascending=False)
+                # ---- ordena a grade: nas outras abas, sempre por CS decrescente (do mais
+                # severo pro menos severo); na aba "📊 Ranking", pela métrica escolhida no
+                # "Ranquear por" acima (mesma direção — sempre do maior pro menor). ----
+                if _sufixo_aba_temp == "_ranking":
+                    _coluna_ordenacao_temp = _OPCOES_RANQUEAR_TEMP.get(ranquear_por_temp, "cs")
+                    rank_temp = rank_temp.sort_values(
+                        _coluna_ordenacao_temp, ascending=False, na_position="last"
+                    )
+                else:
+                    rank_temp = rank_temp.sort_values("cs", ascending=False)
 
                 exib_rank_temp = rank_temp.copy()
                 exib_rank_temp["qtd_procedimentos"] = exib_rank_temp["qtd_procedimentos"].map(fmt_int)
@@ -2658,6 +2704,16 @@ elif st.session_state.pagina == "severidade":
                     "calculo_cs", "cs", "cs_geral", "calculo_cs_cidade", "cs_cidade",
                     "indice_atencao_volume_rotulo",
                 ]
+                # A aba "📊 Ranking" pediu uma grade enxuta — só as 8 colunas de volume/
+                # severidade (mais "Procedimento", pra identificar a linha), sem "Cálculo
+                # do X"/Soma de uso/Uso por proced-vida/CS Geral/QP. Sobrescreve a lista
+                # padrão montada acima em vez de remontar do zero.
+                if _sufixo_aba_temp == "_ranking":
+                    _colunas_exib_rank_temp = [
+                        "rotulo", "qtd_usuarios", "qtd_procedimentos",
+                        "qtd_por_prestador_nacional", "qtd_por_prestador_cidade",
+                        "fase_esperado", "cs", "cs_cidade", "indice_atencao_volume_rotulo",
+                    ]
                 exib_rank_temp = exib_rank_temp[_colunas_exib_rank_temp].rename(columns={
                     "rotulo": "Procedimento",
                     "qtd_procedimentos": "Qtde proced",
@@ -2731,8 +2787,13 @@ elif st.session_state.pagina == "severidade":
 
                 # A grade volta a aparecer sozinha assim que um prestador específico é
                 # selecionado (a flag no topo do arquivo só força ela sempre visível, mesmo
-                # sem prestador selecionado, se religada pra True).
-                _mostrar_grade_cs_temp = MOSTRAR_GRADE_CS_PROCEDIMENTO_TEMP or prest_sel_temp != "Todos"
+                # sem prestador selecionado, se religada pra True) — na aba "📊 Ranking" ela
+                # fica sempre visível, já que essa aba não trava nem depende de um prestador
+                # específico (o objetivo é rankear procedimentos/cortes de cara).
+                _mostrar_grade_cs_temp = (
+                    MOSTRAR_GRADE_CS_PROCEDIMENTO_TEMP or prest_sel_temp != "Todos"
+                    or _sufixo_aba_temp == "_ranking"
+                )
                 if _mostrar_grade_cs_temp:
                     st.caption(
                         "**Alerta de volume**  \n"
