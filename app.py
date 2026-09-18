@@ -3044,6 +3044,95 @@ elif st.session_state.pagina == "severidade":
                     )
                     _tabela_html_temp(exib_rank_temp, scroll=True)
 
+                    # ---- Detalhamento por procedimento, um expander por prestador — só na
+                    # aba "📊 Ranking" (cada linha da grade acima já é a soma de todos os
+                    # procedimentos do prestador; abrir o expander mostra o "por dentro" dele,
+                    # uma linha por procedimento, com as mesmas colunas). Mesma ordem da grade
+                    # (rank_temp já está ordenado pelo "Ranquear por" escolhido acima) —
+                    # _base_rank_prest_temp (por prestador+procedimento, ainda não somado por
+                    # prestador) foi montada mais acima, na construção da grade desta aba.
+                    if _sufixo_aba_temp == "_ranking" and not rank_temp.empty:
+                        st.caption(
+                            "Abra um prestador abaixo pra ver o detalhamento por procedimento "
+                            "(mesmas colunas de cima, uma linha por procedimento em vez de "
+                            "somadas)."
+                        )
+
+                        def _cs_procedimento_temp(qp, fase):
+                            v = _div_segura_rank_temp(qp, fase)
+                            return v * 10 if pd.notna(v) else float("nan")
+
+                        for _linha_prest_exp_temp in rank_temp.itertuples():
+                            _cd_prest_exp_temp = _linha_prest_exp_temp.CD_PRESTADOR
+                            _rotulo_prest_exp_temp = _linha_prest_exp_temp.rotulo
+                            with st.expander(_rotulo_prest_exp_temp):
+                                _detalhe_proc_temp = _base_rank_prest_temp[
+                                    _base_rank_prest_temp["CD_PRESTADOR"] == _cd_prest_exp_temp
+                                ].sort_values("qtd_procedimentos", ascending=False).copy()
+                                if _detalhe_proc_temp.empty:
+                                    st.caption("Sem procedimentos pra detalhar.")
+                                    continue
+
+                                _detalhe_proc_temp["cs_proc"] = [
+                                    _cs_procedimento_temp(qp, fase)
+                                    for qp, fase in zip(
+                                        _detalhe_proc_temp["qtd_procedimentos"],
+                                        _detalhe_proc_temp["fase_esperado_linha"],
+                                    )
+                                ]
+                                _detalhe_proc_temp["cs_cidade_proc"] = [
+                                    _cs_procedimento_temp(qpc, fasec)
+                                    for qpc, fasec in zip(
+                                        _detalhe_proc_temp["qtd_procedimentos_cidade"],
+                                        _detalhe_proc_temp["fase_esperado_cidade_linha"],
+                                    )
+                                ]
+                                # mesma regra do Índice de Atenção (Volume) da grade principal:
+                                # ícone junto do nome (aqui, do Procedimento), texto puro
+                                # ("×X,X a média") na coluna do índice.
+                                _icones_proc_temp = []
+                                _textos_proc_temp = []
+                                for _qp_proc_temp, _pp_cidade_proc_temp, _pp_nacional_proc_temp in zip(
+                                    _detalhe_proc_temp["qtd_procedimentos"],
+                                    _detalhe_proc_temp["qtd_por_prestador_cidade_linha"],
+                                    _detalhe_proc_temp["qtd_por_prestador_nacional_linha"],
+                                ):
+                                    _ref_proc_temp = (
+                                        _pp_cidade_proc_temp if pd.notna(_pp_cidade_proc_temp)
+                                        else _pp_nacional_proc_temp
+                                    )
+                                    if (
+                                        pd.isna(_ref_proc_temp) or _ref_proc_temp == 0
+                                        or pd.isna(_qp_proc_temp)
+                                    ):
+                                        _icones_proc_temp.append("")
+                                        _textos_proc_temp.append("—")
+                                        continue
+                                    _razao_proc_temp = _qp_proc_temp / _ref_proc_temp
+                                    _icones_proc_temp.append(_icone_indice_atencao_temp(_razao_proc_temp))
+                                    _textos_proc_temp.append(_texto_indice_atencao_temp(_razao_proc_temp))
+
+                                _exib_detalhe_proc_temp = pd.DataFrame({
+                                    "Procedimento": [
+                                        f"{icone}{nome}" for icone, nome in zip(
+                                            _icones_proc_temp, _detalhe_proc_temp["NOME_PROCEDIMENTO"]
+                                        )
+                                    ],
+                                    "Qtd vidas": _detalhe_proc_temp["qtd_usuarios"].map(fmt_int),
+                                    "Qtde proced": _detalhe_proc_temp["qtd_procedimentos"].map(fmt_int),
+                                    "Qtde por prestador Nacional": _detalhe_proc_temp[
+                                        "qtd_por_prestador_nacional_linha"
+                                    ].map(fmt_float2),
+                                    "Qtde por prestador - Cidade": _detalhe_proc_temp[
+                                        "qtd_por_prestador_cidade_linha"
+                                    ].map(fmt_float2),
+                                    "FASE": _detalhe_proc_temp["fase_esperado_linha"].map(fmt_float2),
+                                    "CS": _detalhe_proc_temp["cs_proc"].map(_fmt_cs_temp),
+                                    "CS da Cidade": _detalhe_proc_temp["cs_cidade_proc"].map(_fmt_cs_temp),
+                                    "Índice de Atenção (Volume)": _textos_proc_temp,
+                                })
+                                _tabela_html_temp(_exib_detalhe_proc_temp, scroll=False)
+
                 # ============================================================
                 # BENCHMARK — 30 prestadores de volume médio, em cidades/UFs/clusters
                 # diferentes (só na aba "🔎 SMILE DENTAL") — referência do que é "normal"
