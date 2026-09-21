@@ -326,6 +326,7 @@ def _risco_pontuar_faixas_temp(serie, cortes, notas):
     sempre exclusivo na faixa de cima)."""
     condicoes = [serie < cortes[0], serie < cortes[1], serie < cortes[2], serie < cortes[3]]
     return np.select(condicoes, notas[:4], default=notas[4])
+@st.cache_data(show_spinner=False)
 def _calcular_indicadores_risco_temp(agregado_universo, usuarios_universo, valor_paciente_temp):
     """
     Calcula, por prestador, os 7 indicadores (0-100 cada), o composto ponderado, o
@@ -426,39 +427,70 @@ def _calcular_indicadores_risco_temp(agregado_universo, usuarios_universo, valor
     base_temp["i5_pct"] = 0.6 * base_temp["score_cluster"].fillna(50) + 0.4 * base_temp["score_porte"]
 
     # ---------- I4 (tendência 3-6 meses — slope da regressão log(qtd) vs mês) ----------
+    # Vetorizado (sem .apply() por prestador — era o maior gargalo de performance da
+    # aba, ~60% do tempo total em bases com muitos prestadores): a inclinação da
+    # regressão linear de log(qtd) vs mês (últimos até 6 meses, mínimo 3) é calculada
+    # pela fórmula fechada de OLS — slope = Sxy/Sxx, com x/y centralizados na média do
+    # próprio prestador — usando somas por grupo em vez de chamar np.polyfit uma vez
+    # por prestador. Matematicamente idêntico a np.polyfit(x, y, 1)[0] pra um ajuste
+    # de grau 1 (conferido em verify_risco.py, caso "CRESCIMENTO_FORTE").
     mensal_temp = agregado_universo.groupby(
         ["CD_PRESTADOR", "MES"], dropna=False, observed=True
     )["qtd_procedimentos"].sum().reset_index()
-    def _slope_prestador_temp(grupo):
-        g = grupo.dropna(subset=["MES"]).sort_values("MES").tail(6)
-        if len(g) < 3:
-            return pd.Series({"i4_variacao_pct": np.nan, "i4_n_meses": len(g)})
-        x = np.arange(len(g))
-        y = np.log(g["qtd_procedimentos"].clip(lower=0).to_numpy() + 1)
-        slope = np.polyfit(x, y, 1)[0]
-        variacao_pct = (np.exp(slope * (len(g) - 1)) - 1) * 100
-        return pd.Series({"i4_variacao_pct": variacao_pct, "i4_n_meses": len(g)})
     if mensal_temp.empty:
         base_temp["i4_variacao_pct"] = np.nan
         base_temp["i4_n_meses"] = 0
     else:
-        _tendencia_temp = (
-            mensal_temp.groupby("CD_PRESTADOR").apply(_slope_prestador_temp)
-            .reset_index()
+        _m4_temp = mensal_temp.dropna(subset=["MES"]).sort_values(["CD_PRESTADOR", "MES"]).copy()
+        _g4_temp = _m4_temp.groupby("CD_PRESTADOR")
+        _m4_temp["_pos_fim_temp"] = _g4_temp.cumcount(ascending=False)  # 0 = mês mais recente
+        _m4_temp = _m4_temp[_m4_temp["_pos_fim_temp"] < 6].copy()  # só os últimos até 6 meses
+        _g4_temp = _m4_temp.groupby("CD_PRESTADOR")  # regroup após o filtro (janela de até 6 meses)
+        _m4_temp["i4_n_meses"] = _g4_temp["MES"].transform("size")
+        _m4_temp["_x_temp"] = _g4_temp.cumcount()  # 0..n-1 em ordem cronológica (mais antigo=0)
+        _m4_temp["_y_temp"] = np.log(_m4_temp["qtd_procedimentos"].clip(lower=0).to_numpy() + 1)
+        _dx_temp = _m4_temp["_x_temp"] - _g4_temp["_x_temp"].transform("mean")
+        _dy_temp = _m4_temp["_y_temp"] - _g4_temp["_y_temp"].transform("mean")
+        _m4_temp["_sxy_termo_temp"] = _dx_temp * _dy_temp
+        _m4_temp["_sxx_termo_temp"] = _dx_temp * _dx_temp
+        _somas4_temp = _m4_temp.groupby("CD_PRESTADOR", observed=True).agg(
+            i4_n_meses=("i4_n_meses", "first"),
+            _sxy_temp=("_sxy_termo_temp", "sum"),
+            _sxx_temp=("_sxx_termo_temp", "sum"),
         )
+        _slope4_temp = np.where(
+            _somas4_temp["_sxx_temp"] > 0, _somas4_temp["_sxy_temp"] / _somas4_temp["_sxx_temp"], np.nan)
+        _somas4_temp["i4_variacao_pct"] = np.where(
+            _somas4_temp["i4_n_meses"] >= 3,
+            (np.exp(_slope4_temp * (_somas4_temp["i4_n_meses"] - 1)) - 1) * 100,
+            np.nan,
+        )
+        _tendencia_temp = _somas4_temp[["i4_variacao_pct", "i4_n_meses"]].reset_index()
         base_temp = base_temp.merge(_tendencia_temp, on="CD_PRESTADOR", how="left")
+        base_temp["i4_n_meses"] = base_temp["i4_n_meses"].fillna(0).astype(int)
 
     # ---------- I7 (dependência de pacientes — top 10% do valor, ou top 1-2 se <10 vidas) ----------
-    def _i7_prestador_temp(grupo):
-        vals = grupo["VL_PAGO"].sort_values(ascending=False)
-        total = vals.sum()
-        if total <= 0:
-            return np.nan
-        n = len(vals)
-        k = min(2, n) if n < 10 else max(1, int(np.ceil(n * 0.10)))
-        return vals.iloc[:k].sum() / total * 100
+    # Vetorizado (sem .apply() por prestador — era o principal gargalo de performance
+    # da aba em bases com muitos prestadores/pacientes): mesma regra (k = 2 se <10
+    # pacientes, senão 10% arredondado pra cima, mínimo 1), calculada via rank/cumcount
+    # em vez de um laço Python por grupo.
     if valor_paciente_temp is not None and not valor_paciente_temp.empty:
-        _i7_series_temp = valor_paciente_temp.groupby("CD_PRESTADOR").apply(_i7_prestador_temp)
+        _vp_temp = valor_paciente_temp.sort_values(
+            ["CD_PRESTADOR", "VL_PAGO"], ascending=[True, False]
+        ).copy()
+        _vp_temp["rank_valor"] = _vp_temp.groupby("CD_PRESTADOR").cumcount() + 1
+        _vp_temp["n_pacientes"] = _vp_temp.groupby("CD_PRESTADOR")["VL_PAGO"].transform("size")
+        _vp_temp["k_corte"] = np.where(
+            _vp_temp["n_pacientes"] < 10,
+            np.minimum(2, _vp_temp["n_pacientes"]),
+            np.ceil(_vp_temp["n_pacientes"] * 0.10).clip(lower=1),
+        )
+        _soma_topk_temp = (
+            _vp_temp[_vp_temp["rank_valor"] <= _vp_temp["k_corte"]]
+            .groupby("CD_PRESTADOR")["VL_PAGO"].sum()
+        )
+        _soma_total_temp = _vp_temp.groupby("CD_PRESTADOR")["VL_PAGO"].sum()
+        _i7_series_temp = (_soma_topk_temp / _soma_total_temp * 100).where(_soma_total_temp > 0)
         _i7_series_temp.name = "i7_pct"
         base_temp = base_temp.merge(_i7_series_temp, left_on="CD_PRESTADOR", right_index=True, how="left")
     else:
@@ -504,16 +536,24 @@ def _calcular_indicadores_risco_temp(agregado_universo, usuarios_universo, valor
     )
 
     # ---------- classificação final ----------
-    def _classificar_temp(row):
-        if row["abaixo_do_piso"]:
-            return pd.Series({"classificacao": "Sem alerta", "cor_classificacao": "#9aa5b1", "ordem_classificacao": 0})
-        for piso, rotulo, cor, ordem in _RISCO_FAIXAS_TEMP:
-            if row["composto"] >= piso:
-                if (row["gate_g1"] or row["gate_g2"]) and ordem < 3:
-                    rotulo, cor, ordem = "Alerta moderado alto", "#e67e22", 3
-                return pd.Series({"classificacao": rotulo, "cor_classificacao": cor, "ordem_classificacao": ordem})
-        return pd.Series({"classificacao": "Sem alerta", "cor_classificacao": "#9aa5b1", "ordem_classificacao": 0})
-    base_temp = pd.concat([base_temp, base_temp.apply(_classificar_temp, axis=1)], axis=1)
+    # Vetorizado (sem .apply(axis=1) linha a linha — outro gargalo de performance em
+    # bases com muitos prestadores): mesma regra em 3 passos — (1) ordem "natural" pelo
+    # composto, na ordem decrescente de _RISCO_FAIXAS_TEMP; (2) gates G1/G2 elevam pro
+    # piso "Alerta moderado alto" (ordem 3) quando a ordem natural for menor; (3) piso
+    # de materialidade (abaixo_do_piso) vence tudo e força "Sem alerta".
+    _rotulo_por_ordem_temp = {ordem: rotulo for _, rotulo, _, ordem in _RISCO_FAIXAS_TEMP}
+    _cor_por_ordem_temp = {ordem: cor for _, _, cor, ordem in _RISCO_FAIXAS_TEMP}
+    _ordem_natural_temp = np.select(
+        [base_temp["composto"] >= piso for piso, _, _, _ in _RISCO_FAIXAS_TEMP[:-1]],
+        [ordem for _, _, _, ordem in _RISCO_FAIXAS_TEMP[:-1]],
+        default=_RISCO_FAIXAS_TEMP[-1][3],
+    )
+    _gate_ativo_temp = (base_temp["gate_g1"] | base_temp["gate_g2"]) & (_ordem_natural_temp < 3)
+    _ordem_final_temp = np.where(_gate_ativo_temp, 3, _ordem_natural_temp)
+    _ordem_final_temp = np.where(base_temp["abaixo_do_piso"], 0, _ordem_final_temp)
+    base_temp["ordem_classificacao"] = _ordem_final_temp
+    base_temp["classificacao"] = pd.Series(_ordem_final_temp, index=base_temp.index).map(_rotulo_por_ordem_temp)
+    base_temp["cor_classificacao"] = pd.Series(_ordem_final_temp, index=base_temp.index).map(_cor_por_ordem_temp)
     base_temp["classificacao_emoji"] = (
         base_temp["classificacao"].map(_RISCO_EMOJI_FAIXA_TEMP) + " " + base_temp["classificacao"]
     )
