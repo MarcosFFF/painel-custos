@@ -124,6 +124,35 @@ div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="slider"] div {
 }
 </style>
 """, unsafe_allow_html=True)
+# ---------- monitor de memória (RAM) ----------
+# Ajuda a diagnosticar o app "parando de rodar" no Streamlit Community Cloud, que
+# costuma ser estouro do limite de memória do plano (~1 GB por app, valor
+# aproximado — o oficial varia entre ~690 MB e 2,7 GB conforme a carga geral da
+# plataforma). Atualiza a cada interação (o Streamlit reexecuta o script inteiro
+# a cada rerun, então o valor mostrado é sempre o consumo "agora"). psutil é
+# opcional: se ainda não estiver no requirements.txt do servidor, o try/except
+# evita que o painel inteiro quebre por causa só desse indicador — ele
+# simplesmente não aparece até o requirements.txt ser atualizado e o app
+# reiniciado.
+try:
+    import psutil
+    _mem_mb_temp = psutil.Process().memory_info().rss / (1024 ** 2)
+    _limite_mb_temp = 1024.0  # ~1 GB — limite aproximado do plano gratuito
+    _pct_mem_temp = min(_mem_mb_temp / _limite_mb_temp, 1.0)
+    if _pct_mem_temp >= 0.9:
+        _icone_mem_temp = "🔴"
+    elif _pct_mem_temp >= 0.7:
+        _icone_mem_temp = "🟡"
+    else:
+        _icone_mem_temp = "🟢"
+    st.sidebar.caption(
+        f"{_icone_mem_temp} Memória em uso: **"
+        f"{_mem_mb_temp:,.0f}".replace(",", ".") + " MB** de ~1.024 MB "
+        "(limite aproximado do plano gratuito do Streamlit Cloud)"
+    )
+    st.sidebar.progress(_pct_mem_temp)
+except Exception:
+    pass
 MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho",
          "Agosto","Setembro","Outubro","Novembro","Dezembro"]
 MESES_ABREV = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"]
@@ -2322,6 +2351,36 @@ elif st.session_state.pagina == "severidade":
                         return "⚠️ "
                     return ""
 
+                # ---- bandeirinha (vermelha/amarela/verde) da coluna "Procedimento" no
+                # detalhamento por prestador (tela e PDF) — mesmos limiares acima, só que
+                # aqui todo procedimento ganha uma bandeirinha (inclusive o normal, em
+                # verde), em vez de só os que chamam atenção. Cores compartilhadas com o
+                # resto do painel (vermelho/amarelo já usados no "Alerta de volume";
+                # #2ecc71 é o mesmo verde já usado no gráfico de dispersão CS × volume). ----
+                _CORES_NIVEL_PROC_TEMP = {"alto": "#e74c3c", "medio": "#f1c40f", "normal": "#2ecc71"}
+
+                def _nivel_atencao_proc_temp(razao):
+                    if razao >= LIMIAR_ATENCAO_ALTO_TEMP:
+                        return "alto"
+                    if razao >= LIMIAR_ATENCAO_MEDIO_TEMP:
+                        return "medio"
+                    return "normal"
+
+                def _svg_bandeira_temp(nivel):
+                    # Usado só na tela (HTML) — o PDF desenha o equivalente com
+                    # reportlab.graphics.shapes (_bandeira_pdf_temp, definida junto do
+                    # botão "Gerar PDF", onde as libs de PDF já são importadas).
+                    cor = _CORES_NIVEL_PROC_TEMP.get(nivel)
+                    if cor is None:
+                        return ""
+                    return (
+                        '<svg width="13" height="13" viewBox="0 0 12 12" '
+                        'style="vertical-align:middle;" aria-hidden="true">'
+                        '<line x1="2" y1="1" x2="2" y2="11" stroke="#888888" stroke-width="1"/>'
+                        f'<polygon points="2,1 10,3.5 2,6" fill="{cor}"/>'
+                        '</svg>'
+                    )
+
                 _indices_atencao_temp = []
                 _rotulos_atencao_temp = []
                 _icones_atencao_temp = []
@@ -2520,6 +2579,18 @@ elif st.session_state.pagina == "severidade":
                         text-align: left !important;
                         max-width: 260px; overflow: hidden; text-overflow: ellipsis;
                     }
+                    /* Coluna de bandeirinha (detalhamento por procedimento): bem estreita,
+                    sem o "trunca com ..." acima — quem trunca é .grade-cs-temp-truncar,
+                    aplicada explicitamente na coluna "Procedimento" quando ela deixa de
+                    ser a 1ª coluna (a bandeirinha passa a ser). */
+                    .grade-cs-temp td.grade-cs-temp-icone {
+                        width: 20px; max-width: 20px; text-align: center !important;
+                    }
+                    .grade-cs-temp th.grade-cs-temp-icone { width: 20px; max-width: 20px; }
+                    .grade-cs-temp td.grade-cs-temp-truncar, .grade-cs-temp th.grade-cs-temp-truncar {
+                        text-align: left !important;
+                        max-width: 260px; overflow: hidden; text-overflow: ellipsis;
+                    }
                     /* Cabeçalho congelado: fica parado no topo ao rolar a grade (só tem
                     efeito visível na variante com scroll vertical — grade-cs-temp-wrap-scroll,
                     max-height: 165px — nas grades sem scroll vertical o "sticky" não muda
@@ -2539,16 +2610,33 @@ elif st.session_state.pagina == "severidade":
                     unsafe_allow_html=True,
                 )
 
-                def _tabela_html_temp(df_exibicao, scroll=False):
-                    cabecalho = "".join(f"<th>{html.escape(str(c))}</th>" for c in df_exibicao.columns)
+                def _tabela_html_temp(df_exibicao, scroll=False, col_icone=None):
+                    # col_icone: nome da coluna (se houver) cujo valor já é HTML pronto (um
+                    # <svg> de bandeirinha) — não escapa e não trunca essa célula; nesse
+                    # caso quem ganha o tratamento de "1ª coluna" (trunca + title=) é a
+                    # coluna seguinte (ex.: "Procedimento"), via classe explícita, já que a
+                    # bandeirinha passa a ocupar o índice 0.
+                    _idx_icone_temp = (
+                        list(df_exibicao.columns).index(col_icone) if col_icone in df_exibicao.columns else None
+                    )
+                    _idx_truncar_temp = 0 if _idx_icone_temp is None else (0 if _idx_icone_temp != 0 else 1)
+                    cabecalho = "".join(
+                        f'<th class="grade-cs-temp-icone"></th>' if i == _idx_icone_temp
+                        else f"<th>{html.escape(str(c))}</th>"
+                        for i, c in enumerate(df_exibicao.columns)
+                    )
                     def _linha_html(linha):
                         celulas = []
                         for i, v in enumerate(linha):
+                            if i == _idx_icone_temp:
+                                celulas.append(f'<td class="grade-cs-temp-icone">{v}</td>')
+                                continue
                             texto = html.escape(str(v))
-                            # 1ª coluna trunca com "..." (max-width no CSS) — title= mostra o
-                            # texto inteiro ao passar o mouse, já que a célula corta visualmente.
-                            titulo_attr = f' title="{texto}"' if i == 0 else ""
-                            celulas.append(f"<td{titulo_attr}>{texto}</td>")
+                            # coluna truncada (nome longo) ganha "..." + title= com o texto
+                            # inteiro ao passar o mouse, já que a célula corta visualmente.
+                            classe_attr = ' class="grade-cs-temp-truncar"' if i == _idx_truncar_temp else ""
+                            titulo_attr = f' title="{texto}"' if i == _idx_truncar_temp else ""
+                            celulas.append(f"<td{classe_attr}{titulo_attr}>{texto}</td>")
                         return "<tr>" + "".join(celulas) + "</tr>"
                     linhas = "".join(_linha_html(linha) for linha in df_exibicao.itertuples(index=False, name=None))
                     classe_wrap = "grade-cs-temp-wrap-scroll" if scroll else "grade-cs-temp-wrap"
@@ -2621,10 +2709,13 @@ elif st.session_state.pagina == "severidade":
                                 _detalhe_proc_temp["fase_esperado_cidade_linha"],
                             )
                         ]
-                        # mesma regra do Índice de Atenção (Volume) da grade principal: ícone
-                        # junto do nome (aqui, do Procedimento), texto puro ("×X,X a média")
-                        # na coluna do índice.
-                        _icones_proc_temp = []
+                        # Mesmo critério de volume do Índice de Atenção (Volume) da grade
+                        # principal, mas exibido como bandeirinha (coluna própria, à parte do
+                        # nome) em vez de ícone colado no texto — o nome do Procedimento fica
+                        # sempre em preto, só a bandeirinha muda de cor (vermelha/amarela/
+                        # verde). "normal" (abaixo do limiar) agora também ganha bandeirinha
+                        # (verde), em vez de ficar sem nenhuma — a pedido do usuário.
+                        _niveis_proc_temp = []
                         _textos_proc_temp = []
                         for _qp_proc_temp, _pp_cidade_proc_temp, _pp_nacional_proc_temp in zip(
                             _detalhe_proc_temp["qtd_procedimentos"],
@@ -2639,19 +2730,16 @@ elif st.session_state.pagina == "severidade":
                                 pd.isna(_ref_proc_temp) or _ref_proc_temp == 0
                                 or pd.isna(_qp_proc_temp)
                             ):
-                                _icones_proc_temp.append("")
+                                _niveis_proc_temp.append(None)  # sem referência -> sem bandeirinha
                                 _textos_proc_temp.append("—")
                                 continue
                             _razao_proc_temp = _qp_proc_temp / _ref_proc_temp
-                            _icones_proc_temp.append(_icone_indice_atencao_temp(_razao_proc_temp))
+                            _niveis_proc_temp.append(_nivel_atencao_proc_temp(_razao_proc_temp))
                             _textos_proc_temp.append(_texto_indice_atencao_temp(_razao_proc_temp))
 
                         return pd.DataFrame({
-                            "Procedimento": [
-                                f"{icone}{nome}" for icone, nome in zip(
-                                    _icones_proc_temp, _detalhe_proc_temp["NOME_PROCEDIMENTO"]
-                                )
-                            ],
+                            "": _niveis_proc_temp,
+                            "Procedimento": list(_detalhe_proc_temp["NOME_PROCEDIMENTO"]),
                             "Qtd vidas": _detalhe_proc_temp["qtd_usuarios"].map(fmt_int),
                             "Qtde proced": _detalhe_proc_temp["qtd_procedimentos"].map(fmt_int),
                             "Qtde por prestador Nacional": _detalhe_proc_temp[
@@ -2707,6 +2795,7 @@ elif st.session_state.pagina == "severidade":
                                     Image as RLImage,
                                 )
                                 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                                from reportlab.graphics.shapes import Drawing, Line, Polygon
                             except ImportError as _erro_libs_pdf_temp:
                                 st.error(
                                     "Pra gerar o PDF faltam bibliotecas no ambiente (`reportlab` "
@@ -2722,7 +2811,29 @@ elif st.session_state.pagina == "severidade":
                             _COR_TEXTO_PDF_TEMP = rl_colors.HexColor("#1f2d3a")
                             _COR_ZEBRA_PDF_TEMP = rl_colors.HexColor("#f6f8fa")
                             _COR_BORDA_PDF_TEMP = rl_colors.HexColor("#d8dee3")
+                            _COR_NORMAL_PDF_TEMP = rl_colors.HexColor("#2ecc71")  # mesmo verde do gráfico de dispersão
                             _LARGURA_UTIL_PDF_TEMP = 182 * mm  # A4 (210mm) - 14mm de margem de cada lado
+
+                            # ---- bandeirinha (vermelha/amarela/verde) da coluna "Procedimento" no
+                            # detalhamento por prestador — reportlab não desenha emoji com a fonte
+                            # padrão, então a bandeirinha é desenhada como forma vetorial (mastro +
+                            # triângulo), mesma cor/critério da versão em HTML (_svg_bandeira_temp,
+                            # lá na grade em tela). O nome do procedimento ao lado fica sempre em
+                            # preto — só a bandeirinha muda de cor.
+                            _CORES_NIVEL_PDF_TEMP = {
+                                "alto": _COR_ALERTA_PDF_TEMP,
+                                "medio": _COR_ATENCAO_PDF_TEMP,
+                                "normal": _COR_NORMAL_PDF_TEMP,
+                            }
+
+                            def _bandeira_pdf_temp(nivel):
+                                cor = _CORES_NIVEL_PDF_TEMP.get(nivel)
+                                if cor is None:
+                                    return ""
+                                _d_temp = Drawing(10, 10)
+                                _d_temp.add(Line(2, 1, 2, 9, strokeColor=rl_colors.HexColor("#888888"), strokeWidth=0.8))
+                                _d_temp.add(Polygon(points=[2, 9, 9, 6.5, 2, 4], fillColor=cor, strokeColor=None))
+                                return _d_temp
 
                             def _grafico_dispersao_pdf_temp(rank_df):
                                 dados = rank_df[
@@ -3075,19 +3186,35 @@ elif st.session_state.pagina == "severidade":
                                     "Nenhum prestador em alerta forte nesta seleção.", estilo_corpo
                                 ))
                             else:
-                                # Legenda da coluna "Procedimento" das tabelas abaixo: a cor do
-                                # texto sinaliza o mesmo critério de volume do 🚩/⚠️ usado no
-                                # resto do painel — como o PDF não consegue desenhar esses
-                                # emojis (fonte padrão do reportlab não tem esse glyph), cada
-                                # linha ganha uma bolinha (•) colorida como ícone, explicada aqui.
+                                # Legenda da bandeirinha que acompanha cada procedimento nas
+                                # tabelas abaixo (coluna própria, à esquerda de "Procedimento",
+                                # que continua sempre em preto) — mesmo critério de volume do
+                                # 🚩/⚠️ usado no resto do painel, com "normal" ganhando bandeira
+                                # verde em vez de nenhuma marcação.
                                 story.append(Paragraph(
-                                    'Como ler a coluna <b>"Procedimento"</b> abaixo: '
-                                    '<font color="#e74c3c">•</font> vermelho = volume desse '
-                                    'procedimento ≥ 5× a média por prestador (mesmo critério do '
-                                    'alerta forte) · <font color="#c98a00">•</font> laranja = '
-                                    'volume ≥ 2× a média · sem marcação = dentro do normal.',
-                                    estilo_legenda,
+                                    "Bandeirinha ao lado de cada procedimento:", estilo_legenda
                                 ))
+                                _tabela_legenda_proc_temp = Table(
+                                    [
+                                        [_bandeira_pdf_temp("alto"), Paragraph(
+                                            "Volume desse procedimento ≥ 5× a média por prestador "
+                                            "(mesmo critério do alerta forte)", estilo_legenda
+                                        )],
+                                        [_bandeira_pdf_temp("medio"), Paragraph(
+                                            "Volume ≥ 2× a média por prestador", estilo_legenda
+                                        )],
+                                        [_bandeira_pdf_temp("normal"), Paragraph(
+                                            "Dentro do normal", estilo_legenda
+                                        )],
+                                    ],
+                                    colWidths=[6 * mm, 176 * mm], rowHeights=[5.5 * mm] * 3,
+                                )
+                                _tabela_legenda_proc_temp.setStyle(TableStyle([
+                                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                    ("ALIGN", (0, 0), (0, -1), "CENTER"),
+                                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                                ]))
+                                story.append(_tabela_legenda_proc_temp)
                                 story.append(Spacer(1, 4))
                             for _linha_pdf_temp in _rank_alerta_forte_pdf_temp.itertuples():
                                 _rotulo_bruto_temp = _linha_pdf_temp.rotulo
@@ -3128,39 +3255,23 @@ elif st.session_state.pagina == "severidade":
                                         Paragraph("Sem procedimentos pra detalhar.", estilo_corpo)
                                     )
                                 else:
+                                    # 1ª coluna ("") é a bandeirinha (forma vetorial, sem texto/
+                                    # cabeçalho) — "Procedimento" vem logo em seguida, sempre em
+                                    # preto (estilo_corpo padrão), sem cor nem negrito condicional.
                                     _cabecalho_tabela_temp = [
+                                        Paragraph("", estilo_corpo) if c == "" else
                                         Paragraph(f"<b>{html.escape(str(c))}</b>", estilo_corpo)
                                         for c in _detalhe_pdf_temp.columns
                                     ]
-                                    # A 1ª coluna (Procedimento) vem com 🚩/⚠️ na tela — a
-                                    # fonte padrão do PDF não tem esses glyphs (viravam um
-                                    # quadradinho preto sem sentido); troca por uma bolinha (•)
-                                    # colorida + cor no próprio texto (vermelho/laranja), com a
-                                    # legenda explicando o que cada cor significa logo acima desta
-                                    # tabela (ver bloco "Como ler a coluna" mais acima).
-                                    def _celula_procedimento_pdf_temp(valor):
-                                        texto = str(valor)
-                                        if texto.startswith("🚩"):
-                                            cor_temp = "#e74c3c"
-                                        elif texto.startswith("⚠️"):
-                                            cor_temp = "#c98a00"
-                                        else:
-                                            return Paragraph(html.escape(texto), estilo_corpo)
-                                        texto_limpo = texto.replace("🚩", "").replace("⚠️", "").strip()
-                                        return Paragraph(
-                                            f'<font color="{cor_temp}"><b>• {html.escape(texto_limpo)}</b></font>',
-                                            estilo_corpo,
-                                        )
-
                                     _linhas_tabela_temp = [
                                         [
-                                            _celula_procedimento_pdf_temp(v) if i == 0
+                                            _bandeira_pdf_temp(v) if i == 0
                                             else Paragraph(html.escape(str(v)), estilo_corpo)
                                             for i, v in enumerate(linha)
                                         ]
                                         for linha in _detalhe_pdf_temp.itertuples(index=False, name=None)
                                     ]
-                                    _pesos_col_temp = [40] + [10] * (len(_detalhe_pdf_temp.columns) - 1)
+                                    _pesos_col_temp = [3, 37] + [10] * (len(_detalhe_pdf_temp.columns) - 2)
                                     _soma_pesos_temp = sum(_pesos_col_temp)
                                     _larguras_proc_temp = [
                                         _LARGURA_UTIL_PDF_TEMP * (w / _soma_pesos_temp) for w in _pesos_col_temp
@@ -3177,6 +3288,12 @@ elif st.session_state.pagina == "severidade":
                                         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
                                         ("TOPPADDING", (0, 0), (-1, -1), 3),
                                         ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                                        # coluna da bandeirinha: centralizada e sem padding lateral
+                                        # sobrando (é só a forma, bem estreita)
+                                        ("ALIGN", (0, 0), (0, -1), "CENTER"),
+                                        ("VALIGN", (0, 0), (0, -1), "MIDDLE"),
+                                        ("LEFTPADDING", (0, 0), (0, -1), 1),
+                                        ("RIGHTPADDING", (0, 0), (0, -1), 1),
                                     ]
                                     for _i_zebra_temp in range(1, len(_linhas_tabela_temp) + 1, 2):
                                         _estilo_tabela_proc_temp.append((
@@ -3491,7 +3608,20 @@ elif st.session_state.pagina == "severidade":
                                     if _exib_detalhe_proc_temp is None:
                                         st.caption("Sem procedimentos pra detalhar.")
                                     else:
-                                        _tabela_html_temp(_exib_detalhe_proc_temp, scroll=False)
+                                        st.caption(
+                                            "Bandeirinha do procedimento: "
+                                            + _svg_bandeira_temp("alto") + " vermelha = volume ≥ 5× a média · "
+                                            + _svg_bandeira_temp("medio") + " amarela = volume ≥ 2× a média · "
+                                            + _svg_bandeira_temp("normal") + " verde = dentro do normal",
+                                            unsafe_allow_html=True,
+                                        )
+                                        _exib_detalhe_proc_render_temp = _exib_detalhe_proc_temp.copy()
+                                        _exib_detalhe_proc_render_temp[""] = (
+                                            _exib_detalhe_proc_render_temp[""].map(_svg_bandeira_temp)
+                                        )
+                                        _tabela_html_temp(
+                                            _exib_detalhe_proc_render_temp, scroll=False, col_icone=""
+                                        )
 
                 # ---- prestadores do procedimento selecionado, com FASE/QP/CS por prestador ----
                 # Só aparece quando um procedimento específico está selecionado no filtro acima (com
