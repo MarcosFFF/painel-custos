@@ -4360,39 +4360,74 @@ elif st.session_state.pagina == "severidade":
             "cluster, mínimo R$ 5.000) ficam fora do ranqueamento (\"Sem alerta\")."
         )
 
-        _risco_universo_temp = aplicar_filtros(
-            agregado, meses=f_mes or None, planos=f_plano or None, especialidades=f_especialidade or None,
+        # ---------- cálculo atrás de um botão (pedido do usuário em 21/09) ----------
+        # `st.tabs()` roda o corpo de TODAS as abas a cada rerun do script (qualquer
+        # clique em QUALQUER lugar do app, mesmo em outra aba) — antes, esse bloco
+        # calculava (ou pelo menos consultava o cache, o que já envolve "pesar" as
+        # tabelas filtradas) toda vez, deixando o app inteiro mais pesado, não só esta
+        # aba. Agora só calcula quando o botão é clicado; o resultado fica guardado em
+        # st.session_state e é reaproveitado sem custo nenhum em qualquer outro rerun
+        # — só recalcula de novo se Mês/Plano/Especialidade da página mudarem (daí é
+        # preciso clicar de novo). Os filtros PRÓPRIOS da aba (UF/Cidade/Cluster/
+        # Prestador, mais abaixo) não entram nessa assinatura — eles só recortam a
+        # EXIBIÇÃO do que já foi calculado, sem precisar reclicar.
+        _risco_assinatura_atual_temp = (
+            tuple(sorted(f_mes)), tuple(sorted(f_plano)), tuple(sorted(f_especialidade)),
         )
-        _risco_usuarios_universo_temp = aplicar_filtros(
-            base_usuarios, meses=f_mes or None, planos=f_plano or None, especialidades=f_especialidade or None,
+        _risco_filtros_mudaram_temp = (
+            "risco_resultado_temp" in st.session_state
+            and st.session_state.get("risco_assinatura_temp") != _risco_assinatura_atual_temp
         )
-        # A leitura bruta dos CSVs (cara, cacheada) não depende do filtro de Mês — só
-        # traz tudo mês a mês. O filtro por f_mes e a re-soma pra (CD_PRESTADOR,
-        # CD_USUARIO) acontecem aqui embaixo, em memória (barato), então trocar o
-        # filtro de Mês não relê CSV nenhum.
-        _risco_valor_paciente_bruto_temp = _risco_valor_por_paciente_temp(".")
-        if f_mes and not _risco_valor_paciente_bruto_temp.empty:
-            _risco_valor_paciente_bruto_temp = _risco_valor_paciente_bruto_temp[
-                _risco_valor_paciente_bruto_temp["MES"].isin(f_mes)
-            ]
-        if _risco_valor_paciente_bruto_temp.empty:
-            _risco_valor_paciente_carregado_temp = _risco_valor_paciente_bruto_temp
-        else:
-            _risco_valor_paciente_carregado_temp = (
-                _risco_valor_paciente_bruto_temp
-                .groupby(["CD_PRESTADOR", "CD_USUARIO"], dropna=False, observed=True)["VL_PAGO"]
-                .sum().reset_index()
+        if _risco_filtros_mudaram_temp:
+            st.info(
+                "Os filtros de Mês/Plano/Especialidade da página mudaram desde o último "
+                "cálculo — clique no botão abaixo pra atualizar (o resultado anterior "
+                "continua sendo mostrado até lá)."
             )
-
-        if _risco_universo_temp.empty:
-            st.info("Nenhum dado para calcular o Índice de Risco com os filtros atuais.")
-        else:
-            with st.spinner("Calculando os indicadores..."):
-                _risco_tabela_completa_temp = _calcular_indicadores_risco_temp(
-                    _risco_universo_temp, _risco_usuarios_universo_temp,
-                    _risco_valor_paciente_carregado_temp,
+        if st.button(
+            "🔄 Recalcular Índice de Risco" if _risco_filtros_mudaram_temp
+            else "🔄 Calcular Índice de Risco",
+            key="risco_botao_calcular_temp",
+        ):
+            _risco_universo_temp = aplicar_filtros(
+                agregado, meses=f_mes or None, planos=f_plano or None, especialidades=f_especialidade or None,
+            )
+            _risco_usuarios_universo_temp = aplicar_filtros(
+                base_usuarios, meses=f_mes or None, planos=f_plano or None, especialidades=f_especialidade or None,
+            )
+            # A leitura bruta dos CSVs (cara, cacheada) não depende do filtro de Mês —
+            # só traz tudo mês a mês. O filtro por f_mes e a re-soma pra (CD_PRESTADOR,
+            # CD_USUARIO) acontecem aqui embaixo, em memória (barato).
+            _risco_valor_paciente_bruto_temp = _risco_valor_por_paciente_temp(".")
+            if f_mes and not _risco_valor_paciente_bruto_temp.empty:
+                _risco_valor_paciente_bruto_temp = _risco_valor_paciente_bruto_temp[
+                    _risco_valor_paciente_bruto_temp["MES"].isin(f_mes)
+                ]
+            if _risco_valor_paciente_bruto_temp.empty:
+                _risco_valor_paciente_carregado_temp = _risco_valor_paciente_bruto_temp
+            else:
+                _risco_valor_paciente_carregado_temp = (
+                    _risco_valor_paciente_bruto_temp
+                    .groupby(["CD_PRESTADOR", "CD_USUARIO"], dropna=False, observed=True)["VL_PAGO"]
+                    .sum().reset_index()
                 )
+            if _risco_universo_temp.empty:
+                st.session_state["risco_resultado_temp"] = pd.DataFrame()
+            else:
+                with st.spinner("Calculando os indicadores..."):
+                    st.session_state["risco_resultado_temp"] = _calcular_indicadores_risco_temp(
+                        _risco_universo_temp, _risco_usuarios_universo_temp,
+                        _risco_valor_paciente_carregado_temp,
+                    )
+            st.session_state["risco_assinatura_temp"] = _risco_assinatura_atual_temp
+            # Sem st.rerun() aqui: o script já continua normalmente pra baixo (é a
+            # mesma rodada do clique), então o resultado aparece na hora — um rerun
+            # extra só custaria tempo à toa.
 
+        if "risco_resultado_temp" not in st.session_state:
+            st.info("Clique em \"🔄 Calcular Índice de Risco\" acima pra gerar a análise.")
+        else:
+            _risco_tabela_completa_temp = st.session_state["risco_resultado_temp"]
             if _risco_tabela_completa_temp.empty:
                 st.info("Nenhum prestador para calcular o Índice de Risco com os filtros atuais.")
             else:
