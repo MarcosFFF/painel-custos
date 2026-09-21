@@ -369,20 +369,21 @@ def _calcular_indicadores_risco_temp(agregado_universo, usuarios_universo, valor
     base_temp["qtd_usuarios"] = base_temp["qtd_usuarios"].fillna(0)
 
     # ---------- I1 (concentração top-1) + I6 (top-3 / diversificação) ----------
+    # I6 DESATIVADO TEMPORARIAMENTE (teste de performance, pedido do usuário em
+    # 21/09) — só o I1 (top-1) continua calculado normalmente aqui. Pra reativar o
+    # I6, troque o `if False:` logo abaixo por `if True:`.
     por_proc_temp = agregado_universo.groupby(
         ["CD_PRESTADOR", "CD_PROCEDIMENTO"], dropna=False, observed=True
     ).agg(valor=("soma_valor", "sum"), uso=("soma_uso", "sum")).reset_index()
     pv_temp = por_proc_temp.sort_values(["CD_PRESTADOR", "valor"], ascending=[True, False]).copy()
     pv_temp["rank_valor"] = pv_temp.groupby("CD_PRESTADOR").cumcount() + 1
     top1_valor_temp = pv_temp[pv_temp["rank_valor"] == 1].set_index("CD_PRESTADOR")["valor"]
-    top3_valor_temp = pv_temp[pv_temp["rank_valor"] <= 3].groupby("CD_PRESTADOR")["valor"].sum()
     pu_temp = por_proc_temp.sort_values(["CD_PRESTADOR", "uso"], ascending=[True, False]).copy()
     pu_temp["rank_uso"] = pu_temp.groupby("CD_PRESTADOR").cumcount() + 1
     top1_uso_temp = pu_temp[pu_temp["rank_uso"] == 1].set_index("CD_PRESTADOR")["uso"]
 
     base_temp = base_temp.set_index("CD_PRESTADOR")
     base_temp["valor_top1"] = top1_valor_temp
-    base_temp["valor_top3"] = top3_valor_temp
     base_temp["uso_top1"] = top1_uso_temp
     base_temp = base_temp.reset_index()
 
@@ -391,8 +392,14 @@ def _calcular_indicadores_risco_temp(agregado_universo, usuarios_universo, valor
     base_temp["top1_uso_pct"] = np.where(
         base_temp["soma_uso"] > 0, base_temp["uso_top1"] / base_temp["soma_uso"] * 100, np.nan)
     base_temp["i1_pct"] = base_temp[["top1_valor_pct", "top1_uso_pct"]].max(axis=1)
-    base_temp["i6_pct"] = np.where(
-        base_temp["soma_valor"] > 0, base_temp["valor_top3"] / base_temp["soma_valor"] * 100, np.nan)
+    base_temp["i6_pct"] = np.nan  # I6 desativado (ver comentário acima)
+    if False:  # bloco original do I6 — trocar pra `if True:` pra reativar
+        top3_valor_temp = pv_temp[pv_temp["rank_valor"] <= 3].groupby("CD_PRESTADOR")["valor"].sum()
+        base_temp = base_temp.set_index("CD_PRESTADOR")
+        base_temp["valor_top3"] = top3_valor_temp
+        base_temp = base_temp.reset_index()
+        base_temp["i6_pct"] = np.where(
+            base_temp["soma_valor"] > 0, base_temp["valor_top3"] / base_temp["soma_valor"] * 100, np.nan)
 
     # ---------- I2 (severidade: uso por vida vs mediana do cluster) ----------
     base_temp["uso_por_vida"] = np.where(
@@ -427,74 +434,78 @@ def _calcular_indicadores_risco_temp(agregado_universo, usuarios_universo, valor
     base_temp["i5_pct"] = 0.6 * base_temp["score_cluster"].fillna(50) + 0.4 * base_temp["score_porte"]
 
     # ---------- I4 (tendência 3-6 meses — slope da regressão log(qtd) vs mês) ----------
-    # Vetorizado (sem .apply() por prestador — era o maior gargalo de performance da
-    # aba, ~60% do tempo total em bases com muitos prestadores): a inclinação da
-    # regressão linear de log(qtd) vs mês (últimos até 6 meses, mínimo 3) é calculada
-    # pela fórmula fechada de OLS — slope = Sxy/Sxx, com x/y centralizados na média do
-    # próprio prestador — usando somas por grupo em vez de chamar np.polyfit uma vez
-    # por prestador. Matematicamente idêntico a np.polyfit(x, y, 1)[0] pra um ajuste
-    # de grau 1 (conferido em verify_risco.py, caso "CRESCIMENTO_FORTE").
-    mensal_temp = agregado_universo.groupby(
-        ["CD_PRESTADOR", "MES"], dropna=False, observed=True
-    )["qtd_procedimentos"].sum().reset_index()
-    if mensal_temp.empty:
-        base_temp["i4_variacao_pct"] = np.nan
-        base_temp["i4_n_meses"] = 0
-    else:
-        _m4_temp = mensal_temp.dropna(subset=["MES"]).sort_values(["CD_PRESTADOR", "MES"]).copy()
-        _g4_temp = _m4_temp.groupby("CD_PRESTADOR")
-        _m4_temp["_pos_fim_temp"] = _g4_temp.cumcount(ascending=False)  # 0 = mês mais recente
-        _m4_temp = _m4_temp[_m4_temp["_pos_fim_temp"] < 6].copy()  # só os últimos até 6 meses
-        _g4_temp = _m4_temp.groupby("CD_PRESTADOR")  # regroup após o filtro (janela de até 6 meses)
-        _m4_temp["i4_n_meses"] = _g4_temp["MES"].transform("size")
-        _m4_temp["_x_temp"] = _g4_temp.cumcount()  # 0..n-1 em ordem cronológica (mais antigo=0)
-        _m4_temp["_y_temp"] = np.log(_m4_temp["qtd_procedimentos"].clip(lower=0).to_numpy() + 1)
-        _dx_temp = _m4_temp["_x_temp"] - _g4_temp["_x_temp"].transform("mean")
-        _dy_temp = _m4_temp["_y_temp"] - _g4_temp["_y_temp"].transform("mean")
-        _m4_temp["_sxy_termo_temp"] = _dx_temp * _dy_temp
-        _m4_temp["_sxx_termo_temp"] = _dx_temp * _dx_temp
-        _somas4_temp = _m4_temp.groupby("CD_PRESTADOR", observed=True).agg(
-            i4_n_meses=("i4_n_meses", "first"),
-            _sxy_temp=("_sxy_termo_temp", "sum"),
-            _sxx_temp=("_sxx_termo_temp", "sum"),
-        )
-        _slope4_temp = np.where(
-            _somas4_temp["_sxx_temp"] > 0, _somas4_temp["_sxy_temp"] / _somas4_temp["_sxx_temp"], np.nan)
-        _somas4_temp["i4_variacao_pct"] = np.where(
-            _somas4_temp["i4_n_meses"] >= 3,
-            (np.exp(_slope4_temp * (_somas4_temp["i4_n_meses"] - 1)) - 1) * 100,
-            np.nan,
-        )
-        _tendencia_temp = _somas4_temp[["i4_variacao_pct", "i4_n_meses"]].reset_index()
-        base_temp = base_temp.merge(_tendencia_temp, on="CD_PRESTADOR", how="left")
-        base_temp["i4_n_meses"] = base_temp["i4_n_meses"].fillna(0).astype(int)
+    # DESATIVADO TEMPORARIAMENTE (teste de performance, pedido do usuário em 21/09) —
+    # pra reativar, troque o `if False:` logo abaixo por `if True:`. O código já é a
+    # versão vetorizada (sem .apply() por prestador), mas mesmo assim é comentado aqui
+    # a pedido do usuário pra isolar o impacto de performance de cada indicador.
+    base_temp["i4_variacao_pct"] = np.nan
+    base_temp["i4_n_meses"] = 0
+    if False:  # bloco original do I4 — trocar pra `if True:` pra reativar
+        mensal_temp = agregado_universo.groupby(
+            ["CD_PRESTADOR", "MES"], dropna=False, observed=True
+        )["qtd_procedimentos"].sum().reset_index()
+        if mensal_temp.empty:
+            base_temp["i4_variacao_pct"] = np.nan
+            base_temp["i4_n_meses"] = 0
+        else:
+            _m4_temp = mensal_temp.dropna(subset=["MES"]).sort_values(["CD_PRESTADOR", "MES"]).copy()
+            _g4_temp = _m4_temp.groupby("CD_PRESTADOR")
+            _m4_temp["_pos_fim_temp"] = _g4_temp.cumcount(ascending=False)  # 0 = mês mais recente
+            _m4_temp = _m4_temp[_m4_temp["_pos_fim_temp"] < 6].copy()  # só os últimos até 6 meses
+            _g4_temp = _m4_temp.groupby("CD_PRESTADOR")  # regroup após o filtro (janela de até 6 meses)
+            _m4_temp["i4_n_meses"] = _g4_temp["MES"].transform("size")
+            _m4_temp["_x_temp"] = _g4_temp.cumcount()  # 0..n-1 em ordem cronológica (mais antigo=0)
+            _m4_temp["_y_temp"] = np.log(_m4_temp["qtd_procedimentos"].clip(lower=0).to_numpy() + 1)
+            _dx_temp = _m4_temp["_x_temp"] - _g4_temp["_x_temp"].transform("mean")
+            _dy_temp = _m4_temp["_y_temp"] - _g4_temp["_y_temp"].transform("mean")
+            _m4_temp["_sxy_termo_temp"] = _dx_temp * _dy_temp
+            _m4_temp["_sxx_termo_temp"] = _dx_temp * _dx_temp
+            _somas4_temp = _m4_temp.groupby("CD_PRESTADOR", observed=True).agg(
+                i4_n_meses=("i4_n_meses", "first"),
+                _sxy_temp=("_sxy_termo_temp", "sum"),
+                _sxx_temp=("_sxx_termo_temp", "sum"),
+            )
+            _slope4_temp = np.where(
+                _somas4_temp["_sxx_temp"] > 0, _somas4_temp["_sxy_temp"] / _somas4_temp["_sxx_temp"], np.nan)
+            _somas4_temp["i4_variacao_pct"] = np.where(
+                _somas4_temp["i4_n_meses"] >= 3,
+                (np.exp(_slope4_temp * (_somas4_temp["i4_n_meses"] - 1)) - 1) * 100,
+                np.nan,
+            )
+            _tendencia_temp = _somas4_temp[["i4_variacao_pct", "i4_n_meses"]].reset_index()
+            base_temp = base_temp.merge(_tendencia_temp, on="CD_PRESTADOR", how="left")
+            base_temp["i4_n_meses"] = base_temp["i4_n_meses"].fillna(0).astype(int)
 
     # ---------- I7 (dependência de pacientes — top 10% do valor, ou top 1-2 se <10 vidas) ----------
-    # Vetorizado (sem .apply() por prestador — era o principal gargalo de performance
-    # da aba em bases com muitos prestadores/pacientes): mesma regra (k = 2 se <10
-    # pacientes, senão 10% arredondado pra cima, mínimo 1), calculada via rank/cumcount
-    # em vez de um laço Python por grupo.
-    if valor_paciente_temp is not None and not valor_paciente_temp.empty:
-        _vp_temp = valor_paciente_temp.sort_values(
-            ["CD_PRESTADOR", "VL_PAGO"], ascending=[True, False]
-        ).copy()
-        _vp_temp["rank_valor"] = _vp_temp.groupby("CD_PRESTADOR").cumcount() + 1
-        _vp_temp["n_pacientes"] = _vp_temp.groupby("CD_PRESTADOR")["VL_PAGO"].transform("size")
-        _vp_temp["k_corte"] = np.where(
-            _vp_temp["n_pacientes"] < 10,
-            np.minimum(2, _vp_temp["n_pacientes"]),
-            np.ceil(_vp_temp["n_pacientes"] * 0.10).clip(lower=1),
-        )
-        _soma_topk_temp = (
-            _vp_temp[_vp_temp["rank_valor"] <= _vp_temp["k_corte"]]
-            .groupby("CD_PRESTADOR")["VL_PAGO"].sum()
-        )
-        _soma_total_temp = _vp_temp.groupby("CD_PRESTADOR")["VL_PAGO"].sum()
-        _i7_series_temp = (_soma_topk_temp / _soma_total_temp * 100).where(_soma_total_temp > 0)
-        _i7_series_temp.name = "i7_pct"
-        base_temp = base_temp.merge(_i7_series_temp, left_on="CD_PRESTADOR", right_index=True, how="left")
-    else:
-        base_temp["i7_pct"] = np.nan
+    # DESATIVADO TEMPORARIAMENTE (teste de performance, pedido do usuário em 21/09) —
+    # pra reativar, troque o `if False:` logo abaixo por `if True:`. Com o I7
+    # desligado, a leitura dos CSVs brutos por paciente também foi comentada lá na
+    # aba (_risco_valor_por_paciente_temp, ver "with tab_risco_temp:" mais abaixo) —
+    # não faz sentido ler aqueles arquivos (é a maior leitura de disco da aba) só pra
+    # descartar o resultado aqui.
+    base_temp["i7_pct"] = np.nan
+    if False:  # bloco original do I7 — trocar pra `if True:` pra reativar
+        if valor_paciente_temp is not None and not valor_paciente_temp.empty:
+            _vp_temp = valor_paciente_temp.sort_values(
+                ["CD_PRESTADOR", "VL_PAGO"], ascending=[True, False]
+            ).copy()
+            _vp_temp["rank_valor"] = _vp_temp.groupby("CD_PRESTADOR").cumcount() + 1
+            _vp_temp["n_pacientes"] = _vp_temp.groupby("CD_PRESTADOR")["VL_PAGO"].transform("size")
+            _vp_temp["k_corte"] = np.where(
+                _vp_temp["n_pacientes"] < 10,
+                np.minimum(2, _vp_temp["n_pacientes"]),
+                np.ceil(_vp_temp["n_pacientes"] * 0.10).clip(lower=1),
+            )
+            _soma_topk_temp = (
+                _vp_temp[_vp_temp["rank_valor"] <= _vp_temp["k_corte"]]
+                .groupby("CD_PRESTADOR")["VL_PAGO"].sum()
+            )
+            _soma_total_temp = _vp_temp.groupby("CD_PRESTADOR")["VL_PAGO"].sum()
+            _i7_series_temp = (_soma_topk_temp / _soma_total_temp * 100).where(_soma_total_temp > 0)
+            _i7_series_temp.name = "i7_pct"
+            base_temp = base_temp.merge(_i7_series_temp, left_on="CD_PRESTADOR", right_index=True, how="left")
+        else:
+            base_temp["i7_pct"] = np.nan
 
     # ---------- pontuação 0-100 de cada indicador (faixas dos anexos) ----------
     base_temp["I1"] = np.where(base_temp["i1_pct"].notna(),
@@ -4328,6 +4339,12 @@ elif st.session_state.pagina == "severidade":
     # ============================================================
     with tab_risco_temp:
         st.markdown("#### 🎯 Índice de Risco do Prestador")
+        st.warning(
+            "🧪 **Modo de teste de performance** — I4, I6 e I7 estão temporariamente "
+            "desativados (comentados em `app.py`) pra isolar o que está deixando a aba "
+            "lenta. Só I1, I2, I3 e I5 estão ativos agora; o composto/classificação "
+            "abaixo NÃO refletem o modelo completo enquanto isso.",
+        )
         st.caption(
             "Modelo composto de 7 indicadores — I1 Dependência de procedimento único (20%) · "
             "I2 Severidade da prática (15%) · I3 Exposição financeira/ticket (15%) · "
@@ -4347,12 +4364,18 @@ elif st.session_state.pagina == "severidade":
         _risco_usuarios_universo_temp = aplicar_filtros(
             base_usuarios, planos=f_plano or None, especialidades=f_especialidade or None,
         )
-        _risco_valor_paciente_carregado_temp = _risco_valor_por_paciente_temp(".")
+        # I7 desativado (ver bloco "if False:" em _calcular_indicadores_risco_temp) ->
+        # não faz sentido ler os CSVs brutos por paciente só pra descartar o
+        # resultado; é a maior leitura de disco da aba, então isso sozinho já deve
+        # ajudar bastante na performance. Pra reativar o I7, descomente a linha
+        # abaixo e reative o bloco correspondente na função de cálculo.
+        # _risco_valor_paciente_carregado_temp = _risco_valor_por_paciente_temp(".")
+        _risco_valor_paciente_carregado_temp = None
 
         if _risco_universo_temp.empty:
             st.info("Nenhum dado para calcular o Índice de Risco com os filtros atuais.")
         else:
-            with st.spinner("Calculando os 7 indicadores..."):
+            with st.spinner("Calculando os indicadores..."):
                 _risco_tabela_completa_temp = _calcular_indicadores_risco_temp(
                     _risco_universo_temp, _risco_usuarios_universo_temp,
                     _risco_valor_paciente_carregado_temp,
