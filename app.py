@@ -2724,10 +2724,6 @@ elif st.session_state.pagina == "severidade":
                             _COR_BORDA_PDF_TEMP = rl_colors.HexColor("#d8dee3")
                             _LARGURA_UTIL_PDF_TEMP = 182 * mm  # A4 (210mm) - 14mm de margem de cada lado
 
-                            def _truncar_nome_pdf_temp(nome, limite=38):
-                                nome = str(nome)
-                                return nome if len(nome) <= limite else nome[: limite - 1] + "…"
-
                             def _grafico_dispersao_pdf_temp(rank_df):
                                 dados = rank_df[
                                     (rank_df["qtd_usuarios"] > 0) & rank_df["cs"].notna()
@@ -2758,37 +2754,6 @@ elif st.session_state.pagina == "severidade":
                                 cbar = fig.colorbar(sc, ax=ax, pad=0.01)
                                 cbar.set_label("CS", fontsize=8)
                                 cbar.ax.tick_params(labelsize=7)
-                                fig.tight_layout()
-                                buf = io.BytesIO()
-                                fig.savefig(buf, format="png")
-                                plt.close(fig)
-                                buf.seek(0)
-                                return buf
-
-                            def _grafico_top10_pdf_temp(rank_df, coluna_metrica, rotulo_metrica):
-                                if coluna_metrica not in rank_df.columns:
-                                    return None
-                                dados = rank_df.head(10).sort_values(
-                                    coluna_metrica, ascending=True, na_position="first"
-                                ).copy()
-                                if dados.empty:
-                                    return None
-                                _nomes_temp = [
-                                    _truncar_nome_pdf_temp(
-                                        r.replace("🚩 ", "").replace("⚠️ ", "").split(" - ")[0]
-                                    )
-                                    for r in dados["rotulo"]
-                                ]
-                                _valores_temp = dados[coluna_metrica].fillna(0)
-                                fig, ax = plt.subplots(figsize=(7.2, 3.2), dpi=150)
-                                ax.barh(_nomes_temp, _valores_temp, color="#0f5f8c")
-                                ax.set_xlabel(rotulo_metrica, fontsize=9)
-                                ax.set_title(
-                                    f"Top 10 por {rotulo_metrica}", fontsize=11, fontweight="bold",
-                                    color="#0f5f8c",
-                                )
-                                ax.tick_params(labelsize=8)
-                                ax.grid(True, axis="x", alpha=0.25)
                                 fig.tight_layout()
                                 buf = io.BytesIO()
                                 fig.savefig(buf, format="png")
@@ -3084,18 +3049,15 @@ elif st.session_state.pagina == "severidade":
                             )
 
                             # ---- gráficos ----
+                            # Só o gráfico de dispersão (CS × volume) — o "Top 10" por métrica foi
+                            # removido a pedido do usuário: com o PDF já restrito a alerta forte
+                            # (normalmente 1-2 prestadores), a barra ficava sem nenhum comparativo
+                            # de verdade (uma única barra ocupando a largura toda).
                             if not _rank_alerta_forte_pdf_temp.empty:
                                 story.append(Paragraph("Visão geral", estilo_secao))
                                 _buf_disp_temp = _grafico_dispersao_pdf_temp(_rank_alerta_forte_pdf_temp)
                                 if _buf_disp_temp is not None:
                                     story.append(RLImage(_buf_disp_temp, width=180 * mm, height=80 * mm))
-                                    story.append(Spacer(1, 4))
-                                _coluna_metrica_pdf_temp = _OPCOES_RANQUEAR_TEMP.get(ranquear_por_temp, "cs")
-                                _buf_top10_temp = _grafico_top10_pdf_temp(
-                                    _rank_alerta_forte_pdf_temp, _coluna_metrica_pdf_temp, ranquear_por_temp
-                                )
-                                if _buf_top10_temp is not None:
-                                    story.append(RLImage(_buf_top10_temp, width=180 * mm, height=80 * mm))
                                 story.append(Spacer(1, 8))
 
                             # ---- detalhamento por prestador (mesmo conteúdo dos expanders, já "aberto") ----
@@ -3112,6 +3074,21 @@ elif st.session_state.pagina == "severidade":
                                 story.append(Paragraph(
                                     "Nenhum prestador em alerta forte nesta seleção.", estilo_corpo
                                 ))
+                            else:
+                                # Legenda da coluna "Procedimento" das tabelas abaixo: a cor do
+                                # texto sinaliza o mesmo critério de volume do 🚩/⚠️ usado no
+                                # resto do painel — como o PDF não consegue desenhar esses
+                                # emojis (fonte padrão do reportlab não tem esse glyph), cada
+                                # linha ganha uma bolinha (•) colorida como ícone, explicada aqui.
+                                story.append(Paragraph(
+                                    'Como ler a coluna <b>"Procedimento"</b> abaixo: '
+                                    '<font color="#e74c3c">•</font> vermelho = volume desse '
+                                    'procedimento ≥ 5× a média por prestador (mesmo critério do '
+                                    'alerta forte) · <font color="#c98a00">•</font> laranja = '
+                                    'volume ≥ 2× a média · sem marcação = dentro do normal.',
+                                    estilo_legenda,
+                                ))
+                                story.append(Spacer(1, 4))
                             for _linha_pdf_temp in _rank_alerta_forte_pdf_temp.itertuples():
                                 _rotulo_bruto_temp = _linha_pdf_temp.rotulo
                                 if _rotulo_bruto_temp.startswith("🚩"):
@@ -3157,9 +3134,10 @@ elif st.session_state.pagina == "severidade":
                                     ]
                                     # A 1ª coluna (Procedimento) vem com 🚩/⚠️ na tela — a
                                     # fonte padrão do PDF não tem esses glyphs (viravam um
-                                    # quadradinho preto sem sentido); troca por cor no próprio
-                                    # texto (vermelho/laranja), mesma linguagem visual do
-                                    # cabeçalho colorido de cada prestador.
+                                    # quadradinho preto sem sentido); troca por uma bolinha (•)
+                                    # colorida + cor no próprio texto (vermelho/laranja), com a
+                                    # legenda explicando o que cada cor significa logo acima desta
+                                    # tabela (ver bloco "Como ler a coluna" mais acima).
                                     def _celula_procedimento_pdf_temp(valor):
                                         texto = str(valor)
                                         if texto.startswith("🚩"):
@@ -3170,7 +3148,7 @@ elif st.session_state.pagina == "severidade":
                                             return Paragraph(html.escape(texto), estilo_corpo)
                                         texto_limpo = texto.replace("🚩", "").replace("⚠️", "").strip()
                                         return Paragraph(
-                                            f'<font color="{cor_temp}"><b>{html.escape(texto_limpo)}</b></font>',
+                                            f'<font color="{cor_temp}"><b>• {html.escape(texto_limpo)}</b></font>',
                                             estilo_corpo,
                                         )
 
