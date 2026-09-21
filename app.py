@@ -2847,10 +2847,15 @@ elif st.session_state.pagina == "severidade":
                                 fig, ax = plt.subplots(figsize=(7.2, 3.2), dpi=150)
                                 _tam_max_temp = dados["qtd_procedimentos"].max()
                                 _tamanhos_temp = 20 + (dados["qtd_procedimentos"] / _tam_max_temp) * 380
-                                dados["_cs_plot_temp"] = dados["cs"].clip(0, 20)
+                                # nome da coluna SEM underscore na frente: itertuples() vira
+                                # namedtuple, e o Python não aceita atributo de namedtuple
+                                # começando com "_" — um nome tipo "_cs_plot_temp" vira campo
+                                # posicional (ex.: "_1") em vez de manter o nome, e quebra o
+                                # .{nome} logo abaixo (AttributeError em produção).
+                                dados["cs_plot_temp"] = dados["cs"].clip(0, 20)
                                 sc = ax.scatter(
-                                    dados["qtd_usuarios"], dados["_cs_plot_temp"], s=_tamanhos_temp,
-                                    c=dados["_cs_plot_temp"], cmap=_cmap_temp, vmin=0, vmax=20,
+                                    dados["qtd_usuarios"], dados["cs_plot_temp"], s=_tamanhos_temp,
+                                    c=dados["cs_plot_temp"], cmap=_cmap_temp, vmin=0, vmax=20,
                                     alpha=0.85, edgecolors="white", linewidths=0.5,
                                 )
                                 # ---- nome do prestador ao lado de cada bolinha — a pedido do
@@ -2864,7 +2869,7 @@ elif st.session_state.pagina == "severidade":
                                         _nome_disp_temp = _nome_disp_temp[:23].rstrip() + "…"
                                     ax.annotate(
                                         _nome_disp_temp,
-                                        (_linha_disp_temp.qtd_usuarios, _linha_disp_temp._cs_plot_temp),
+                                        (_linha_disp_temp.qtd_usuarios, _linha_disp_temp.cs_plot_temp),
                                         textcoords="offset points", xytext=(7, 5),
                                         fontsize=6.5, color="#333333",
                                     )
