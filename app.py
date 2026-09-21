@@ -2925,12 +2925,17 @@ elif st.session_state.pagina == "severidade":
                             story.append(_tabela_legenda_temp)
                             story.append(Spacer(1, 8))
 
-                            # ---- resumo em texto: o que chama a atenção (Índice de Atenção de
-                            # Volume, mesmos 🚩/⚠️ e limiares 2×/5× já usados na grade) e o que
-                            # desvia (CS acima/abaixo de 10, a prática esperada) nesta seleção —
-                            # narrado em texto corrido em vez de tabela, como um resumo executivo
-                            # antes dos gráficos e do detalhamento prestador a prestador. Com um
-                            # único prestador filtrado, vira um parágrafo específico sobre ele.
+                            # ---- resumo em texto: só os prestadores em ALERTA FORTE (volume de
+                            # procedimentos ≥ 5× a média por prestador) — a pedido do usuário, o
+                            # resumo deixou de trazer atenção moderada e os desvios de CS acima/
+                            # abaixo de 10 (isso tudo continua na grade/expanders da aba, só saiu
+                            # deste resumo executivo). Cada prestador em alerta forte vira um bloco
+                            # explicativo (não só números soltos): Qtde proced e Qtde por prestador
+                            # da cidade lado a lado com uma frase comparando os dois, CS e CS da
+                            # Cidade com outra frase comparando os dois, e o Índice de Atenção
+                            # fechando com a explicação do que ele significa e de que "média" ele
+                            # está falando (a média de procedimentos por prestador, na cidade dele
+                            # ou, sem prestador suficiente na cidade, no Brasil todo).
                             story.append(Paragraph("Resumo — o que chama a atenção", estilo_secao))
                             if rank_temp.empty:
                                 story.append(Paragraph("Nenhum prestador nos filtros atuais.", estilo_corpo))
@@ -2941,147 +2946,127 @@ elif st.session_state.pagina == "severidade":
                                         return f"Prestador {int(row.CD_PRESTADOR)}"
                                     return str(_nome_temp)
 
-                                # ---- um parágrafo por prestador (não mais uma lista corrida
-                                # separada por vírgula) — nome + UF/Cidade/Cluster na 1ª linha,
-                                # Qtde proced/Qtde por prestador (Cidade)/CS/CS da Cidade/Índice
-                                # de Atenção na 2ª — pedido explícito do usuário pra estruturar
-                                # o resumo em vez de um bloco só de texto corrido.
-                                def _linha_prestador_pdf_temp(row, mostrar_desvio=False):
+                                def _linha_alerta_forte_pdf_temp(row):
                                     _uf_temp = getattr(row, "UF", None) or "—"
                                     _cidade_temp = getattr(row, "CIDADE_PRESTADOR", None) or "—"
                                     _cluster_temp = getattr(row, "CLUSTER", None) or "—"
-                                    _extra_desvio_temp = ""
-                                    if mostrar_desvio and hasattr(row, "desvio_pct_temp"):
-                                        _sinal_temp = "+" if row.desvio_pct_temp >= 0 else ""
-                                        _extra_desvio_temp = (
-                                            f" · Desvio: {_sinal_temp}{row.desvio_pct_temp:.0f}%"
+
+                                    _usa_cidade_temp = pd.notna(row.qtd_por_prestador_cidade)
+                                    _qtd_ref_temp = (
+                                        row.qtd_por_prestador_cidade if _usa_cidade_temp
+                                        else row.qtd_por_prestador_nacional
+                                    )
+                                    _rotulo_ref_temp = "Cidade" if _usa_cidade_temp else "Nacional"
+                                    _fonte_texto_temp = "nesta cidade" if _usa_cidade_temp else "no Brasil todo"
+
+                                    if pd.notna(row.indice_atencao_volume):
+                                        _razao_fmt_temp = f"{row.indice_atencao_volume:.1f}".replace(".", ",")
+                                        _comparacao_volume_temp = (
+                                            f"Ou seja, esse prestador fez cerca de "
+                                            f"<b>{_razao_fmt_temp} vezes</b> mais procedimentos do que a "
+                                            f"média por prestador {_fonte_texto_temp}."
                                         )
+                                    else:
+                                        _comparacao_volume_temp = (
+                                            "Sem referência de volume por prestador pra comparar nesta "
+                                            "seleção (sem cidade/nacional disponível)."
+                                        )
+
+                                    if pd.notna(row.cs) and pd.notna(row.cs_cidade) and row.cs_cidade:
+                                        _dif_pct_temp = (row.cs / row.cs_cidade - 1) * 100
+                                        if abs(_dif_pct_temp) < 0.5:
+                                            _comparacao_cs_temp = (
+                                                "O CS desse prestador está no mesmo nível do CS médio "
+                                                "praticado pelos prestadores dessa cidade."
+                                            )
+                                        else:
+                                            _direcao_temp = "acima" if _dif_pct_temp > 0 else "abaixo"
+                                            _comparacao_cs_temp = (
+                                                f"O CS desse prestador está "
+                                                f"<b>{abs(_dif_pct_temp):.0f}% {_direcao_temp}</b> do CS "
+                                                f"médio praticado pelos prestadores dessa cidade."
+                                            )
+                                    else:
+                                        _comparacao_cs_temp = "Sem CS de referência da cidade para comparar."
+
                                     return (
                                         f"<b>{html.escape(_nome_prest_pdf_temp(row))}</b> — "
                                         f"{html.escape(str(_uf_temp))}, {html.escape(str(_cidade_temp))} "
-                                        f"— Cluster {html.escape(str(_cluster_temp))}<br/>"
-                                        f"Qtde proced: {fmt_int(row.qtd_procedimentos)} · "
-                                        f"Qtde por prestador (Cidade): {fmt_float2(row.qtd_por_prestador_cidade)} · "
-                                        f"CS: {_fmt_cs_temp(row.cs)} · CS da Cidade: {_fmt_cs_temp(row.cs_cidade)} · "
-                                        f"Índice de Atenção: {html.escape(row.indice_atencao_volume_rotulo)}"
-                                        f"{_extra_desvio_temp}"
+                                        f"— Cluster {html.escape(str(_cluster_temp))}<br/><br/>"
+                                        f"Qtde proced: {fmt_int(row.qtd_procedimentos)}<br/>"
+                                        f"Qtde de proced por prestador ({_rotulo_ref_temp}): "
+                                        f"{fmt_float2(_qtd_ref_temp)}<br/>"
+                                        f"{_comparacao_volume_temp}<br/><br/>"
+                                        f"CS <i>(Coeficiente de Severidade — mede se o prestador "
+                                        f"praticou mais ou menos procedimentos do que o esperado pela "
+                                        f"taxa nacional; 10 = exatamente o esperado, acima é mais "
+                                        f"severo, abaixo é menos)</i>: {_fmt_cs_temp(row.cs)}<br/>"
+                                        f"CS da Cidade: {_fmt_cs_temp(row.cs_cidade)}<br/>"
+                                        f"{_comparacao_cs_temp}<br/><br/>"
+                                        f"Índice de Atenção: {html.escape(row.indice_atencao_volume_rotulo)} "
+                                        f"<i>(mostra quantas vezes o volume de procedimentos desse "
+                                        f"prestador é maior que a média de procedimentos por prestador "
+                                        f"— aqui, a média {_fonte_texto_temp}; quando a cidade não tem "
+                                        f"prestadores suficientes pra essa comparação, usa a média do "
+                                        f"Brasil todo)</i>"
                                     )
 
-                                def _bloco_prestadores_pdf_temp(df_lista, titulo_html, limite=5, mostrar_desvio=False):
-                                    story.append(Paragraph(titulo_html, estilo_corpo))
-                                    story.append(Spacer(1, 2))
+                                def _bloco_alerta_forte_pdf_temp(df_lista, limite=5):
                                     for _r_temp in df_lista.head(limite).itertuples():
                                         story.append(Paragraph(
-                                            _linha_prestador_pdf_temp(_r_temp, mostrar_desvio), estilo_corpo
+                                            _linha_alerta_forte_pdf_temp(_r_temp), estilo_corpo
                                         ))
-                                        story.append(Spacer(1, 3))
+                                        story.append(Spacer(1, 8))
                                     if len(df_lista) > limite:
                                         story.append(Paragraph(
-                                            f"<i>...e mais {len(df_lista) - limite} prestador(es) nesta seleção.</i>",
+                                            f"<i>...e mais {len(df_lista) - limite} prestador(es) em "
+                                            f"alerta forte nesta seleção.</i>",
                                             estilo_corpo,
                                         ))
-                                    story.append(Spacer(1, 6))
+                                        story.append(Spacer(1, 4))
 
                                 _total_prest_pdf_temp = len(rank_temp)
                                 _validos_atencao_pdf_temp = rank_temp[rank_temp["indice_atencao_volume"].notna()]
                                 _flag_alto_pdf_temp = _validos_atencao_pdf_temp[
                                     _validos_atencao_pdf_temp["indice_atencao_volume"] >= LIMIAR_ATENCAO_ALTO_TEMP
                                 ].sort_values("indice_atencao_volume", ascending=False)
-                                _flag_medio_pdf_temp = _validos_atencao_pdf_temp[
-                                    (_validos_atencao_pdf_temp["indice_atencao_volume"] >= LIMIAR_ATENCAO_MEDIO_TEMP)
-                                    & (_validos_atencao_pdf_temp["indice_atencao_volume"] < LIMIAR_ATENCAO_ALTO_TEMP)
-                                ].sort_values("indice_atencao_volume", ascending=False)
 
-                                # Cores em vez de 🚩/⚠️ (a fonte padrão do reportlab não tem
-                                # esses glyphs — mesma solução já usada nas tabelas de
-                                # procedimento, cor no texto em vez do emoji).
+                                # Cor em vez de 🚩 (a fonte padrão do reportlab não tem esse glyph —
+                                # mesma solução já usada nas tabelas de procedimento).
                                 _ROTULO_ALTO_PDF_TEMP = '<font color="#e74c3c"><b>alerta forte</b></font>'
-                                _ROTULO_MEDIO_PDF_TEMP = '<font color="#c98a00"><b>atenção moderada</b></font>'
 
                                 if _total_prest_pdf_temp == 1:
-                                    _r0_temp = next(rank_temp.itertuples())
-                                    _nome0_temp = html.escape(_nome_prest_pdf_temp(_r0_temp))
-                                    if pd.notna(_r0_temp.indice_atencao_volume):
-                                        _nivel0_temp = (
-                                            _ROTULO_ALTO_PDF_TEMP if _r0_temp.indice_atencao_volume >= LIMIAR_ATENCAO_ALTO_TEMP
-                                            else _ROTULO_MEDIO_PDF_TEMP if _r0_temp.indice_atencao_volume >= LIMIAR_ATENCAO_MEDIO_TEMP
-                                            else "dentro do padrão esperado"
-                                        )
-                                        story.append(Paragraph(
-                                            f"<b>{_nome0_temp}</b> está com volume "
-                                            f"{html.escape(_r0_temp.indice_atencao_volume_rotulo)} por prestador "
-                                            f"({_nivel0_temp}).",
-                                            estilo_corpo,
-                                        ))
-                                    else:
-                                        story.append(Paragraph(
-                                            f"<b>{_nome0_temp}</b> não tem referência de volume por "
-                                            f"prestador pra comparar nesta seleção (sem cidade/nacional "
-                                            f"disponível).",
-                                            estilo_corpo,
-                                        ))
-                                    story.append(Spacer(1, 3))
-                                else:
-                                    story.append(Paragraph(
-                                        f"Nos filtros atuais aparecem <b>{_total_prest_pdf_temp}</b> "
-                                        f"prestadores no Ranking. Desses, "
-                                        f"<b>{len(_flag_alto_pdf_temp)}</b> está(ão) em {_ROTULO_ALTO_PDF_TEMP} "
-                                        f"(volume ≥ 5× a média por prestador) e "
-                                        f"<b>{len(_flag_medio_pdf_temp)}</b> em {_ROTULO_MEDIO_PDF_TEMP} "
-                                        f"(entre 2× e 5×).",
-                                        estilo_corpo,
-                                    ))
-                                    story.append(Spacer(1, 4))
                                     if not _flag_alto_pdf_temp.empty:
-                                        _bloco_prestadores_pdf_temp(
-                                            _flag_alto_pdf_temp, f"{_ROTULO_ALTO_PDF_TEMP}:"
-                                        )
-                                    if not _flag_medio_pdf_temp.empty:
-                                        _bloco_prestadores_pdf_temp(
-                                            _flag_medio_pdf_temp, f"{_ROTULO_MEDIO_PDF_TEMP}:"
-                                        )
-
-                                # ---- desvio de CS: 10 é a prática esperada (QP praticado igual
-                                # à taxa nacional aplicada às vidas do corte) — acima de 10 é mais
-                                # severo que o esperado, abaixo é menos. ----
-                                _cs_validos_pdf_temp = rank_temp[rank_temp["cs"].notna()].copy()
-                                if not _cs_validos_pdf_temp.empty:
-                                    _cs_validos_pdf_temp["desvio_pct_temp"] = (
-                                        _cs_validos_pdf_temp["cs"] / 10 - 1
-                                    ) * 100
-                                    if _total_prest_pdf_temp == 1:
-                                        _r0b_temp = next(_cs_validos_pdf_temp.itertuples())
-                                        _desvio0_temp = _r0b_temp.desvio_pct_temp
-                                        _direcao0_temp = "acima" if _desvio0_temp >= 0 else "abaixo"
                                         story.append(Paragraph(
-                                            f"CS de <b>{_fmt_cs_temp(_r0b_temp.cs)}</b> — desvio de "
-                                            f"<b>{abs(_desvio0_temp):.0f}% {_direcao0_temp}</b> da prática "
-                                            f"esperada (CS 10 = praticado igual à taxa nacional).",
+                                            f"O prestador selecionado está em {_ROTULO_ALTO_PDF_TEMP} "
+                                            f"— volume de procedimentos ≥ 5× a média por prestador.",
                                             estilo_corpo,
                                         ))
-                                        story.append(Spacer(1, 3))
-                                        story.append(Paragraph(
-                                            _linha_prestador_pdf_temp(_r0_temp), estilo_corpo
-                                        ))
-                                        story.append(Spacer(1, 6))
                                     else:
-                                        _acima_pdf_temp = _cs_validos_pdf_temp[
-                                            _cs_validos_pdf_temp["cs"] > 10
-                                        ].sort_values("cs", ascending=False)
-                                        _abaixo_pdf_temp = _cs_validos_pdf_temp[
-                                            _cs_validos_pdf_temp["cs"] < 10
-                                        ].sort_values("cs", ascending=True)
-                                        if not _acima_pdf_temp.empty:
-                                            _bloco_prestadores_pdf_temp(
-                                                _acima_pdf_temp, "<b>Acima do esperado (CS &gt; 10):</b>",
-                                                mostrar_desvio=True,
-                                            )
-                                        if not _abaixo_pdf_temp.empty:
-                                            _bloco_prestadores_pdf_temp(
-                                                _abaixo_pdf_temp, "<b>Abaixo do esperado (CS &lt; 10):</b>",
-                                                mostrar_desvio=True,
-                                            )
+                                        story.append(Paragraph(
+                                            "O prestador selecionado não está em alerta forte nesta "
+                                            "seleção.", estilo_corpo,
+                                        ))
+                                else:
+                                    if not _flag_alto_pdf_temp.empty:
+                                        story.append(Paragraph(
+                                            f"Nos filtros atuais aparecem <b>{_total_prest_pdf_temp}</b> "
+                                            f"prestadores no Ranking. Desses, "
+                                            f"<b>{len(_flag_alto_pdf_temp)}</b> está(ão) em "
+                                            f"{_ROTULO_ALTO_PDF_TEMP} — volume de procedimentos ≥ 5× a "
+                                            f"média por prestador.",
+                                            estilo_corpo,
+                                        ))
+                                    else:
+                                        story.append(Paragraph(
+                                            f"Nos filtros atuais aparecem <b>{_total_prest_pdf_temp}</b> "
+                                            f"prestadores no Ranking. Nenhum deles está em alerta forte "
+                                            f"(volume de procedimentos ≥ 5× a média por prestador).",
+                                            estilo_corpo,
+                                        ))
                                 story.append(Spacer(1, 4))
+                                if not _flag_alto_pdf_temp.empty:
+                                    _bloco_alerta_forte_pdf_temp(_flag_alto_pdf_temp)
 
                             # ---- gráficos ----
                             if not rank_temp.empty:
@@ -3227,6 +3212,12 @@ elif st.session_state.pagina == "severidade":
                         # atenção", replicar a mudança nos dois lugares.
                         # ============================================================
                         def _construir_partes_resumo_email_temp(rank_df):
+                            # Só traz os prestadores em ALERTA FORTE (volume de procedimentos ≥ 5×
+                            # a média por prestador) — mesma restrição do resumo do PDF (ver
+                            # _linha_alerta_forte_pdf_temp), a pedido do usuário: o resumo por
+                            # e-mail deixou de trazer atenção moderada e os desvios de CS acima/
+                            # abaixo de 10, e cada prestador em alerta forte vira um bloco
+                            # explicativo em vez de só números soltos numa linha.
                             if rank_df.empty:
                                 return ["Nenhum prestador nos filtros atuais."]
 
@@ -3236,48 +3227,82 @@ elif st.session_state.pagina == "severidade":
                                     return f"Prestador {int(row.CD_PRESTADOR)}"
                                 return str(_nome_temp)
 
-                            # ---- um parágrafo (um item de _partes_temp) por prestador — nome +
-                            # UF/Cidade/Cluster na 1ª linha, Qtde proced/Qtde por prestador
-                            # (Cidade)/CS/CS da Cidade/Índice de Atenção na 2ª — mesma estrutura
-                            # do resumo do PDF (ver _linha_prestador_pdf_temp), só que em HTML de
-                            # e-mail em vez de flowable do reportlab.
-                            def _linha_prestador_email_temp(row, mostrar_desvio=False):
+                            def _linha_alerta_forte_email_temp(row):
                                 _uf_temp = getattr(row, "UF", None) or "—"
                                 _cidade_temp = getattr(row, "CIDADE_PRESTADOR", None) or "—"
                                 _cluster_temp = getattr(row, "CLUSTER", None) or "—"
-                                _extra_desvio_temp = ""
-                                if mostrar_desvio and hasattr(row, "desvio_pct_temp"):
-                                    _sinal_temp = "+" if row.desvio_pct_temp >= 0 else ""
-                                    _extra_desvio_temp = (
-                                        f" · Desvio: {_sinal_temp}{row.desvio_pct_temp:.0f}%"
+
+                                _usa_cidade_temp = pd.notna(row.qtd_por_prestador_cidade)
+                                _qtd_ref_temp = (
+                                    row.qtd_por_prestador_cidade if _usa_cidade_temp
+                                    else row.qtd_por_prestador_nacional
+                                )
+                                _rotulo_ref_temp = "Cidade" if _usa_cidade_temp else "Nacional"
+                                _fonte_texto_temp = "nesta cidade" if _usa_cidade_temp else "no Brasil todo"
+
+                                if pd.notna(row.indice_atencao_volume):
+                                    _razao_fmt_temp = f"{row.indice_atencao_volume:.1f}".replace(".", ",")
+                                    _comparacao_volume_temp = (
+                                        f"Ou seja, esse prestador fez cerca de "
+                                        f"<strong>{_razao_fmt_temp} vezes</strong> mais procedimentos do "
+                                        f"que a média por prestador {_fonte_texto_temp}."
                                     )
+                                else:
+                                    _comparacao_volume_temp = (
+                                        "Sem referência de volume por prestador pra comparar nesta "
+                                        "seleção (sem cidade/nacional disponível)."
+                                    )
+
+                                if pd.notna(row.cs) and pd.notna(row.cs_cidade) and row.cs_cidade:
+                                    _dif_pct_temp = (row.cs / row.cs_cidade - 1) * 100
+                                    if abs(_dif_pct_temp) < 0.5:
+                                        _comparacao_cs_temp = (
+                                            "O CS desse prestador está no mesmo nível do CS médio "
+                                            "praticado pelos prestadores dessa cidade."
+                                        )
+                                    else:
+                                        _direcao_temp = "acima" if _dif_pct_temp > 0 else "abaixo"
+                                        _comparacao_cs_temp = (
+                                            f"O CS desse prestador está "
+                                            f"<strong>{abs(_dif_pct_temp):.0f}% {_direcao_temp}</strong> "
+                                            f"do CS médio praticado pelos prestadores dessa cidade."
+                                        )
+                                else:
+                                    _comparacao_cs_temp = "Sem CS de referência da cidade para comparar."
+
                                 return (
                                     f"<strong>{html.escape(_nome_prest_email_temp(row))}</strong> — "
                                     f"{html.escape(str(_uf_temp))}, {html.escape(str(_cidade_temp))} "
-                                    f"— Cluster {html.escape(str(_cluster_temp))}<br>"
-                                    f"Qtde proced: {fmt_int(row.qtd_procedimentos)} · "
-                                    f"Qtde por prestador (Cidade): {fmt_float2(row.qtd_por_prestador_cidade)} · "
-                                    f"CS: {_fmt_cs_temp(row.cs)} · CS da Cidade: {_fmt_cs_temp(row.cs_cidade)} · "
-                                    f"Índice de Atenção: {html.escape(row.indice_atencao_volume_rotulo)}"
-                                    f"{_extra_desvio_temp}"
+                                    f"— Cluster {html.escape(str(_cluster_temp))}<br><br>"
+                                    f"Qtde proced: {fmt_int(row.qtd_procedimentos)}<br>"
+                                    f"Qtde de proced por prestador ({_rotulo_ref_temp}): "
+                                    f"{fmt_float2(_qtd_ref_temp)}<br>"
+                                    f"{_comparacao_volume_temp}<br><br>"
+                                    f"CS <em>(Coeficiente de Severidade — mede se o prestador "
+                                    f"praticou mais ou menos procedimentos do que o esperado pela "
+                                    f"taxa nacional; 10 = exatamente o esperado, acima é mais severo, "
+                                    f"abaixo é menos)</em>: {_fmt_cs_temp(row.cs)}<br>"
+                                    f"CS da Cidade: {_fmt_cs_temp(row.cs_cidade)}<br>"
+                                    f"{_comparacao_cs_temp}<br><br>"
+                                    f"Índice de Atenção: {html.escape(row.indice_atencao_volume_rotulo)} "
+                                    f"<em>(mostra quantas vezes o volume de procedimentos desse "
+                                    f"prestador é maior que a média de procedimentos por prestador "
+                                    f"— aqui, a média {_fonte_texto_temp}; quando a cidade não tem "
+                                    f"prestadores suficientes pra essa comparação, usa a média do "
+                                    f"Brasil todo)</em>"
                                 )
 
-                            def _bloco_prestadores_email_temp(partes, df_lista, titulo_html,
-                                                               limite=5, mostrar_desvio=False):
-                                partes.append(titulo_html)
+                            def _bloco_alerta_forte_email_temp(partes, df_lista, limite=5):
                                 for r in df_lista.head(limite).itertuples():
-                                    partes.append(_linha_prestador_email_temp(r, mostrar_desvio))
+                                    partes.append(_linha_alerta_forte_email_temp(r))
                                 if len(df_lista) > limite:
                                     partes.append(
-                                        f"<em>...e mais {len(df_lista) - limite} prestador(es) "
-                                        f"nesta seleção.</em>"
+                                        f"<em>...e mais {len(df_lista) - limite} prestador(es) em "
+                                        f"alerta forte nesta seleção.</em>"
                                     )
 
                             _ALTO_HTML_TEMP = (
                                 '<span style="color:#e74c3c;font-weight:bold;">alerta forte</span>'
-                            )
-                            _MEDIO_HTML_TEMP = (
-                                '<span style="color:#c98a00;font-weight:bold;">atenção moderada</span>'
                             )
 
                             _total_email_temp = len(rank_df)
@@ -3285,85 +3310,38 @@ elif st.session_state.pagina == "severidade":
                             _flag_alto_email_temp = _validos_atencao_email_temp[
                                 _validos_atencao_email_temp["indice_atencao_volume"] >= LIMIAR_ATENCAO_ALTO_TEMP
                             ].sort_values("indice_atencao_volume", ascending=False)
-                            _flag_medio_email_temp = _validos_atencao_email_temp[
-                                (_validos_atencao_email_temp["indice_atencao_volume"] >= LIMIAR_ATENCAO_MEDIO_TEMP)
-                                & (_validos_atencao_email_temp["indice_atencao_volume"] < LIMIAR_ATENCAO_ALTO_TEMP)
-                            ].sort_values("indice_atencao_volume", ascending=False)
 
                             _partes_temp = []
 
                             if _total_email_temp == 1:
-                                _r0_temp = next(rank_df.itertuples())
-                                _nome0_temp = html.escape(_nome_prest_email_temp(_r0_temp))
-                                if pd.notna(_r0_temp.indice_atencao_volume):
-                                    _nivel0_temp = (
-                                        _ALTO_HTML_TEMP if _r0_temp.indice_atencao_volume >= LIMIAR_ATENCAO_ALTO_TEMP
-                                        else _MEDIO_HTML_TEMP if _r0_temp.indice_atencao_volume >= LIMIAR_ATENCAO_MEDIO_TEMP
-                                        else "dentro do padrão esperado"
-                                    )
+                                if not _flag_alto_email_temp.empty:
                                     _partes_temp.append(
-                                        f"<strong>{_nome0_temp}</strong> está com volume "
-                                        f"{html.escape(_r0_temp.indice_atencao_volume_rotulo)} por "
-                                        f"prestador ({_nivel0_temp})."
+                                        f"O prestador selecionado está em {_ALTO_HTML_TEMP} — volume "
+                                        f"de procedimentos ≥ 5× a média por prestador."
                                     )
                                 else:
                                     _partes_temp.append(
-                                        f"<strong>{_nome0_temp}</strong> não tem referência de volume "
-                                        f"por prestador pra comparar nesta seleção (sem cidade/nacional "
-                                        f"disponível)."
+                                        "O prestador selecionado não está em alerta forte nesta "
+                                        "seleção."
                                     )
                             else:
-                                _partes_temp.append(
-                                    f"Nos filtros atuais aparecem <strong>{_total_email_temp}</strong> "
-                                    f"prestadores no Ranking. Desses, "
-                                    f"<strong>{len(_flag_alto_email_temp)}</strong> está(ão) em "
-                                    f"{_ALTO_HTML_TEMP} (volume ≥ 5× a média por prestador) e "
-                                    f"<strong>{len(_flag_medio_email_temp)}</strong> em {_MEDIO_HTML_TEMP} "
-                                    f"(entre 2× e 5×)."
-                                )
                                 if not _flag_alto_email_temp.empty:
-                                    _bloco_prestadores_email_temp(
-                                        _partes_temp, _flag_alto_email_temp, f"{_ALTO_HTML_TEMP}:"
+                                    _partes_temp.append(
+                                        f"Nos filtros atuais aparecem <strong>{_total_email_temp}</strong> "
+                                        f"prestadores no Ranking. Desses, "
+                                        f"<strong>{len(_flag_alto_email_temp)}</strong> está(ão) em "
+                                        f"{_ALTO_HTML_TEMP} — volume de procedimentos ≥ 5× a média por "
+                                        f"prestador."
                                     )
-                                if not _flag_medio_email_temp.empty:
-                                    _bloco_prestadores_email_temp(
-                                        _partes_temp, _flag_medio_email_temp, f"{_MEDIO_HTML_TEMP}:"
+                                else:
+                                    _partes_temp.append(
+                                        f"Nos filtros atuais aparecem <strong>{_total_email_temp}</strong> "
+                                        f"prestadores no Ranking. Nenhum deles está em alerta forte "
+                                        f"(volume de procedimentos ≥ 5× a média por prestador)."
                                     )
 
-                            _cs_validos_email_temp = rank_df[rank_df["cs"].notna()].copy()
-                            if not _cs_validos_email_temp.empty:
-                                _cs_validos_email_temp["desvio_pct_temp"] = (
-                                    _cs_validos_email_temp["cs"] / 10 - 1
-                                ) * 100
-                                if _total_email_temp == 1:
-                                    _r0b_temp = next(_cs_validos_email_temp.itertuples())
-                                    _desvio0_temp = _r0b_temp.desvio_pct_temp
-                                    _direcao0_temp = "acima" if _desvio0_temp >= 0 else "abaixo"
-                                    _partes_temp.append(
-                                        f"CS de <strong>{_fmt_cs_temp(_r0b_temp.cs)}</strong> — desvio "
-                                        f"de <strong>{abs(_desvio0_temp):.0f}% {_direcao0_temp}</strong> "
-                                        f"da prática esperada (CS 10 = praticado igual à taxa nacional)."
-                                    )
-                                    _partes_temp.append(_linha_prestador_email_temp(_r0_temp))
-                                else:
-                                    _acima_email_temp = _cs_validos_email_temp[
-                                        _cs_validos_email_temp["cs"] > 10
-                                    ].sort_values("cs", ascending=False)
-                                    _abaixo_email_temp = _cs_validos_email_temp[
-                                        _cs_validos_email_temp["cs"] < 10
-                                    ].sort_values("cs", ascending=True)
-                                    if not _acima_email_temp.empty:
-                                        _bloco_prestadores_email_temp(
-                                            _partes_temp, _acima_email_temp,
-                                            "<strong>Acima do esperado (CS &gt; 10):</strong>",
-                                            mostrar_desvio=True,
-                                        )
-                                    if not _abaixo_email_temp.empty:
-                                        _bloco_prestadores_email_temp(
-                                            _partes_temp, _abaixo_email_temp,
-                                            "<strong>Abaixo do esperado (CS &lt; 10):</strong>",
-                                            mostrar_desvio=True,
-                                        )
+                            if not _flag_alto_email_temp.empty:
+                                _bloco_alerta_forte_email_temp(_partes_temp, _flag_alto_email_temp)
 
                             return _partes_temp
 
