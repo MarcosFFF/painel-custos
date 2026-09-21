@@ -640,7 +640,7 @@ def enviar_email_projecao(view_year, view_month, label_projetado, projecao, acum
     msg = MIMEMultipart()
     msg["From"] = remetente
     msg["To"] = ", ".join(destinatarios)
-    msg["Subject"] = f"Projeção de Sinistro - {titulo_mes}"
+    msg["Subject"] = f"Projeção Sinistro - {titulo_mes}"
     msg.attach(MIMEText(corpo_html, "html", "utf-8"))
     try:
         with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as servidor:
