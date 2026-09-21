@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import html
 import os
 import io
@@ -20,6 +21,12 @@ try:
         resumo_comparativo, alertas_prestador_procedimento,
         calcular_media_nacional, vidas_por,
         _casar_colunas, _corrigir_mojibake,
+        # Reaproveitados só pelo Indicador 7 (Índice de Risco) pra ler o valor pago
+        # (VL_PAGO) por paciente — o agregado principal nunca junta CD_USUARIO com
+        # VL_PAGO (ver _risco_valor_por_paciente_temp). Não muda nada em
+        # severidade.py, só reusa o parser de CSV já existente lá (mesma ideia já
+        # usada acima com _casar_colunas/_corrigir_mojibake).
+        _ler_csv_parte, COLUNAS_ESPERADAS,
     )
 except Exception as _erro_import_severidade:
     # O Streamlit Cloud redige a mensagem de erro padrão — mostramos o traceback
@@ -253,6 +260,266 @@ def _carregar_crosswalk_cidade_cluster_temp(pasta="."):
     cw["CLUSTER"] = cw["CLUSTER"].astype(str).str.strip()
     cw = cw.dropna(subset=["CIDADE", "UF"]).drop_duplicates(subset=["CIDADE", "UF"])
     return cw.reset_index(drop=True)
+@st.cache_data(show_spinner="Carregando valor por paciente (Indicador 7 — Índice de Risco)...")
+def _risco_valor_por_paciente_temp(pasta="."):
+    """
+    Valor pago (VL_PAGO) somado por paciente (CD_USUARIO) dentro de cada prestador
+    (CD_PRESTADOR) — usado só pelo Indicador 7 (Dependência de Pacientes) da aba
+    "Índice de Risco". O `agregado` que carregar_base_severidade() devolve nunca tem
+    essa combinação (é agrupado por MES/UF/ESPECIALIDADE/... — perde o paciente
+    individual) e `base_usuarios` tem CD_USUARIO mas não VL_PAGO. Em vez de mexer em
+    severidade.py pra expor isso, lemos os mesmos CSVs de novo aqui, só com as 3
+    colunas necessárias, reaproveitando o parser (_ler_csv_parte/COLUNAS_ESPERADAS)
+    que já é importado de lá — mesmo padrão já usado por
+    _carregar_crosswalk_cidade_cluster_temp logo acima (relê a fonte, não toca no
+    módulo). Cacheado porque é leitura de disco.
+    """
+    candidatos = sorted(
+        glob.glob(os.path.join(pasta, "*4016R.csv"))
+        + glob.glob(os.path.join(pasta, "*4016R_parte_*.csv"))
+    )
+    colunas_vazias = ["CD_PRESTADOR", "CD_USUARIO", "VL_PAGO"]
+    if not candidatos:
+        return pd.DataFrame(columns=colunas_vazias)
+    partes = []
+    for arq in candidatos:
+        try:
+            parte = _ler_csv_parte(arq, COLUNAS_ESPERADAS)
+        except Exception:
+            continue
+        partes.append(parte[colunas_vazias])
+    if not partes:
+        return pd.DataFrame(columns=colunas_vazias)
+    bruto = pd.concat(partes, ignore_index=True)
+    bruto["VL_PAGO"] = bruto["VL_PAGO"].fillna(0.0)
+    return (
+        bruto.groupby(["CD_PRESTADOR", "CD_USUARIO"], dropna=False, observed=True)["VL_PAGO"]
+        .sum().reset_index()
+    )
+# ---------- Índice de Risco do Prestador (7 indicadores) ----------
+# Pesos e faixas conforme os dois documentos que o usuário anexou (versão final,
+# com I6/I7 e os pesos rebalanceados). Implementado só aqui em app.py — nunca em
+# severidade.py — a partir do `agregado` que carregar_base_severidade() já devolve
+# (soma_valor = VL_PAGO por grupo já existe ali, só não era usado antes) mais o
+# valor por paciente lido à parte (_risco_valor_por_paciente_temp, só pro I7).
+_RISCO_PESOS_TEMP = {
+    "I1": 0.20, "I2": 0.15, "I3": 0.15, "I4": 0.10, "I5": 0.15, "I6": 0.15, "I7": 0.10,
+}
+_RISCO_SCORE_CLUSTER_TEMP = {"A": 0, "B": 25, "C": 50, "D": 100}
+_RISCO_FAIXAS_TEMP = [
+    # (piso do composto, rótulo, cor hex p/ PDF, ordem — maior ordem = mais grave)
+    (75, "Alerta forte", "#e74c3c", 4),
+    (60, "Alerta moderado alto", "#e67e22", 3),
+    (45, "Alerta moderado baixo", "#f1c40f", 2),
+    (25, "Alerta baixo", "#2ecc71", 1),
+    (0, "Sem alerta", "#9aa5b1", 0),
+]
+_RISCO_EMOJI_FAIXA_TEMP = {
+    "Alerta forte": "🔴", "Alerta moderado alto": "🟠", "Alerta moderado baixo": "🟡",
+    "Alerta baixo": "🟢", "Sem alerta": "✅",
+}
+def _risco_pontuar_faixas_temp(serie, cortes, notas):
+    """cortes = [c1,c2,c3,c4] (4 fronteiras -> 5 faixas), notas = [n0,n1,n2,n3,n4].
+    Mesma convenção em todo o Índice de Risco: valor < c1 -> n0 | < c2 -> n1 | ...
+    | caso contrário (>= último corte) -> n4. Confere com a redação dos anexos
+    ("razão < 1,0 -> 0 | 1,0-1,5 -> 25 | ... | > 3,0 -> 100": o limite de baixo é
+    sempre exclusivo na faixa de cima)."""
+    condicoes = [serie < cortes[0], serie < cortes[1], serie < cortes[2], serie < cortes[3]]
+    return np.select(condicoes, notas[:4], default=notas[4])
+def _calcular_indicadores_risco_temp(agregado_universo, usuarios_universo, valor_paciente_temp):
+    """
+    Calcula, por prestador, os 7 indicadores (0-100 cada), o composto ponderado, o
+    piso de materialidade Y, os gates G1/G2 e a classificação final.
+
+    IMPORTANTE — escopo: `agregado_universo` deve vir SEM filtro de Mês (concentração
+    de produção, ticket e tendência só fazem sentido olhando o histórico completo
+    carregado, não um mês isolado) — filtros de Plano/Especialidade da página, se
+    houver, já devem ter sido aplicados antes de chamar esta função. Filtros de UF/
+    Cidade/Cluster/Prestador da aba são aplicados DEPOIS, só na exibição — aplicá-los
+    aqui distorceria as referências de cluster (mediana/percentis calculados só
+    sobre quem sobrou do filtro, não sobre o cluster inteiro).
+    """
+    colunas_vazias = ["CD_PRESTADOR"]
+    if agregado_universo is None or agregado_universo.empty:
+        return pd.DataFrame(columns=colunas_vazias)
+
+    # ---------- base por prestador (nome/UF/cidade/cluster = moda dentro do prestador) ----------
+    def _moda_temp(x):
+        m = x.mode()
+        return m.iloc[0] if not m.empty else None
+    info_temp = agregado_universo.groupby("CD_PRESTADOR", observed=True).agg(
+        NOME_PRESTADOR=("NOME_PRESTADOR", _moda_temp),
+        CNPJ_CPF_PRESTADOR=("CNPJ_CPF_PRESTADOR", _moda_temp),
+        UF=("UF", _moda_temp),
+        CIDADE_PRESTADOR=("CIDADE_PRESTADOR", _moda_temp),
+        CLUSTER=("CLUSTER", _moda_temp),
+        especialidade_principal=("ESPECIALIDADE", _moda_temp),
+    ).reset_index()
+    base_temp = agregado_universo.groupby("CD_PRESTADOR", observed=True).agg(
+        soma_valor=("soma_valor", "sum"),
+        soma_uso=("soma_uso", "sum"),
+        qtd_procedimentos=("qtd_procedimentos", "sum"),
+    ).reset_index()
+    base_temp = base_temp.merge(info_temp, on="CD_PRESTADOR", how="left")
+    if usuarios_universo is not None and not usuarios_universo.empty:
+        base_temp = base_temp.merge(vidas_por(usuarios_universo, "CD_PRESTADOR"), on="CD_PRESTADOR", how="left")
+    else:
+        base_temp["qtd_usuarios"] = np.nan
+    base_temp["qtd_usuarios"] = base_temp["qtd_usuarios"].fillna(0)
+
+    # ---------- I1 (concentração top-1) + I6 (top-3 / diversificação) ----------
+    por_proc_temp = agregado_universo.groupby(
+        ["CD_PRESTADOR", "CD_PROCEDIMENTO"], dropna=False, observed=True
+    ).agg(valor=("soma_valor", "sum"), uso=("soma_uso", "sum")).reset_index()
+    pv_temp = por_proc_temp.sort_values(["CD_PRESTADOR", "valor"], ascending=[True, False]).copy()
+    pv_temp["rank_valor"] = pv_temp.groupby("CD_PRESTADOR").cumcount() + 1
+    top1_valor_temp = pv_temp[pv_temp["rank_valor"] == 1].set_index("CD_PRESTADOR")["valor"]
+    top3_valor_temp = pv_temp[pv_temp["rank_valor"] <= 3].groupby("CD_PRESTADOR")["valor"].sum()
+    pu_temp = por_proc_temp.sort_values(["CD_PRESTADOR", "uso"], ascending=[True, False]).copy()
+    pu_temp["rank_uso"] = pu_temp.groupby("CD_PRESTADOR").cumcount() + 1
+    top1_uso_temp = pu_temp[pu_temp["rank_uso"] == 1].set_index("CD_PRESTADOR")["uso"]
+
+    base_temp = base_temp.set_index("CD_PRESTADOR")
+    base_temp["valor_top1"] = top1_valor_temp
+    base_temp["valor_top3"] = top3_valor_temp
+    base_temp["uso_top1"] = top1_uso_temp
+    base_temp = base_temp.reset_index()
+
+    base_temp["top1_valor_pct"] = np.where(
+        base_temp["soma_valor"] > 0, base_temp["valor_top1"] / base_temp["soma_valor"] * 100, np.nan)
+    base_temp["top1_uso_pct"] = np.where(
+        base_temp["soma_uso"] > 0, base_temp["uso_top1"] / base_temp["soma_uso"] * 100, np.nan)
+    base_temp["i1_pct"] = base_temp[["top1_valor_pct", "top1_uso_pct"]].max(axis=1)
+    base_temp["i6_pct"] = np.where(
+        base_temp["soma_valor"] > 0, base_temp["valor_top3"] / base_temp["soma_valor"] * 100, np.nan)
+
+    # ---------- I2 (severidade: uso por vida vs mediana do cluster) ----------
+    base_temp["uso_por_vida"] = np.where(
+        base_temp["qtd_usuarios"] > 0, base_temp["soma_uso"] / base_temp["qtd_usuarios"], np.nan)
+    _mediana_uso_vida_cluster_temp = base_temp.groupby("CLUSTER", observed=True)["uso_por_vida"].transform("median")
+    base_temp["i2_razao"] = np.where(
+        _mediana_uso_vida_cluster_temp > 0,
+        base_temp["uso_por_vida"] / _mediana_uso_vida_cluster_temp, np.nan,
+    )
+
+    # ---------- I3 (ticket vs mediana da especialidade no cluster) ----------
+    base_temp["ticket"] = np.where(
+        base_temp["qtd_procedimentos"] > 0, base_temp["soma_valor"] / base_temp["qtd_procedimentos"], np.nan)
+    _mediana_ticket_temp = base_temp.groupby(
+        ["CLUSTER", "especialidade_principal"], observed=True
+    )["ticket"].transform("median")
+    base_temp["i3_razao"] = np.where(
+        _mediana_ticket_temp > 0, base_temp["ticket"] / _mediana_ticket_temp, np.nan)
+
+    # ---------- I5 (criticidade cluster × porte) ----------
+    base_temp["score_cluster"] = base_temp["CLUSTER"].astype(str).map(_RISCO_SCORE_CLUSTER_TEMP)
+    _p25_temp = base_temp.groupby("CLUSTER", observed=True)["qtd_usuarios"].transform(lambda s: s.quantile(0.25))
+    _p50_temp = base_temp.groupby("CLUSTER", observed=True)["qtd_usuarios"].transform(lambda s: s.quantile(0.50))
+    _p75_temp = base_temp.groupby("CLUSTER", observed=True)["qtd_usuarios"].transform(lambda s: s.quantile(0.75))
+    base_temp["score_porte"] = np.select(
+        [base_temp["qtd_usuarios"] < _p25_temp, base_temp["qtd_usuarios"] < _p50_temp,
+         base_temp["qtd_usuarios"] < _p75_temp],
+        [100, 66, 33], default=0,
+    )
+    # cluster fora do mapa A/B/C/D (ex.: cidade sem cluster cadastrado) -> score neutro
+    # (50) em vez de derrubar o I5 inteiro pra NaN.
+    base_temp["i5_pct"] = 0.6 * base_temp["score_cluster"].fillna(50) + 0.4 * base_temp["score_porte"]
+
+    # ---------- I4 (tendência 3-6 meses — slope da regressão log(qtd) vs mês) ----------
+    mensal_temp = agregado_universo.groupby(
+        ["CD_PRESTADOR", "MES"], dropna=False, observed=True
+    )["qtd_procedimentos"].sum().reset_index()
+    def _slope_prestador_temp(grupo):
+        g = grupo.dropna(subset=["MES"]).sort_values("MES").tail(6)
+        if len(g) < 3:
+            return pd.Series({"i4_variacao_pct": np.nan, "i4_n_meses": len(g)})
+        x = np.arange(len(g))
+        y = np.log(g["qtd_procedimentos"].clip(lower=0).to_numpy() + 1)
+        slope = np.polyfit(x, y, 1)[0]
+        variacao_pct = (np.exp(slope * (len(g) - 1)) - 1) * 100
+        return pd.Series({"i4_variacao_pct": variacao_pct, "i4_n_meses": len(g)})
+    if mensal_temp.empty:
+        base_temp["i4_variacao_pct"] = np.nan
+        base_temp["i4_n_meses"] = 0
+    else:
+        _tendencia_temp = (
+            mensal_temp.groupby("CD_PRESTADOR").apply(_slope_prestador_temp)
+            .reset_index()
+        )
+        base_temp = base_temp.merge(_tendencia_temp, on="CD_PRESTADOR", how="left")
+
+    # ---------- I7 (dependência de pacientes — top 10% do valor, ou top 1-2 se <10 vidas) ----------
+    def _i7_prestador_temp(grupo):
+        vals = grupo["VL_PAGO"].sort_values(ascending=False)
+        total = vals.sum()
+        if total <= 0:
+            return np.nan
+        n = len(vals)
+        k = min(2, n) if n < 10 else max(1, int(np.ceil(n * 0.10)))
+        return vals.iloc[:k].sum() / total * 100
+    if valor_paciente_temp is not None and not valor_paciente_temp.empty:
+        _i7_series_temp = valor_paciente_temp.groupby("CD_PRESTADOR").apply(_i7_prestador_temp)
+        _i7_series_temp.name = "i7_pct"
+        base_temp = base_temp.merge(_i7_series_temp, left_on="CD_PRESTADOR", right_index=True, how="left")
+    else:
+        base_temp["i7_pct"] = np.nan
+
+    # ---------- pontuação 0-100 de cada indicador (faixas dos anexos) ----------
+    base_temp["I1"] = np.where(base_temp["i1_pct"].notna(),
+        _risco_pontuar_faixas_temp(base_temp["i1_pct"], [30, 40, 50, 70], [0, 25, 50, 75, 100]), np.nan)
+    base_temp["I2"] = np.where(base_temp["i2_razao"].notna(),
+        _risco_pontuar_faixas_temp(base_temp["i2_razao"], [1.0, 1.5, 2.0, 3.0], [0, 25, 50, 75, 100]), np.nan)
+    base_temp["I3"] = np.where(base_temp["i3_razao"].notna(),
+        _risco_pontuar_faixas_temp(base_temp["i3_razao"], [1.0, 1.5, 2.0, 3.0], [0, 25, 50, 75, 100]), np.nan)
+    base_temp["I4"] = np.where(base_temp["i4_variacao_pct"].notna(),
+        _risco_pontuar_faixas_temp(base_temp["i4_variacao_pct"], [50, 100, 200, 400], [0, 25, 50, 75, 100]), np.nan)
+    base_temp["I5"] = base_temp["i5_pct"]
+    base_temp["I6"] = np.where(base_temp["i6_pct"].notna(),
+        _risco_pontuar_faixas_temp(base_temp["i6_pct"], [60, 75, 85, 95], [0, 25, 50, 75, 100]), np.nan)
+    base_temp["I7"] = np.where(base_temp["i7_pct"].notna(),
+        _risco_pontuar_faixas_temp(base_temp["i7_pct"], [30, 50, 70, 85], [0, 25, 50, 75, 100]), np.nan)
+
+    # Indicador sem dado disponível (ex.: só 1-2 meses de histórico pro I4, ou
+    # prestador fora da base de valor por paciente pro I7) entra com 0 no composto —
+    # não penaliza nem favorece por ausência de dado; fica visível como "—" na tela/
+    # PDF através das colunas i*_pct/i*_razao (não das notas I1..I7).
+    base_temp["composto"] = sum(
+        base_temp[k].fillna(0) * peso for k, peso in _RISCO_PESOS_TEMP.items()
+    )
+
+    # ---------- Y: piso de materialidade ----------
+    _mediana_nacional_temp = base_temp["soma_valor"].median()
+    _contagem_cluster_temp = base_temp.groupby("CLUSTER", observed=True)["CD_PRESTADOR"].transform("count")
+    _mediana_cluster_temp = base_temp.groupby("CLUSTER", observed=True)["soma_valor"].transform("median")
+    _mediana_ref_temp = np.where(_contagem_cluster_temp >= 30, _mediana_cluster_temp, _mediana_nacional_temp)
+    base_temp["Y"] = np.maximum(_mediana_ref_temp, 5000.0)
+    base_temp["abaixo_do_piso"] = base_temp["soma_valor"] < base_temp["Y"]
+
+    # ---------- gates G1/G2 (pisos de classificação) ----------
+    base_temp["gate_g1"] = (
+        (base_temp["i1_pct"].fillna(0) >= 70) | (base_temp["i6_pct"].fillna(0) >= 90)
+    ) & (base_temp["I2"].fillna(0) >= 50)
+    base_temp["gate_g2"] = (base_temp["CLUSTER"].astype(str) == "D") & (
+        (base_temp["i1_pct"].fillna(0) >= 50) | (base_temp["i6_pct"].fillna(0) >= 85)
+    )
+
+    # ---------- classificação final ----------
+    def _classificar_temp(row):
+        if row["abaixo_do_piso"]:
+            return pd.Series({"classificacao": "Sem alerta", "cor_classificacao": "#9aa5b1", "ordem_classificacao": 0})
+        for piso, rotulo, cor, ordem in _RISCO_FAIXAS_TEMP:
+            if row["composto"] >= piso:
+                if (row["gate_g1"] or row["gate_g2"]) and ordem < 3:
+                    rotulo, cor, ordem = "Alerta moderado alto", "#e67e22", 3
+                return pd.Series({"classificacao": rotulo, "cor_classificacao": cor, "ordem_classificacao": ordem})
+        return pd.Series({"classificacao": "Sem alerta", "cor_classificacao": "#9aa5b1", "ordem_classificacao": 0})
+    base_temp = pd.concat([base_temp, base_temp.apply(_classificar_temp, axis=1)], axis=1)
+    base_temp["classificacao_emoji"] = (
+        base_temp["classificacao"].map(_RISCO_EMOJI_FAIXA_TEMP) + " " + base_temp["classificacao"]
+    )
+    return base_temp.sort_values(
+        ["ordem_classificacao", "composto"], ascending=[False, False]
+    ).reset_index(drop=True)
 def label_mes(key):
     y, m = key.split("-")
     return f"{MESES_ABREV[int(m) - 1]}/{y}"
@@ -932,11 +1199,13 @@ elif st.session_state.pagina == "severidade":
     m4.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
     m5.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
     st.divider()
-    # Sequência das abas: Ranking, Projeção, Resumo.
-    _labels_abas_temp = ["📊 Ranking", "📍 Projeção de Credenciamento", "Resumo"]
+    # Sequência das abas: Ranking, Projeção, Resumo, Índice de Risco.
+    _labels_abas_temp = [
+        "📊 Ranking", "📍 Projeção de Credenciamento", "Resumo", "🎯 Índice de Risco",
+    ]
     _abas_criadas_temp = st.tabs(_labels_abas_temp)
-    tab_ranking_temp, tab_credenciamento, tab_resumo = (
-        _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2],
+    tab_ranking_temp, tab_credenciamento, tab_resumo, tab_risco_temp = (
+        _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2], _abas_criadas_temp[3],
     )
     # (tab_obj, título exibido, lista de códigos que restringe a aba — None = todos os
     # procedimentos, sufixo pra deixar as keys dos widgets únicas por aba, nome do prestador
@@ -4009,4 +4278,593 @@ elif st.session_state.pagina == "severidade":
                         st.plotly_chart(
                             fig_hist_temp, use_container_width=True,
                             key=f"grafico_hist_temp{_sufixo_aba_temp}",
+                        )
+    # ============================================================
+    # ABA "🎯 Índice de Risco" — 7 indicadores (I1-I7), composto ponderado, gates
+    # G1/G2 e classificação final, conforme os dois documentos anexados pelo
+    # usuário. Cálculo em _calcular_indicadores_risco_temp (definida lá em cima,
+    # nível de módulo, junto de _risco_valor_por_paciente_temp) — aqui só monta a
+    # tela e o PDF em cima do resultado.
+    # ============================================================
+    with tab_risco_temp:
+        st.markdown("#### 🎯 Índice de Risco do Prestador")
+        st.caption(
+            "Modelo composto de 7 indicadores — I1 Dependência de procedimento único (20%) · "
+            "I2 Severidade da prática (15%) · I3 Exposição financeira/ticket (15%) · "
+            "I4 Crescimento anômalo/tendência (10%) · I5 Criticidade cluster×porte (15%) · "
+            "I6 Diversificação da produção (15%) · I7 Dependência de pacientes (10%). "
+            "**Usa todo o histórico de meses carregado na base** (não é afetado pelo filtro de "
+            "Mês) — concentração, ticket e tendência só fazem sentido no acumulado do "
+            "prestador, não num mês isolado. Filtros de Plano/Especialidade da página, se "
+            "aplicados, continuam valendo. Prestadores com valor pago abaixo do piso de "
+            "materialidade (mediana do cluster, mínimo R$ 5.000) ficam fora do ranqueamento "
+            "(\"Sem alerta\")."
+        )
+
+        _risco_universo_temp = aplicar_filtros(
+            agregado, planos=f_plano or None, especialidades=f_especialidade or None,
+        )
+        _risco_usuarios_universo_temp = aplicar_filtros(
+            base_usuarios, planos=f_plano or None, especialidades=f_especialidade or None,
+        )
+        _risco_valor_paciente_carregado_temp = _risco_valor_por_paciente_temp(".")
+
+        if _risco_universo_temp.empty:
+            st.info("Nenhum dado para calcular o Índice de Risco com os filtros atuais.")
+        else:
+            with st.spinner("Calculando os 7 indicadores..."):
+                _risco_tabela_completa_temp = _calcular_indicadores_risco_temp(
+                    _risco_universo_temp, _risco_usuarios_universo_temp,
+                    _risco_valor_paciente_carregado_temp,
+                )
+
+            if _risco_tabela_completa_temp.empty:
+                st.info("Nenhum prestador para calcular o Índice de Risco com os filtros atuais.")
+            else:
+                # ---------- filtros da aba (só afetam a EXIBIÇÃO — as referências de cluster
+                # (mediana/percentis) já foram calculadas em cima do universo inteiro, antes
+                # deste recorte — ver docstring de _calcular_indicadores_risco_temp) ----------
+                fc1_risco, fc2_risco, fc3_risco, fc4_risco = st.columns(4)
+                with fc1_risco:
+                    f_uf_risco_temp = st.multiselect(
+                        "UF", options=sorted(_risco_tabela_completa_temp["UF"].dropna().unique()),
+                        key="temp_filtro_uf_risco",
+                    )
+                with fc2_risco:
+                    _opcoes_cidade_risco_temp = sorted((
+                        _risco_tabela_completa_temp[_risco_tabela_completa_temp["UF"].isin(f_uf_risco_temp)]
+                        if f_uf_risco_temp else _risco_tabela_completa_temp
+                    )["CIDADE_PRESTADOR"].dropna().unique())
+                    f_cidade_risco_temp = st.multiselect(
+                        "Cidade", options=_opcoes_cidade_risco_temp, key="temp_filtro_cidade_risco",
+                    )
+                with fc3_risco:
+                    f_cluster_risco_temp = st.multiselect(
+                        "Cluster", options=sorted(_risco_tabela_completa_temp["CLUSTER"].dropna().unique()),
+                        key="temp_filtro_cluster_risco",
+                    )
+                with fc4_risco:
+                    f_prestador_risco_temp = st.multiselect(
+                        "Prestador",
+                        options=sorted(_risco_tabela_completa_temp["NOME_PRESTADOR"].dropna().unique()),
+                        key="temp_filtro_prestador_risco",
+                    )
+                _mostrar_sem_alerta_risco_temp = st.checkbox(
+                    "Mostrar também prestadores \"Sem alerta\" (abaixo do piso de materialidade "
+                    "ou composto < 25)", value=False, key="temp_mostrar_sem_alerta_risco",
+                )
+
+                _risco_exibicao_temp = _risco_tabela_completa_temp.copy()
+                if f_uf_risco_temp:
+                    _risco_exibicao_temp = _risco_exibicao_temp[_risco_exibicao_temp["UF"].isin(f_uf_risco_temp)]
+                if f_cidade_risco_temp:
+                    _risco_exibicao_temp = _risco_exibicao_temp[
+                        _risco_exibicao_temp["CIDADE_PRESTADOR"].isin(f_cidade_risco_temp)
+                    ]
+                if f_cluster_risco_temp:
+                    _risco_exibicao_temp = _risco_exibicao_temp[
+                        _risco_exibicao_temp["CLUSTER"].isin(f_cluster_risco_temp)
+                    ]
+                if f_prestador_risco_temp:
+                    _risco_exibicao_temp = _risco_exibicao_temp[
+                        _risco_exibicao_temp["NOME_PRESTADOR"].isin(f_prestador_risco_temp)
+                    ]
+                if not _mostrar_sem_alerta_risco_temp:
+                    _risco_exibicao_temp = _risco_exibicao_temp[
+                        _risco_exibicao_temp["classificacao"] != "Sem alerta"
+                    ]
+
+                # ---------- resumo por faixa (sempre sobre a base inteira, não só o filtro) ----------
+                st.markdown("**Resumo — prestadores por faixa**")
+                _contagem_faixa_temp = _risco_tabela_completa_temp["classificacao"].value_counts()
+                _cols_resumo_risco_temp = st.columns(len(_RISCO_FAIXAS_TEMP))
+                for _col_resumo_temp, (_, _rotulo_faixa_temp, _, _) in zip(
+                    _cols_resumo_risco_temp, _RISCO_FAIXAS_TEMP
+                ):
+                    _col_resumo_temp.metric(
+                        f"{_RISCO_EMOJI_FAIXA_TEMP[_rotulo_faixa_temp]} {_rotulo_faixa_temp}",
+                        int(_contagem_faixa_temp.get(_rotulo_faixa_temp, 0)),
+                    )
+
+                st.divider()
+                if _risco_exibicao_temp.empty:
+                    st.info("Nenhum prestador nessa combinação de filtros.")
+                else:
+                    st.markdown(f"**Prestadores classificados ({len(_risco_exibicao_temp)})**")
+                    _tabela_exibicao_risco_temp = _risco_exibicao_temp[[
+                        "classificacao_emoji", "NOME_PRESTADOR", "UF", "CIDADE_PRESTADOR", "CLUSTER",
+                        "composto", "I1", "I2", "I3", "I4", "I5", "I6", "I7", "soma_valor",
+                    ]].rename(columns={
+                        "classificacao_emoji": "Classificação", "NOME_PRESTADOR": "Prestador",
+                        "CIDADE_PRESTADOR": "Cidade", "composto": "Composto", "soma_valor": "Valor pago",
+                    })
+                    st.dataframe(
+                        _tabela_exibicao_risco_temp, hide_index=True, use_container_width=True,
+                        column_config={
+                            "Composto": st.column_config.ProgressColumn(
+                                "Composto", min_value=0, max_value=100, format="%.0f",
+                            ),
+                            "Valor pago": st.column_config.NumberColumn("Valor pago", format="R$ %.0f"),
+                            **{
+                                _col_ind_temp: st.column_config.NumberColumn(_col_ind_temp, format="%.0f")
+                                for _col_ind_temp in ["I1", "I2", "I3", "I4", "I5", "I6", "I7"]
+                            },
+                        },
+                    )
+
+                    st.divider()
+                    st.markdown("**Detalhamento por prestador**")
+                    st.caption(
+                        "Mostrando o detalhe dos 30 prestadores de composto mais alto (dentre os "
+                        "filtrados acima) — refine os filtros pra ver um prestador específico."
+                    )
+                    for _, _linha_risco_temp in _risco_exibicao_temp.head(30).iterrows():
+                        _titulo_expander_risco_temp = (
+                            f"{_linha_risco_temp['classificacao_emoji']} — "
+                            f"{_linha_risco_temp['NOME_PRESTADOR']} — {_linha_risco_temp['UF']}, "
+                            f"{_linha_risco_temp['CIDADE_PRESTADOR']} — Cluster "
+                            f"{_linha_risco_temp['CLUSTER']} — composto {_linha_risco_temp['composto']:.0f}"
+                        )
+                        with st.expander(_titulo_expander_risco_temp):
+                            if _linha_risco_temp["abaixo_do_piso"]:
+                                st.info(
+                                    f"Valor pago total ({fmt_brl(_linha_risco_temp['soma_valor'])}) "
+                                    f"abaixo do piso de materialidade Y "
+                                    f"({fmt_brl(_linha_risco_temp['Y'])}) — prestador fora do "
+                                    "ranqueamento de risco."
+                                )
+                            if _linha_risco_temp["gate_g1"]:
+                                st.warning(
+                                    "🔓 **Gate G1** acionado: I1 ≥ 70% ou I6 ≥ 90%, e I2 ≥ 50 → "
+                                    "classificação elevada para no mínimo Alerta moderado alto."
+                                )
+                            if _linha_risco_temp["gate_g2"]:
+                                st.warning(
+                                    "🔓 **Gate G2** acionado: cluster D com I1 ≥ 50% ou I6 ≥ 85% → "
+                                    "classificação elevada para no mínimo Alerta moderado alto."
+                                )
+                            _linhas_indicadores_risco_temp = [
+                                ("I1", "Dependência de procedimento único", "20%",
+                                 f"{_linha_risco_temp['i1_pct']:.1f}% do valor/uso no top-1"
+                                 if pd.notna(_linha_risco_temp["i1_pct"]) else "—",
+                                 _linha_risco_temp["I1"]),
+                                ("I2", "Severidade da prática", "15%",
+                                 f"{_linha_risco_temp['i2_razao']:.2f}× a mediana do cluster"
+                                 if pd.notna(_linha_risco_temp["i2_razao"]) else "—",
+                                 _linha_risco_temp["I2"]),
+                                ("I3", "Exposição financeira (ticket)", "15%",
+                                 f"{_linha_risco_temp['i3_razao']:.2f}× a mediana da especialidade "
+                                 "no cluster" if pd.notna(_linha_risco_temp["i3_razao"]) else "—",
+                                 _linha_risco_temp["I3"]),
+                                ("I4", "Crescimento anômalo (tendência)", "10%",
+                                 (f"≈{_linha_risco_temp['i4_variacao_pct']:.0f}% no período "
+                                  f"({int(_linha_risco_temp['i4_n_meses'])} meses)"
+                                  if pd.notna(_linha_risco_temp["i4_variacao_pct"])
+                                  else f"sem histórico suficiente ({int(_linha_risco_temp['i4_n_meses'])} "
+                                       "mês(es))"),
+                                 _linha_risco_temp["I4"]),
+                                ("I5", "Criticidade cluster × porte", "15%",
+                                 f"cluster {_linha_risco_temp['CLUSTER']} "
+                                 f"(score {_linha_risco_temp['score_cluster']:.0f}) + porte "
+                                 f"(score {_linha_risco_temp['score_porte']:.0f})",
+                                 _linha_risco_temp["I5"]),
+                                ("I6", "Diversificação da produção (top-3)", "15%",
+                                 f"{_linha_risco_temp['i6_pct']:.1f}% do valor nos top-3 procedimentos"
+                                 if pd.notna(_linha_risco_temp["i6_pct"]) else "—",
+                                 _linha_risco_temp["I6"]),
+                                ("I7", "Dependência de pacientes", "10%",
+                                 f"{_linha_risco_temp['i7_pct']:.1f}% do valor no(s) paciente(s) mais "
+                                 "relevante(s)" if pd.notna(_linha_risco_temp["i7_pct"]) else "—",
+                                 _linha_risco_temp["I7"]),
+                            ]
+                            _df_indicadores_risco_temp = pd.DataFrame(
+                                _linhas_indicadores_risco_temp,
+                                columns=["Indicador", "O que mede", "Peso", "Valor observado", "Nota (0-100)"],
+                            )
+                            st.dataframe(_df_indicadores_risco_temp, hide_index=True, use_container_width=True)
+                            st.caption(
+                                f"Vidas: {fmt_int(_linha_risco_temp['qtd_usuarios'])} · "
+                                f"Procedimentos: {fmt_int(_linha_risco_temp['qtd_procedimentos'])} · "
+                                f"Valor pago: {fmt_brl(_linha_risco_temp['soma_valor'])} · "
+                                f"Composto final: **{_linha_risco_temp['composto']:.1f}** → "
+                                f"{_linha_risco_temp['classificacao_emoji']}"
+                            )
+
+                st.divider()
+                # ---------- Gerar PDF ----------
+                st.markdown("**📄 Exportar em PDF**")
+
+                def _gerar_pdf_risco_temp():
+                    try:
+                        from reportlab.lib.pagesizes import A4
+                        from reportlab.lib.units import mm
+                        from reportlab.lib import colors as rl_colors
+                        from reportlab.platypus import (
+                            SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer,
+                            Image as RLImage,
+                        )
+                        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                    except ImportError as _erro_libs_risco_temp:
+                        st.error(
+                            "Pra gerar o PDF falta a biblioteca `reportlab` no ambiente. "
+                            "Adicione ao requirements.txt e reinicie o app. Detalhe técnico: "
+                            f"{_erro_libs_risco_temp}"
+                        )
+                        return None
+
+                    _COR_PRIMARIA_RISCO_TEMP = rl_colors.HexColor("#0f5f8c")
+                    _COR_TEXTO_RISCO_TEMP = rl_colors.HexColor("#1f2d3a")
+                    _COR_ZEBRA_RISCO_TEMP = rl_colors.HexColor("#f6f8fa")
+                    _COR_BORDA_RISCO_TEMP = rl_colors.HexColor("#d8dee3")
+
+                    buf_pdf_risco_temp = io.BytesIO()
+                    doc_risco_temp = SimpleDocTemplate(
+                        buf_pdf_risco_temp, pagesize=A4,
+                        topMargin=18 * mm, bottomMargin=16 * mm, leftMargin=14 * mm, rightMargin=14 * mm,
+                        title="Índice de Risco do Prestador - Odonto",
+                    )
+                    styles_risco_temp = getSampleStyleSheet()
+                    estilo_titulo_risco_temp = ParagraphStyle(
+                        "TituloRiscoPdfTemp", parent=styles_risco_temp["Title"], fontSize=17,
+                        textColor=_COR_PRIMARIA_RISCO_TEMP, leading=20, spaceAfter=0,
+                    )
+                    estilo_subtitulo_risco_temp = ParagraphStyle(
+                        "SubtituloRiscoPdfTemp", parent=styles_risco_temp["Normal"], fontSize=10,
+                        textColor=_COR_PRIMARIA_RISCO_TEMP, leading=13,
+                    )
+                    estilo_secao_risco_temp = ParagraphStyle(
+                        "SecaoRiscoPdfTemp", parent=styles_risco_temp["Heading2"], fontSize=12.5,
+                        textColor=_COR_PRIMARIA_RISCO_TEMP, spaceBefore=10, spaceAfter=4,
+                    )
+                    estilo_prestador_risco_temp = ParagraphStyle(
+                        "PrestadorRiscoPdfTemp", parent=styles_risco_temp["Normal"], fontSize=9.5,
+                        textColor=rl_colors.white, leading=12,
+                    )
+                    estilo_corpo_risco_temp = ParagraphStyle(
+                        "CorpoRiscoPdfTemp", parent=styles_risco_temp["Normal"], fontSize=8.5,
+                        textColor=_COR_TEXTO_RISCO_TEMP, leading=11,
+                    )
+                    estilo_legenda_risco_temp = ParagraphStyle(
+                        "LegendaRiscoPdfTemp", parent=styles_risco_temp["Normal"], fontSize=8,
+                        textColor=_COR_TEXTO_RISCO_TEMP, leading=11,
+                    )
+
+                    story_risco_temp = []
+
+                    # ---- cabeçalho ----
+                    _logo_flowable_risco_temp = ""
+                    if LOGO_PATH and os.path.exists(LOGO_PATH):
+                        try:
+                            from PIL import Image as PILImageRiscoTemp
+                            with PILImageRiscoTemp.open(LOGO_PATH) as _im_teste_risco_temp:
+                                _im_teste_risco_temp.verify()
+                            _logo_flowable_risco_temp = RLImage(
+                                LOGO_PATH, width=26 * mm, height=26 * mm, kind="proportional"
+                            )
+                        except Exception:
+                            _logo_flowable_risco_temp = ""
+                    _titulo_cel_risco_temp = [
+                        Paragraph("Painel de Gestão de Sinistro — Odonto", estilo_titulo_risco_temp),
+                        Paragraph("Índice de Risco do Prestador", estilo_subtitulo_risco_temp),
+                    ]
+                    _tabela_cabecalho_risco_temp = Table(
+                        [[_logo_flowable_risco_temp, _titulo_cel_risco_temp]],
+                        colWidths=[30 * mm, 152 * mm],
+                    )
+                    _tabela_cabecalho_risco_temp.setStyle(TableStyle([
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                        ("ALIGN", (0, 0), (0, 0), "CENTER"),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                        ("TOPPADDING", (0, 0), (-1, -1), 8),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                    ]))
+                    story_risco_temp.append(_tabela_cabecalho_risco_temp)
+                    story_risco_temp.append(Spacer(1, 8))
+
+                    # ---- metadados ----
+                    _filtros_ativos_risco_temp = []
+                    if f_plano:
+                        _filtros_ativos_risco_temp.append(f"Plano: {', '.join(f_plano)}")
+                    if f_especialidade:
+                        _filtros_ativos_risco_temp.append(f"Especialidade: {', '.join(f_especialidade)}")
+                    for _rotulo_f_temp, _valores_f_temp in (
+                        ("UF", f_uf_risco_temp), ("Cidade", f_cidade_risco_temp),
+                        ("Cluster", f_cluster_risco_temp), ("Prestador", f_prestador_risco_temp),
+                    ):
+                        if _valores_f_temp:
+                            _filtros_ativos_risco_temp.append(f"{_rotulo_f_temp}: {', '.join(_valores_f_temp)}")
+                    _texto_filtros_risco_temp = (
+                        "; ".join(_filtros_ativos_risco_temp) if _filtros_ativos_risco_temp
+                        else "Nenhum — todos os prestadores da base"
+                    )
+                    _linhas_meta_risco_temp = [
+                        ("Escopo", "Histórico completo carregado na base (não recorta por mês)"),
+                        ("Modelo", "7 indicadores — I1 20% · I2 15% · I3 15% · I4 10% · I5 15% · I6 15% · I7 10%"),
+                        ("Filtros aplicados", _texto_filtros_risco_temp),
+                        ("Gerado em", _agora_brasilia_temp().strftime("%d/%m/%Y às %H:%M")),
+                    ]
+                    _tabela_meta_risco_temp = Table(
+                        [
+                            [Paragraph(f"<b>{html.escape(k)}</b>", estilo_corpo_risco_temp),
+                             Paragraph(html.escape(v), estilo_corpo_risco_temp)]
+                            for k, v in _linhas_meta_risco_temp
+                        ],
+                        colWidths=[38 * mm, 144 * mm],
+                    )
+                    _tabela_meta_risco_temp.setStyle(TableStyle([
+                        ("BACKGROUND", (0, 0), (-1, -1), _COR_ZEBRA_RISCO_TEMP),
+                        ("BOX", (0, 0), (-1, -1), 0.5, _COR_BORDA_RISCO_TEMP),
+                        ("INNERGRID", (0, 0), (-1, -1), 0.5, rl_colors.white),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                        ("TOPPADDING", (0, 0), (-1, -1), 4),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ]))
+                    story_risco_temp.append(_tabela_meta_risco_temp)
+                    story_risco_temp.append(Spacer(1, 6))
+
+                    # ---- resumo por faixa ----
+                    story_risco_temp.append(Paragraph("Resumo — prestadores por faixa", estilo_secao_risco_temp))
+                    _linhas_resumo_faixa_temp = []
+                    for _piso_f_temp, _rotulo_f2_temp, _cor_f_temp, _ordem_f_temp in _RISCO_FAIXAS_TEMP:
+                        _n_f_temp = int((_risco_tabela_completa_temp["classificacao"] == _rotulo_f2_temp).sum())
+                        _linhas_resumo_faixa_temp.append([
+                            # sem emoji aqui também — o quadradinho colorido (BACKGROUND, logo
+                            # abaixo) já sinaliza a faixa, igual à legenda "Alerta de volume"
+                            # que o Ranking já usa.
+                            "", Paragraph(
+                                f"{html.escape(_rotulo_f2_temp)} — {_n_f_temp} prestador(es)",
+                                estilo_legenda_risco_temp,
+                            ),
+                        ])
+                    _tabela_resumo_faixa_temp = Table(
+                        _linhas_resumo_faixa_temp, colWidths=[6 * mm, 176 * mm],
+                        rowHeights=[6 * mm] * len(_linhas_resumo_faixa_temp),
+                    )
+                    _estilo_resumo_faixa_temp = [
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                    ]
+                    for _i_faixa_temp, (_, _, _cor_f2_temp, _) in enumerate(_RISCO_FAIXAS_TEMP):
+                        _estilo_resumo_faixa_temp.append(
+                            ("BACKGROUND", (0, _i_faixa_temp), (0, _i_faixa_temp), rl_colors.HexColor(_cor_f2_temp))
+                        )
+                    _tabela_resumo_faixa_temp.setStyle(TableStyle(_estilo_resumo_faixa_temp))
+                    story_risco_temp.append(_tabela_resumo_faixa_temp)
+                    story_risco_temp.append(Spacer(1, 8))
+
+                    # ---- tabela ranqueada (até 50 prestadores, exclui "Sem alerta") ----
+                    _tabela_pdf_base_temp = _risco_exibicao_temp if not _risco_exibicao_temp.empty else (
+                        _risco_tabela_completa_temp[_risco_tabela_completa_temp["classificacao"] != "Sem alerta"]
+                    )
+                    _tabela_pdf_ranking_temp = _tabela_pdf_base_temp.head(50)
+                    if not _tabela_pdf_ranking_temp.empty:
+                        story_risco_temp.append(Paragraph("Prestadores classificados", estilo_secao_risco_temp))
+                        _cab_tabela_risco_temp = [
+                            Paragraph("<b>Classif.</b>", estilo_corpo_risco_temp),
+                            Paragraph("<b>Prestador</b>", estilo_corpo_risco_temp),
+                            Paragraph("<b>UF/Cidade</b>", estilo_corpo_risco_temp),
+                            Paragraph("<b>Cluster</b>", estilo_corpo_risco_temp),
+                            Paragraph("<b>Composto</b>", estilo_corpo_risco_temp),
+                        ]
+                        _linhas_tabela_risco_temp = [_cab_tabela_risco_temp]
+                        for _linha_pdf_temp in _tabela_pdf_ranking_temp.itertuples():
+                            _linhas_tabela_risco_temp.append([
+                                # reportlab não desenha emoji com a fonte padrão (mesmo problema já
+                                # resolvido nas bandeirinhas do Ranking) — aqui a cor da faixa já
+                                # aparece pintando o fundo da própria célula (ver BACKGROUND logo
+                                # abaixo), sem precisar de emoji nem de texto na coluna.
+                                "",
+                                Paragraph(html.escape(str(_linha_pdf_temp.NOME_PRESTADOR or "—")), estilo_corpo_risco_temp),
+                                Paragraph(
+                                    html.escape(f"{_linha_pdf_temp.UF or '—'}/{_linha_pdf_temp.CIDADE_PRESTADOR or '—'}"),
+                                    estilo_corpo_risco_temp,
+                                ),
+                                Paragraph(html.escape(str(_linha_pdf_temp.CLUSTER or "—")), estilo_corpo_risco_temp),
+                                Paragraph(f"{_linha_pdf_temp.composto:.0f}", estilo_corpo_risco_temp),
+                            ])
+                        _tabela_ranking_pdf_temp = Table(
+                            _linhas_tabela_risco_temp, colWidths=[14 * mm, 72 * mm, 48 * mm, 20 * mm, 28 * mm],
+                            repeatRows=1,
+                        )
+                        _estilo_ranking_pdf_temp = [
+                            ("BACKGROUND", (0, 0), (-1, 0), _COR_PRIMARIA_RISCO_TEMP),
+                            ("TEXTCOLOR", (0, 0), (-1, 0), rl_colors.white),
+                            ("BOX", (0, 0), (-1, -1), 0.5, _COR_BORDA_RISCO_TEMP),
+                            ("INNERGRID", (0, 0), (-1, -1), 0.5, _COR_BORDA_RISCO_TEMP),
+                            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                            ("ALIGN", (0, 0), (0, -1), "CENTER"),
+                            ("ALIGN", (4, 0), (4, -1), "CENTER"),
+                            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                            ("TOPPADDING", (0, 0), (-1, -1), 3),
+                            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                        ]
+                        for _i_zebra_temp in range(1, len(_linhas_tabela_risco_temp)):
+                            if _i_zebra_temp % 2 == 0:
+                                _estilo_ranking_pdf_temp.append(
+                                    ("BACKGROUND", (0, _i_zebra_temp), (-1, _i_zebra_temp), _COR_ZEBRA_RISCO_TEMP)
+                                )
+                        # cor da faixa na coluna "Classif." (célula 0 de cada linha) — substitui o
+                        # emoji que o reportlab não desenha (ver comentário acima)
+                        for _i_cor_temp, _linha_cor_temp in enumerate(_tabela_pdf_ranking_temp.itertuples(), start=1):
+                            _estilo_ranking_pdf_temp.append((
+                                "BACKGROUND", (0, _i_cor_temp), (0, _i_cor_temp),
+                                rl_colors.HexColor(_linha_cor_temp.cor_classificacao),
+                            ))
+                        _tabela_ranking_pdf_temp.setStyle(TableStyle(_estilo_ranking_pdf_temp))
+                        story_risco_temp.append(_tabela_ranking_pdf_temp)
+                        if len(_tabela_pdf_base_temp) > 50:
+                            story_risco_temp.append(Spacer(1, 4))
+                            story_risco_temp.append(Paragraph(
+                                f"Mostrando os 50 de composto mais alto (de {len(_tabela_pdf_base_temp)} "
+                                "prestadores classificados nessa seleção).", estilo_legenda_risco_temp,
+                            ))
+                        story_risco_temp.append(Spacer(1, 8))
+                    else:
+                        story_risco_temp.append(Paragraph(
+                            "Nenhum prestador em alerta nessa seleção.", estilo_corpo_risco_temp,
+                        ))
+                        story_risco_temp.append(Spacer(1, 8))
+
+                    # ---- detalhamento (só Alerta moderado alto + Alerta forte — ordem >= 3) ----
+                    _detalhe_pdf_temp = _tabela_pdf_base_temp[
+                        _tabela_pdf_base_temp["ordem_classificacao"] >= 3
+                    ]
+                    story_risco_temp.append(Paragraph(
+                        f"Detalhamento por prestador — Alerta moderado alto e Alerta forte "
+                        f"({len(_detalhe_pdf_temp)})", estilo_secao_risco_temp,
+                    ))
+                    if _detalhe_pdf_temp.empty:
+                        story_risco_temp.append(Paragraph(
+                            "Nenhum prestador em Alerta moderado alto ou Alerta forte nessa seleção.",
+                            estilo_corpo_risco_temp,
+                        ))
+                    for _linha_det_temp in _detalhe_pdf_temp.itertuples():
+                        _cor_cab_det_temp = rl_colors.HexColor(_linha_det_temp.cor_classificacao)
+                        _cab_det_temp = Table(
+                            [[Paragraph(
+                                # sem emoji (reportlab não desenha) — a cor de fundo da barra já
+                                # sinaliza a faixa, e o rótulo por extenso vem no final da linha
+                                f"{html.escape(str(_linha_det_temp.NOME_PRESTADOR or '—'))} — "
+                                f"{html.escape(str(_linha_det_temp.UF or '—'))}, "
+                                f"{html.escape(str(_linha_det_temp.CIDADE_PRESTADOR or '—'))} — Cluster "
+                                f"{html.escape(str(_linha_det_temp.CLUSTER or '—'))} — composto "
+                                f"{_linha_det_temp.composto:.0f} ({html.escape(_linha_det_temp.classificacao)})",
+                                estilo_prestador_risco_temp,
+                            )]], colWidths=[176 * mm],
+                        )
+                        _cab_det_temp.setStyle(TableStyle([
+                            ("BACKGROUND", (0, 0), (-1, -1), _cor_cab_det_temp),
+                            ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                            ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                        ]))
+                        story_risco_temp.append(_cab_det_temp)
+
+                        def _fmt_pct_temp(v):
+                            return f"{v:.1f}%" if pd.notna(v) else "—"
+                        def _fmt_razao_temp(v):
+                            return f"{v:.2f}×" if pd.notna(v) else "—"
+                        _linhas_i_temp = [
+                            ["Indicador", "O que mede", "Peso", "Valor observado", "Nota"],
+                            ["I1", "Dependência de procedimento único", "20%",
+                             _fmt_pct_temp(_linha_det_temp.i1_pct) + " do valor/uso no top-1",
+                             f"{_linha_det_temp.I1:.0f}"],
+                            ["I2", "Severidade da prática", "15%",
+                             _fmt_razao_temp(_linha_det_temp.i2_razao) + " a mediana do cluster",
+                             f"{_linha_det_temp.I2:.0f}"],
+                            ["I3", "Exposição financeira (ticket)", "15%",
+                             _fmt_razao_temp(_linha_det_temp.i3_razao) + " a mediana da especialidade",
+                             f"{_linha_det_temp.I3:.0f}"],
+                            ["I4", "Crescimento anômalo (tendência)", "10%",
+                             (f"≈{_linha_det_temp.i4_variacao_pct:.0f}% no período "
+                              f"({int(_linha_det_temp.i4_n_meses)} meses)"
+                              if pd.notna(_linha_det_temp.i4_variacao_pct)
+                              else f"sem histórico suficiente ({int(_linha_det_temp.i4_n_meses)} mês(es))"),
+                             f"{_linha_det_temp.I4:.0f}"],
+                            ["I5", "Criticidade cluster × porte", "15%",
+                             f"cluster {_linha_det_temp.CLUSTER} + porte pequeno" if _linha_det_temp.score_porte >= 66
+                             else f"cluster {_linha_det_temp.CLUSTER}",
+                             f"{_linha_det_temp.I5:.0f}"],
+                            ["I6", "Diversificação da produção (top-3)", "15%",
+                             _fmt_pct_temp(_linha_det_temp.i6_pct) + " do valor nos top-3 procedimentos",
+                             f"{_linha_det_temp.I6:.0f}"],
+                            ["I7", "Dependência de pacientes", "10%",
+                             _fmt_pct_temp(_linha_det_temp.i7_pct) + " do valor no(s) paciente(s) mais relevante(s)",
+                             f"{_linha_det_temp.I7:.0f}"],
+                        ]
+                        _tabela_i_pdf_temp = Table(
+                            [[Paragraph(f"<b>{html.escape(str(c))}</b>" if _r == 0 else html.escape(str(c)),
+                                        estilo_corpo_risco_temp) for c in _linha]
+                             for _r, _linha in enumerate(_linhas_i_temp)],
+                            # coluna 0 um pouco mais larga que "I1" pra não quebrar o cabeçalho
+                            # "Indicador" em várias linhas (Ind/icad/or)
+                            colWidths=[19 * mm, 49 * mm, 12 * mm, 76 * mm, 20 * mm], repeatRows=1,
+                        )
+                        _estilo_tabela_i_temp = [
+                            ("BACKGROUND", (0, 0), (-1, 0), _COR_ZEBRA_RISCO_TEMP),
+                            ("BOX", (0, 0), (-1, -1), 0.5, _COR_BORDA_RISCO_TEMP),
+                            ("INNERGRID", (0, 0), (-1, -1), 0.5, _COR_BORDA_RISCO_TEMP),
+                            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                            ("ALIGN", (2, 0), (2, -1), "CENTER"), ("ALIGN", (4, 0), (4, -1), "CENTER"),
+                            ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                            ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                        ]
+                        _tabela_i_pdf_temp.setStyle(TableStyle(_estilo_tabela_i_temp))
+                        story_risco_temp.append(_tabela_i_pdf_temp)
+
+                        _gates_texto_temp = []
+                        if _linha_det_temp.gate_g1:
+                            _gates_texto_temp.append("Gate G1 (I1≥70% ou I6≥90%, e I2≥50)")
+                        if _linha_det_temp.gate_g2:
+                            _gates_texto_temp.append("Gate G2 (cluster D com I1≥50% ou I6≥85%)")
+                        if _gates_texto_temp:
+                            story_risco_temp.append(Spacer(1, 2))
+                            story_risco_temp.append(Paragraph(
+                                "<b>Piso aplicado:</b> " + html.escape("; ".join(_gates_texto_temp))
+                                + " — classificação elevada para no mínimo Alerta moderado alto.",
+                                estilo_legenda_risco_temp,
+                            ))
+                        story_risco_temp.append(Spacer(1, 8))
+
+                    def _rodape_pdf_risco_temp(canvas_temp, doc_temp):
+                        canvas_temp.saveState()
+                        canvas_temp.setFont("Helvetica", 7.5)
+                        canvas_temp.setFillColor(rl_colors.HexColor("#8a97a3"))
+                        canvas_temp.drawString(
+                            14 * mm, 10 * mm,
+                            "Painel de Gestão de Sinistro - Odonto — gerado automaticamente",
+                        )
+                        canvas_temp.drawRightString(
+                            A4[0] - 14 * mm, 10 * mm, f"Página {doc_temp.page}"
+                        )
+                        canvas_temp.restoreState()
+
+                    doc_risco_temp.build(
+                        story_risco_temp, onFirstPage=_rodape_pdf_risco_temp, onLaterPages=_rodape_pdf_risco_temp,
+                    )
+                    buf_pdf_risco_temp.seek(0)
+                    return buf_pdf_risco_temp.getvalue()
+
+                col_gerar_pdf_risco_temp, col_baixar_pdf_risco_temp = st.columns([1, 2])
+                with col_gerar_pdf_risco_temp:
+                    if st.button("📄 Gerar PDF", key="gerar_pdf_risco_temp", use_container_width=True):
+                        with st.spinner("Gerando PDF..."):
+                            _pdf_bytes_risco_temp = _gerar_pdf_risco_temp()
+                        if _pdf_bytes_risco_temp:
+                            st.session_state["pdf_risco_bytes_temp"] = _pdf_bytes_risco_temp
+                            st.session_state["pdf_risco_nome_temp"] = (
+                                f"indice_risco_odonto_{datetime.now():%Y%m%d_%H%M}.pdf"
+                            )
+                with col_baixar_pdf_risco_temp:
+                    if st.session_state.get("pdf_risco_bytes_temp"):
+                        st.download_button(
+                            "⬇️ Baixar PDF",
+                            data=st.session_state["pdf_risco_bytes_temp"],
+                            file_name=st.session_state.get("pdf_risco_nome_temp", "indice_risco_odonto.pdf"),
+                            mime="application/pdf",
+                            key="baixar_pdf_risco_temp",
+                            use_container_width=True,
                         )
