@@ -166,6 +166,16 @@ def fmt_brl(v):
     s = f"{v:,.2f}"
     s = s.replace(",", "§").replace(".", ",").replace("§", ".")
     return f"R$ {s}"
+def _agora_brasilia_temp():
+    """Horário atual em Brasília (America/Sao_Paulo) — usado nos textos "Gerado em".
+    Cai pra UTC-3 fixo (Brasil não tem mais horário de verão) se o ambiente não tiver
+    o banco de fusos horários (zoneinfo/tzdata) disponível."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/Sao_Paulo"))
+    except Exception:
+        from datetime import timezone, timedelta
+        return datetime.now(timezone(timedelta(hours=-3)))
 def fmt_int(v):
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
@@ -2797,11 +2807,11 @@ elif st.session_state.pagina == "severidade":
                             styles = getSampleStyleSheet()
                             estilo_titulo = ParagraphStyle(
                                 "TituloPdfTemp", parent=styles["Title"], fontSize=17,
-                                textColor=rl_colors.white, leading=20, spaceAfter=0,
+                                textColor=_COR_PRIMARIA_PDF_TEMP, leading=20, spaceAfter=0,
                             )
                             estilo_subtitulo = ParagraphStyle(
                                 "SubtituloPdfTemp", parent=styles["Normal"], fontSize=10,
-                                textColor=rl_colors.white, leading=13,
+                                textColor=_COR_PRIMARIA_PDF_TEMP, leading=13,
                             )
                             estilo_secao = ParagraphStyle(
                                 "SecaoPdfTemp", parent=styles["Heading2"], fontSize=12.5,
@@ -2843,7 +2853,6 @@ elif st.session_state.pagina == "severidade":
                                 colWidths=[30 * mm, 152 * mm],
                             )
                             _tabela_cabecalho_temp.setStyle(TableStyle([
-                                ("BACKGROUND", (0, 0), (-1, -1), _COR_PRIMARIA_PDF_TEMP),
                                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                                 ("ALIGN", (0, 0), (0, 0), "CENTER"),
                                 ("LEFTPADDING", (0, 0), (-1, -1), 8),
@@ -2880,7 +2889,7 @@ elif st.session_state.pagina == "severidade":
                                 ("Período considerado", _periodo_pdf_temp),
                                 ("Ranqueado por", ranquear_por_temp),
                                 ("Filtros aplicados", _texto_filtros_pdf_temp),
-                                ("Gerado em", datetime.now().strftime("%d/%m/%Y às %H:%M")),
+                                ("Gerado em", _agora_brasilia_temp().strftime("%d/%m/%Y às %H:%M")),
                             ]
                             _tabela_meta_temp = Table(
                                 [
@@ -2991,22 +3000,10 @@ elif st.session_state.pagina == "severidade":
                                     else:
                                         _comparacao_cs_temp = "Sem CS de referência da cidade para comparar."
 
-                                    # explicação do fallback pra média nacional só aparece quando ela
-                                    # de fato foi usada (cidade sem prestadores suficientes pra comparar)
-                                    if _usa_cidade_temp:
-                                        _explicacao_indice_temp = (
-                                            f"<i>(mostra quantas vezes o volume de procedimentos desse "
-                                            f"prestador é maior que a média de procedimentos por "
-                                            f"prestador — aqui, a média nesta cidade.)</i>"
-                                        )
-                                    else:
-                                        _explicacao_indice_temp = (
-                                            f"<i>(mostra quantas vezes o volume de procedimentos desse "
-                                            f"prestador é maior que a média de procedimentos por "
-                                            f"prestador — aqui, usada a média nacional pois na cidade "
-                                            f"não tem prestadores suficientes para comparação.)</i>"
-                                        )
-
+                                    # Sem explicação extra aqui: o "quantas vezes acima da média" já
+                                    # foi explicado na frase de comparação de volume logo acima
+                                    # (_comparacao_volume_temp), que já diz se a referência é a cidade
+                                    # ou o Brasil todo — repetir isso no Índice de Atenção é redundante.
                                     return (
                                         f"<b>{html.escape(_nome_prest_pdf_temp(row))}</b> — "
                                         f"{html.escape(str(_uf_temp))}, {html.escape(str(_cidade_temp))} "
@@ -3022,8 +3019,7 @@ elif st.session_state.pagina == "severidade":
                                         f"menos)</i><br/>"
                                         f"CS da Cidade: {_fmt_cs_temp(row.cs_cidade)}<br/>"
                                         f"{_comparacao_cs_temp}<br/><br/>"
-                                        f"Índice de Atenção: {_indice_atencao_texto_temp} "
-                                        f"{_explicacao_indice_temp}"
+                                        f"Índice de Atenção: {_indice_atencao_texto_temp}"
                                     )
 
                                 def _bloco_alerta_forte_pdf_temp(df_lista, limite=5):
@@ -3080,16 +3076,23 @@ elif st.session_state.pagina == "severidade":
                                 if not _flag_alto_pdf_temp.empty:
                                     _bloco_alerta_forte_pdf_temp(_flag_alto_pdf_temp)
 
+                            # A partir daqui (gráficos + detalhamento), o PDF só traz os
+                            # prestadores em ALERTA FORTE — mesma restrição do resumo, a
+                            # pedido do usuário.
+                            _rank_alerta_forte_pdf_temp = (
+                                _flag_alto_pdf_temp if not rank_temp.empty else rank_temp
+                            )
+
                             # ---- gráficos ----
-                            if not rank_temp.empty:
+                            if not _rank_alerta_forte_pdf_temp.empty:
                                 story.append(Paragraph("Visão geral", estilo_secao))
-                                _buf_disp_temp = _grafico_dispersao_pdf_temp(rank_temp)
+                                _buf_disp_temp = _grafico_dispersao_pdf_temp(_rank_alerta_forte_pdf_temp)
                                 if _buf_disp_temp is not None:
                                     story.append(RLImage(_buf_disp_temp, width=180 * mm, height=80 * mm))
                                     story.append(Spacer(1, 4))
                                 _coluna_metrica_pdf_temp = _OPCOES_RANQUEAR_TEMP.get(ranquear_por_temp, "cs")
                                 _buf_top10_temp = _grafico_top10_pdf_temp(
-                                    rank_temp, _coluna_metrica_pdf_temp, ranquear_por_temp
+                                    _rank_alerta_forte_pdf_temp, _coluna_metrica_pdf_temp, ranquear_por_temp
                                 )
                                 if _buf_top10_temp is not None:
                                     story.append(RLImage(_buf_top10_temp, width=180 * mm, height=80 * mm))
@@ -3097,11 +3100,19 @@ elif st.session_state.pagina == "severidade":
 
                             # ---- detalhamento por prestador (mesmo conteúdo dos expanders, já "aberto") ----
                             story.append(
-                                Paragraph(f"Detalhamento por prestador ({len(rank_temp)})", estilo_secao)
+                                Paragraph(
+                                    f"Detalhamento por prestador em alerta forte "
+                                    f"({len(_rank_alerta_forte_pdf_temp)})",
+                                    estilo_secao,
+                                )
                             )
                             if rank_temp.empty:
                                 story.append(Paragraph("Nenhum prestador nos filtros atuais.", estilo_corpo))
-                            for _linha_pdf_temp in rank_temp.itertuples():
+                            elif _rank_alerta_forte_pdf_temp.empty:
+                                story.append(Paragraph(
+                                    "Nenhum prestador em alerta forte nesta seleção.", estilo_corpo
+                                ))
+                            for _linha_pdf_temp in _rank_alerta_forte_pdf_temp.itertuples():
                                 _rotulo_bruto_temp = _linha_pdf_temp.rotulo
                                 if _rotulo_bruto_temp.startswith("🚩"):
                                     _cor_fundo_prest_temp = _COR_ALERTA_PDF_TEMP
@@ -3284,22 +3295,10 @@ elif st.session_state.pagina == "severidade":
                                 else:
                                     _comparacao_cs_temp = "Sem CS de referência da cidade para comparar."
 
-                                # explicação do fallback pra média nacional só aparece quando ela
-                                # de fato foi usada (cidade sem prestadores suficientes pra comparar)
-                                if _usa_cidade_temp:
-                                    _explicacao_indice_temp = (
-                                        f"<em>(mostra quantas vezes o volume de procedimentos desse "
-                                        f"prestador é maior que a média de procedimentos por "
-                                        f"prestador — aqui, a média nesta cidade.)</em>"
-                                    )
-                                else:
-                                    _explicacao_indice_temp = (
-                                        f"<em>(mostra quantas vezes o volume de procedimentos desse "
-                                        f"prestador é maior que a média de procedimentos por "
-                                        f"prestador — aqui, usada a média nacional pois na cidade "
-                                        f"não tem prestadores suficientes para comparação.)</em>"
-                                    )
-
+                                # Sem explicação extra aqui: o "quantas vezes acima da média" já
+                                # foi explicado na frase de comparação de volume logo acima
+                                # (_comparacao_volume_temp), que já diz se a referência é a cidade
+                                # ou o Brasil todo — repetir isso no Índice de Atenção é redundante.
                                 return (
                                     f"<strong>{html.escape(_nome_prest_email_temp(row))}</strong> — "
                                     f"{html.escape(str(_uf_temp))}, {html.escape(str(_cidade_temp))} "
@@ -3315,8 +3314,7 @@ elif st.session_state.pagina == "severidade":
                                     f"menos)</em><br>"
                                     f"CS da Cidade: {_fmt_cs_temp(row.cs_cidade)}<br>"
                                     f"{_comparacao_cs_temp}<br><br>"
-                                    f"Índice de Atenção: {_indice_atencao_texto_temp} "
-                                    f"{_explicacao_indice_temp}"
+                                    f"Índice de Atenção: {_indice_atencao_texto_temp}"
                                 )
 
                             def _bloco_alerta_forte_email_temp(partes, df_lista, limite=5):
