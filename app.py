@@ -2956,7 +2956,7 @@ elif st.session_state.pagina == "severidade":
                                         row.qtd_por_prestador_cidade if _usa_cidade_temp
                                         else row.qtd_por_prestador_nacional
                                     )
-                                    _rotulo_ref_temp = "Cidade" if _usa_cidade_temp else "Nacional"
+                                    _rotulo_ref_temp = "na cidade" if _usa_cidade_temp else "no Brasil"
                                     _fonte_texto_temp = "nesta cidade" if _usa_cidade_temp else "no Brasil todo"
 
                                     if pd.notna(row.indice_atencao_volume):
@@ -2966,11 +2966,13 @@ elif st.session_state.pagina == "severidade":
                                             f"<b>{_razao_fmt_temp} vezes</b> mais procedimentos do que a "
                                             f"média por prestador {_fonte_texto_temp}."
                                         )
+                                        _indice_atencao_texto_temp = f"×{_razao_fmt_temp} acima da média"
                                     else:
                                         _comparacao_volume_temp = (
                                             "Sem referência de volume por prestador pra comparar nesta "
                                             "seleção (sem cidade/nacional disponível)."
                                         )
+                                        _indice_atencao_texto_temp = html.escape(row.indice_atencao_volume_rotulo)
 
                                     if pd.notna(row.cs) and pd.notna(row.cs_cidade) and row.cs_cidade:
                                         _dif_pct_temp = (row.cs / row.cs_cidade - 1) * 100
@@ -2989,26 +2991,39 @@ elif st.session_state.pagina == "severidade":
                                     else:
                                         _comparacao_cs_temp = "Sem CS de referência da cidade para comparar."
 
+                                    # explicação do fallback pra média nacional só aparece quando ela
+                                    # de fato foi usada (cidade sem prestadores suficientes pra comparar)
+                                    if _usa_cidade_temp:
+                                        _explicacao_indice_temp = (
+                                            f"<i>(mostra quantas vezes o volume de procedimentos desse "
+                                            f"prestador é maior que a média de procedimentos por "
+                                            f"prestador — aqui, a média nesta cidade.)</i>"
+                                        )
+                                    else:
+                                        _explicacao_indice_temp = (
+                                            f"<i>(mostra quantas vezes o volume de procedimentos desse "
+                                            f"prestador é maior que a média de procedimentos por "
+                                            f"prestador — aqui, usada a média nacional pois na cidade "
+                                            f"não tem prestadores suficientes para comparação.)</i>"
+                                        )
+
                                     return (
                                         f"<b>{html.escape(_nome_prest_pdf_temp(row))}</b> — "
                                         f"{html.escape(str(_uf_temp))}, {html.escape(str(_cidade_temp))} "
                                         f"— Cluster {html.escape(str(_cluster_temp))}<br/><br/>"
-                                        f"Qtde proced: {fmt_int(row.qtd_procedimentos)}<br/>"
-                                        f"Qtde de proced por prestador ({_rotulo_ref_temp}): "
+                                        f"Qtde proced do prestador: {fmt_int(row.qtd_procedimentos)}<br/>"
+                                        f"Qtde de proced por prestador {_rotulo_ref_temp}: "
                                         f"{fmt_float2(_qtd_ref_temp)}<br/>"
                                         f"{_comparacao_volume_temp}<br/><br/>"
-                                        f"CS <i>(Coeficiente de Severidade — mede se o prestador "
-                                        f"praticou mais ou menos procedimentos do que o esperado pela "
-                                        f"taxa nacional; 10 = exatamente o esperado, acima é mais "
-                                        f"severo, abaixo é menos)</i>: {_fmt_cs_temp(row.cs)}<br/>"
+                                        f"CS: {_fmt_cs_temp(row.cs)} <i>(Coeficiente de Severidade — mede "
+                                        f"se o prestador praticou mais ou menos procedimentos do que o "
+                                        f"esperado pela média nacional; nesse coeficiente, 10 é "
+                                        f"considerado a média nacional — acima é mais severo, abaixo é "
+                                        f"menos)</i><br/>"
                                         f"CS da Cidade: {_fmt_cs_temp(row.cs_cidade)}<br/>"
                                         f"{_comparacao_cs_temp}<br/><br/>"
-                                        f"Índice de Atenção: {html.escape(row.indice_atencao_volume_rotulo)} "
-                                        f"<i>(mostra quantas vezes o volume de procedimentos desse "
-                                        f"prestador é maior que a média de procedimentos por prestador "
-                                        f"— aqui, a média {_fonte_texto_temp}; quando a cidade não tem "
-                                        f"prestadores suficientes pra essa comparação, usa a média do "
-                                        f"Brasil todo)</i>"
+                                        f"Índice de Atenção: {_indice_atencao_texto_temp} "
+                                        f"{_explicacao_indice_temp}"
                                     )
 
                                 def _bloco_alerta_forte_pdf_temp(df_lista, limite=5):
@@ -3050,8 +3065,6 @@ elif st.session_state.pagina == "severidade":
                                 else:
                                     if not _flag_alto_pdf_temp.empty:
                                         story.append(Paragraph(
-                                            f"Nos filtros atuais aparecem <b>{_total_prest_pdf_temp}</b> "
-                                            f"prestadores no Ranking. Desses, "
                                             f"<b>{len(_flag_alto_pdf_temp)}</b> está(ão) em "
                                             f"{_ROTULO_ALTO_PDF_TEMP} — volume de procedimentos ≥ 5× a "
                                             f"média por prestador.",
@@ -3059,9 +3072,8 @@ elif st.session_state.pagina == "severidade":
                                         ))
                                     else:
                                         story.append(Paragraph(
-                                            f"Nos filtros atuais aparecem <b>{_total_prest_pdf_temp}</b> "
-                                            f"prestadores no Ranking. Nenhum deles está em alerta forte "
-                                            f"(volume de procedimentos ≥ 5× a média por prestador).",
+                                            "Nenhum prestador está em alerta forte (volume de "
+                                            "procedimentos ≥ 5× a média por prestador).",
                                             estilo_corpo,
                                         ))
                                 story.append(Spacer(1, 4))
@@ -3237,7 +3249,7 @@ elif st.session_state.pagina == "severidade":
                                     row.qtd_por_prestador_cidade if _usa_cidade_temp
                                     else row.qtd_por_prestador_nacional
                                 )
-                                _rotulo_ref_temp = "Cidade" if _usa_cidade_temp else "Nacional"
+                                _rotulo_ref_temp = "na cidade" if _usa_cidade_temp else "no Brasil"
                                 _fonte_texto_temp = "nesta cidade" if _usa_cidade_temp else "no Brasil todo"
 
                                 if pd.notna(row.indice_atencao_volume):
@@ -3247,11 +3259,13 @@ elif st.session_state.pagina == "severidade":
                                         f"<strong>{_razao_fmt_temp} vezes</strong> mais procedimentos do "
                                         f"que a média por prestador {_fonte_texto_temp}."
                                     )
+                                    _indice_atencao_texto_temp = f"×{_razao_fmt_temp} acima da média"
                                 else:
                                     _comparacao_volume_temp = (
                                         "Sem referência de volume por prestador pra comparar nesta "
                                         "seleção (sem cidade/nacional disponível)."
                                     )
+                                    _indice_atencao_texto_temp = html.escape(row.indice_atencao_volume_rotulo)
 
                                 if pd.notna(row.cs) and pd.notna(row.cs_cidade) and row.cs_cidade:
                                     _dif_pct_temp = (row.cs / row.cs_cidade - 1) * 100
@@ -3270,26 +3284,39 @@ elif st.session_state.pagina == "severidade":
                                 else:
                                     _comparacao_cs_temp = "Sem CS de referência da cidade para comparar."
 
+                                # explicação do fallback pra média nacional só aparece quando ela
+                                # de fato foi usada (cidade sem prestadores suficientes pra comparar)
+                                if _usa_cidade_temp:
+                                    _explicacao_indice_temp = (
+                                        f"<em>(mostra quantas vezes o volume de procedimentos desse "
+                                        f"prestador é maior que a média de procedimentos por "
+                                        f"prestador — aqui, a média nesta cidade.)</em>"
+                                    )
+                                else:
+                                    _explicacao_indice_temp = (
+                                        f"<em>(mostra quantas vezes o volume de procedimentos desse "
+                                        f"prestador é maior que a média de procedimentos por "
+                                        f"prestador — aqui, usada a média nacional pois na cidade "
+                                        f"não tem prestadores suficientes para comparação.)</em>"
+                                    )
+
                                 return (
                                     f"<strong>{html.escape(_nome_prest_email_temp(row))}</strong> — "
                                     f"{html.escape(str(_uf_temp))}, {html.escape(str(_cidade_temp))} "
                                     f"— Cluster {html.escape(str(_cluster_temp))}<br><br>"
-                                    f"Qtde proced: {fmt_int(row.qtd_procedimentos)}<br>"
-                                    f"Qtde de proced por prestador ({_rotulo_ref_temp}): "
+                                    f"Qtde proced do prestador: {fmt_int(row.qtd_procedimentos)}<br>"
+                                    f"Qtde de proced por prestador {_rotulo_ref_temp}: "
                                     f"{fmt_float2(_qtd_ref_temp)}<br>"
                                     f"{_comparacao_volume_temp}<br><br>"
-                                    f"CS <em>(Coeficiente de Severidade — mede se o prestador "
-                                    f"praticou mais ou menos procedimentos do que o esperado pela "
-                                    f"taxa nacional; 10 = exatamente o esperado, acima é mais severo, "
-                                    f"abaixo é menos)</em>: {_fmt_cs_temp(row.cs)}<br>"
+                                    f"CS: {_fmt_cs_temp(row.cs)} <em>(Coeficiente de Severidade — mede "
+                                    f"se o prestador praticou mais ou menos procedimentos do que o "
+                                    f"esperado pela média nacional; nesse coeficiente, 10 é "
+                                    f"considerado a média nacional — acima é mais severo, abaixo é "
+                                    f"menos)</em><br>"
                                     f"CS da Cidade: {_fmt_cs_temp(row.cs_cidade)}<br>"
                                     f"{_comparacao_cs_temp}<br><br>"
-                                    f"Índice de Atenção: {html.escape(row.indice_atencao_volume_rotulo)} "
-                                    f"<em>(mostra quantas vezes o volume de procedimentos desse "
-                                    f"prestador é maior que a média de procedimentos por prestador "
-                                    f"— aqui, a média {_fonte_texto_temp}; quando a cidade não tem "
-                                    f"prestadores suficientes pra essa comparação, usa a média do "
-                                    f"Brasil todo)</em>"
+                                    f"Índice de Atenção: {_indice_atencao_texto_temp} "
+                                    f"{_explicacao_indice_temp}"
                                 )
 
                             def _bloco_alerta_forte_email_temp(partes, df_lista, limite=5):
@@ -3327,17 +3354,14 @@ elif st.session_state.pagina == "severidade":
                             else:
                                 if not _flag_alto_email_temp.empty:
                                     _partes_temp.append(
-                                        f"Nos filtros atuais aparecem <strong>{_total_email_temp}</strong> "
-                                        f"prestadores no Ranking. Desses, "
                                         f"<strong>{len(_flag_alto_email_temp)}</strong> está(ão) em "
                                         f"{_ALTO_HTML_TEMP} — volume de procedimentos ≥ 5× a média por "
                                         f"prestador."
                                     )
                                 else:
                                     _partes_temp.append(
-                                        f"Nos filtros atuais aparecem <strong>{_total_email_temp}</strong> "
-                                        f"prestadores no Ranking. Nenhum deles está em alerta forte "
-                                        f"(volume de procedimentos ≥ 5× a média por prestador)."
+                                        "Nenhum prestador está em alerta forte (volume de procedimentos "
+                                        "≥ 5× a média por prestador)."
                                     )
 
                             if not _flag_alto_email_temp.empty:
