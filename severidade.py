@@ -184,6 +184,23 @@ def carregar_base_severidade(pasta="."):
         grupos_arquivo.setdefault(_chave_mes(c), []).append(c)
     for chave in grupos_arquivo:
         grupos_arquivo[chave].sort(key=_numero_parte)
+    # Colunas que a leitura bruta traz (fazem parte de COLUNAS_ESPERADAS, com toda a
+    # validação normal de _ler_csv_parte — um arquivo sem alguma delas continua
+    # sendo rejeitado do mesmo jeito) mas que carregar_base_severidade() nunca usa
+    # depois: não aparecem em `grupos` (linhas 239-243, o agrupamento de `agregado`)
+    # nem em `colunas_usuarios` (linhas 302-306, a base de `base_usuarios`).
+    # VL_PROCEDIMENTO/VL_FRANQUIA: só soma_valor (a partir de VL_PAGO) é usado.
+    # STATUS_PROCED/EXECUCAO/CD_TUSS/DATA_AUT/DATA_ATEND: não entram em nenhum
+    # agrupamento, filtro ou tela. Descartadas logo após a leitura de cada parte —
+    # antes do concat de todos os meses — pra não carregar esse peso à toa durante
+    # os merges/agrupamentos a seguir: `dados` (a base bruta linha a linha, MUITO
+    # maior que `agregado`/`base_usuarios`) é o maior consumidor de memória de toda
+    # a função, e ele fica montado por inteiro até a linha em que base_usuarios é
+    # extraída dele.
+    colunas_raw_nao_usadas = [
+        "VL_PROCEDIMENTO", "VL_FRANQUIA", "STATUS_PROCED", "EXECUCAO", "CD_TUSS",
+        "DATA_AUT", "DATA_ATEND",
+    ]
     partes = []
     for chave_grupo, arquivos_do_grupo in grupos_arquivo.items():
         for arq in arquivos_do_grupo:
@@ -191,9 +208,11 @@ def carregar_base_severidade(pasta="."):
                 df = _ler_csv_parte(arq, COLUNAS_ESPERADAS)
             except Exception as e:
                 return None, None, f"Erro ao ler {os.path.basename(arq)}: {e}"
+            df = df.drop(columns=colunas_raw_nao_usadas)
             df["ARQUIVO_ORIGEM"] = chave_grupo
             partes.append(df)
     dados = pd.concat(partes, ignore_index=True)
+    del partes
     dados["DATA_REF"] = dados["DATA_SOL"]
     sem_atend = dados["DATA_REF"].isna()
     dados.loc[sem_atend, "DATA_REF"] = dados.loc[sem_atend, "DATA_SOL"]
@@ -255,6 +274,15 @@ def carregar_base_severidade(pasta="."):
         soma_uso=("QTD_USO", "sum"),
         soma_valor=("VL_PAGO", "sum"),
     ).reset_index()
+    # soma_uso/soma_valor não precisam da precisão de float64 (só são exibidas
+    # arredondadas — fmt_brl/fmt_float2 — ou usadas em somas/razões, nunca em
+    # comparação exata de igualdade); float32 tem ~7 dígitos significativos, muito
+    # acima de qualquer valor real de uso/R$ nessa base, e ocupa metade do espaço.
+    # qtd_procedimentos/qtd_usuarios ficam em int64 (não convertidos) — são
+    # somados de novo em outras funções (ranking_por, montar_watchlist, etc.), e um
+    # tipo inteiro menor arriscaria estourar em alguma soma futura.
+    agregado["soma_uso"] = pd.to_numeric(agregado["soma_uso"], downcast="float")
+    agregado["soma_valor"] = pd.to_numeric(agregado["soma_valor"], downcast="float")
     # Descarta linhas cuja dimensão principal veio vazia/não identificada — tanto
     # valor realmente ausente (NaN) quanto o texto literal "nan" digitado na
     # fonte (existe na base) — essas linhas não entram em nenhum ranking, gráfico
@@ -305,6 +333,11 @@ def carregar_base_severidade(pasta="."):
         "CIDADE_PRESTADOR", "CD_USUARIO",
     ]
     base_usuarios = dados[colunas_usuarios].drop_duplicates().reset_index(drop=True)
+    # `dados` (a base bruta, a maior de toda a função) não é mais usada depois
+    # daqui — só agregado/base_usuarios seguem em frente — então liberamos a
+    # referência assim que possível, em vez de deixá-la viva até o fim da função
+    # (junto com a conversão de categorias de base_usuarios logo abaixo).
+    del dados
     mascara_valida_usu = pd.Series(True, index=base_usuarios.index)
     for col in colunas_chave:
         mascara_valida_usu &= ~base_usuarios[col].apply(_vazio_ou_nan_texto)
