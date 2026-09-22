@@ -1499,7 +1499,7 @@ elif st.session_state.pagina == "severidade":
 
                             # ---- limpar filtros de busca desta aba, de uma vez só (mesmo
                             # padrão da aba Temporária: apaga a key do session_state + rerun) ----
-                            if st.button("🧹 Limpar filtros", key="limpar_filtros_cred_temp"):
+                            if st.button("Limpar filtros", key="limpar_filtros_cred_temp"):
                                 for _chave_filtro_cred_temp in ("cred_temp_busca_proc", "cred_temp_especialidade"):
                                     st.session_state.pop(_chave_filtro_cred_temp, None)
                                 st.rerun()
@@ -1733,7 +1733,7 @@ elif st.session_state.pagina == "severidade":
                 with coluna:
                     valor = st.selectbox(label, opcoes, key=chave)
                     if st.button(
-                        "🧹 limpar", key=f"limpar_campo_temp_{chave}", help="Limpar este filtro"
+                        "limpar", key=f"limpar_campo_temp_{chave}", help="Limpar este filtro"
                     ):
                         st.session_state.pop(chave, None)
                         st.rerun()
@@ -1743,7 +1743,7 @@ elif st.session_state.pagina == "severidade":
                 with coluna:
                     valor = st.multiselect(label, options=opcoes, key=chave)
                     if st.button(
-                        "🧹 limpar", key=f"limpar_campo_temp_{chave}", help="Limpar este filtro"
+                        "limpar", key=f"limpar_campo_temp_{chave}", help="Limpar este filtro"
                     ):
                         st.session_state.pop(chave, None)
                         st.rerun()
@@ -1844,7 +1844,7 @@ elif st.session_state.pagina == "severidade":
                                 "o nome está exatamente assim na base."
                             )
 
-                # ---- cada filtro com seu próprio "🧹 limpar" embaixo, em vez de um botão só
+                # ---- cada filtro com seu próprio "limpar" embaixo, em vez de um botão só
                 # que limpa tudo de uma vez — _selectbox_com_limpar_temp já foi definida mais
                 # acima (antes do bloco Mês/Plano/Especialidade), reaproveitada aqui. 1 coluna
                 # por filtro (o botão fica na mesma coluna do campo, embaixo dele).
