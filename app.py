@@ -950,218 +950,218 @@ elif st.session_state.pagina == "severidade":
         (tab_ranking_temp, "📊 Ranking", None, "_ranking", None, False),
     ]
     # ---------- RESUMO (mês vs. mês anterior, por variação % de uso) ----------
-    with tab_resumo:
-        st.markdown("#### 📌 Resumo do mês vs. mês anterior")
-        st.caption(
-            "Compara o último mês com o anterior pela **variação % de uso** (não em números "
-            "absolutos). Clique num item abaixo para expandir e ver o que causou o aumento. "
-            f"Só entram grupos com volume ≥ {volume_minimo} procedimentos em ambos os meses "
-            "(ajustável no filtro acima)."
-        )
-        resumo, msg_resumo = resumo_comparativo(df_filtrado, volume_minimo=volume_minimo, usuarios=usuarios_filtrado)
-        if resumo is None:
-            st.info(msg_resumo)
-        else:
-            st.caption(msg_resumo)
+#     with tab_resumo:
+#         st.markdown("#### 📌 Resumo do mês vs. mês anterior")
+#         st.caption(
+#             "Compara o último mês com o anterior pela **variação % de uso** (não em números "
+#             "absolutos). Clique num item abaixo para expandir e ver o que causou o aumento. "
+#             f"Só entram grupos com volume ≥ {volume_minimo} procedimentos em ambos os meses "
+#             "(ajustável no filtro acima)."
+#         )
+#         resumo, msg_resumo = resumo_comparativo(df_filtrado, volume_minimo=volume_minimo, usuarios=usuarios_filtrado)
+#         if resumo is None:
+#             st.info(msg_resumo)
+#         else:
+#             st.caption(msg_resumo)
 
-            def _fmt_pct(v):
-                return f"{v:+.1f}%" if pd.notna(v) else "—"
+#             def _fmt_pct(v):
+#                 return f"{v:+.1f}%" if pd.notna(v) else "—"
 
-            def _linha_resumo(row):
-                """Grade de 1 linha com o resumo (uso e vidas) do item expandido — especialidade ou UF."""
-                dados = {
-                    "Soma uso atual": [fmt_int(row.get("soma_uso_atual"))],
-                    "Soma uso anterior": [fmt_int(row.get("soma_uso_anterior"))],
-                    "Variação uso": [_fmt_pct(row.get("variacao_pct"))],
-                    "Qtde de vidas atual": [fmt_int(row.get("qtd_usuarios_atual"))],
-                    "Qtde de vidas anterior": [fmt_int(row.get("qtd_usuarios_anterior"))],
-                    "Variação de vidas": [_fmt_pct(row.get("variacao_vidas_pct"))],
-                }
-                st.dataframe(pd.DataFrame(dados), hide_index=True, use_container_width=True)
+#             def _linha_resumo(row):
+#                 """Grade de 1 linha com o resumo (uso e vidas) do item expandido — especialidade ou UF."""
+#                 dados = {
+#                     "Soma uso atual": [fmt_int(row.get("soma_uso_atual"))],
+#                     "Soma uso anterior": [fmt_int(row.get("soma_uso_anterior"))],
+#                     "Variação uso": [_fmt_pct(row.get("variacao_pct"))],
+#                     "Qtde de vidas atual": [fmt_int(row.get("qtd_usuarios_atual"))],
+#                     "Qtde de vidas anterior": [fmt_int(row.get("qtd_usuarios_anterior"))],
+#                     "Variação de vidas": [_fmt_pct(row.get("variacao_vidas_pct"))],
+#                 }
+#                 st.dataframe(pd.DataFrame(dados), hide_index=True, use_container_width=True)
 
-            def _tabela_detalhe(det, coluna_chave, label_chave, extra_cols=None):
-                """
-                Grade de detalhe (procedimentos dentro de uma especialidade, cidades dentro
-                de uma UF etc.). extra_cols: lista de (coluna, rótulo) inseridas logo após
-                a coluna-chave (ex.: Cluster ao lado de Cidade).
-                """
-                if det is None or det.empty:
-                    return
-                colunas_ordem = [coluna_chave]
-                renome = {coluna_chave: label_chave}
-                if extra_cols:
-                    for col, label in extra_cols:
-                        colunas_ordem.append(col)
-                        renome[col] = label
-                colunas_ordem += [
-                    "soma_uso_atual", "soma_uso_anterior", "variacao_pct",
-                    "qtd_usuarios_atual", "qtd_usuarios_anterior", "variacao_vidas_pct",
-                ]
-                renome.update({
-                    "soma_uso_atual": "Soma uso atual",
-                    "soma_uso_anterior": "Soma uso anterior",
-                    "variacao_pct": "Variação uso",
-                    "qtd_usuarios_atual": "Qtde de vidas atual",
-                    "qtd_usuarios_anterior": "Qtde de vidas anterior",
-                    "variacao_vidas_pct": "Variação de vidas",
-                })
-                colunas_ordem = [c for c in colunas_ordem if c in det.columns]
-                det_show = det[colunas_ordem].copy()
-                det_show["variacao_pct"] = det_show["variacao_pct"].map(_fmt_pct)
-                if "variacao_vidas_pct" in det_show.columns:
-                    det_show["variacao_vidas_pct"] = det_show["variacao_vidas_pct"].map(_fmt_pct)
-                for c in ["soma_uso_atual", "soma_uso_anterior", "qtd_usuarios_atual", "qtd_usuarios_anterior"]:
-                    if c in det_show.columns:
-                        det_show[c] = det_show[c].map(fmt_int)
-                det_show = det_show.rename(columns=renome)
-                st.dataframe(det_show, hide_index=True, use_container_width=True)
+#             def _tabela_detalhe(det, coluna_chave, label_chave, extra_cols=None):
+#                 """
+#                 Grade de detalhe (procedimentos dentro de uma especialidade, cidades dentro
+#                 de uma UF etc.). extra_cols: lista de (coluna, rótulo) inseridas logo após
+#                 a coluna-chave (ex.: Cluster ao lado de Cidade).
+#                 """
+#                 if det is None or det.empty:
+#                     return
+#                 colunas_ordem = [coluna_chave]
+#                 renome = {coluna_chave: label_chave}
+#                 if extra_cols:
+#                     for col, label in extra_cols:
+#                         colunas_ordem.append(col)
+#                         renome[col] = label
+#                 colunas_ordem += [
+#                     "soma_uso_atual", "soma_uso_anterior", "variacao_pct",
+#                     "qtd_usuarios_atual", "qtd_usuarios_anterior", "variacao_vidas_pct",
+#                 ]
+#                 renome.update({
+#                     "soma_uso_atual": "Soma uso atual",
+#                     "soma_uso_anterior": "Soma uso anterior",
+#                     "variacao_pct": "Variação uso",
+#                     "qtd_usuarios_atual": "Qtde de vidas atual",
+#                     "qtd_usuarios_anterior": "Qtde de vidas anterior",
+#                     "variacao_vidas_pct": "Variação de vidas",
+#                 })
+#                 colunas_ordem = [c for c in colunas_ordem if c in det.columns]
+#                 det_show = det[colunas_ordem].copy()
+#                 det_show["variacao_pct"] = det_show["variacao_pct"].map(_fmt_pct)
+#                 if "variacao_vidas_pct" in det_show.columns:
+#                     det_show["variacao_vidas_pct"] = det_show["variacao_vidas_pct"].map(_fmt_pct)
+#                 for c in ["soma_uso_atual", "soma_uso_anterior", "qtd_usuarios_atual", "qtd_usuarios_anterior"]:
+#                     if c in det_show.columns:
+#                         det_show[c] = det_show[c].map(fmt_int)
+#                 det_show = det_show.rename(columns=renome)
+#                 st.dataframe(det_show, hide_index=True, use_container_width=True)
 
-            # Repetido perto de cada lista (não só no topo da aba) e usado pro aviso de item
-            # negativo: essas listas são sempre "top N por variação" — se não existirem N grupos
-            # realmente subindo, a lista completa a cota com quem caiu menos, ainda assim rotulado
-            # "maior aumento". O sinal (+/-) de cada variação mostra a diferença.
-            _aviso_periodo_resumo = (
-                "📅 Comparação sempre no mesmo período em ambos os meses (detalhe completo no "
-                "topo desta aba)."
-            )
+#             # Repetido perto de cada lista (não só no topo da aba) e usado pro aviso de item
+#             # negativo: essas listas são sempre "top N por variação" — se não existirem N grupos
+#             # realmente subindo, a lista completa a cota com quem caiu menos, ainda assim rotulado
+#             # "maior aumento". O sinal (+/-) de cada variação mostra a diferença.
+#             _aviso_periodo_resumo = (
+#                 "📅 Comparação sempre no mesmo período em ambos os meses (detalhe completo no "
+#                 "topo desta aba)."
+#             )
 
-            def _rotulo_variacao(v):
-                if pd.isna(v):
-                    return "Variação de uso: —"
-                aviso = "⚠️ caiu, não subiu — " if v < 0 else ""
-                return f"{aviso}Variação de uso: {v:+.1f}%"
+#             def _rotulo_variacao(v):
+#                 if pd.isna(v):
+#                     return "Variação de uso: —"
+#                 aviso = "⚠️ caiu, não subiu — " if v < 0 else ""
+#                 return f"{aviso}Variação de uso: {v:+.1f}%"
 
-            # ---------- Especialidades ----------
-            especialidades = resumo["especialidades"]
-            if especialidades.empty:
-                st.markdown("##### 5 especialidades com maior aumento")
-                st.info("Nenhuma especialidade com volume suficiente nos dois meses para comparar.")
-            else:
-                st.caption(_aviso_periodo_resumo)
-                if (especialidades["variacao_pct"] < 0).any():
-                    st.warning(
-                        "Nem todas as 5 abaixo tiveram alta de verdade — como faltaram "
-                        "especialidades subindo o suficiente pra completar a lista, ela trouxe "
-                        "também quem caiu menos (marcado com ⚠️ abaixo)."
-                    )
-                with st.expander("5 especialidades com maior aumento", expanded=False):
-                    for _, row in especialidades.iterrows():
-                        titulo = f"{row['ESPECIALIDADE']} · {_rotulo_variacao(row['variacao_pct'])}"
-                        with st.container(border=True):
-                            st.markdown(f"**{titulo}**")
-                            _linha_resumo(row)
-                            det = resumo["detalhes_especialidade"].get(row["ESPECIALIDADE"])
-                            if det is not None and not det.empty:
-                                st.markdown("**Procedimentos que causaram o aumento:**")
-                                _tabela_detalhe(det, "NOME_PROCEDIMENTO", "Procedimento")
-        st.divider()
-        if resumo is not None:
-            # ---------- UFs ----------
-            ufs = resumo["ufs"]
-            if ufs.empty:
-                st.markdown("##### 10 UFs com maior aumento")
-                st.info("Nenhuma UF com volume suficiente nos dois meses para comparar.")
-            else:
-                st.caption(_aviso_periodo_resumo)
-                if (ufs["variacao_pct"] < 0).any():
-                    st.warning(
-                        "Nem todas as 10 abaixo tiveram alta de verdade — como faltaram UFs "
-                        "subindo o suficiente pra completar a lista, ela trouxe também quem caiu "
-                        "menos (marcado com ⚠️ abaixo)."
-                    )
-                with st.expander("10 UFs com maior aumento", expanded=False):
-                    for _, row in ufs.iterrows():
-                        titulo = f"{row['UF']} · {_rotulo_variacao(row['variacao_pct'])}"
-                        with st.container(border=True):
-                            st.markdown(f"**{titulo}**")
-                            _linha_resumo(row)
-                            det = resumo["detalhes_uf"].get(row["UF"])
-                            if det is not None and not det.empty:
-                                st.markdown("**Cidades (com cluster) que causaram o aumento:**")
-                                _tabela_detalhe(det, "CIDADE_PRESTADOR", "Cidade", extra_cols=[("CLUSTER", "Cluster")])
-        st.divider()
-        if resumo is not None:
-            # ---------- Prestadores ----------
-            prestadores = resumo["prestadores"]
-            if prestadores.empty:
-                st.markdown("##### 20 prestadores com maior aumento")
-                st.info("Nenhum prestador com volume suficiente nos dois meses para comparar.")
-            else:
-                st.caption(_aviso_periodo_resumo)
-                if (prestadores["variacao_pct"] < 0).any():
-                    st.warning(
-                        "Nem todos os 20 abaixo tiveram alta de verdade — como faltaram "
-                        "prestadores subindo o suficiente pra completar a lista, ela trouxe "
-                        "também quem caiu menos (marcado com ⚠️ abaixo)."
-                    )
-                with st.expander("20 prestadores com maior aumento", expanded=False):
-                    for _, row in prestadores.iterrows():
-                        nome = row.get("NOME_PRESTADOR") or f"Prestador {int(row['CD_PRESTADOR'])}"
-                        st.markdown(
-                            f"- **{nome}** — CPF/CNPJ: {row.get('CNPJ_CPF_PRESTADOR') or '—'} · "
-                            f"{row.get('UF') or '—'} · {row.get('CIDADE') or '—'} · Cluster: {row.get('CLUSTER') or '—'} · "
-                            f"Especialidade principal: {row.get('ESPECIALIDADE') or '—'} · "
-                            f"{_rotulo_variacao(row['variacao_pct'])}"
-                        )
-        st.divider()
-        # ---------- Alerta: prestador + procedimento com aumento relevante de qtde e valor ----------
-        with st.expander("🚨 Prestadores com aumento relevante de quantidade e valor", expanded=False):
-            st.caption(
-                "Critério (as 5 condições precisam valer juntas): qtde do procedimento no mês atual "
-                "> 50, aumento de valor pago > R$ 1.500,00 em relação ao mês anterior, variação de "
-                "pelo menos 50% tanto na qtde quanto no valor, e variação do FASE de pelo menos 50% "
-                "entre os dois meses. Qtde e valor usam números absolutos (qtde de guias e R$ pago) — "
-                "o FASE é calculado no mesmo recorte (prestador + especialidade + procedimento), um "
-                "valor por mês."
-            )
-            alertas, msg_alertas = alertas_prestador_procedimento(df_filtrado, usuarios=usuarios_filtrado)
-            if alertas is None or alertas.empty:
-                st.info(msg_alertas)
-            else:
-                st.caption(msg_alertas)
-                mes_anterior_lbl = label_mes(alertas["MES_ANTERIOR"].iloc[0])
-                mes_atual_lbl = label_mes(alertas["MES_ATUAL"].iloc[0])
-                for cd_prestador, grupo in alertas.groupby("CD_PRESTADOR", sort=False):
-                    r0 = grupo.iloc[0]
-                    nome = r0.get("NOME_PRESTADOR") or f"Prestador {int(cd_prestador)}"
-                    cabecalho = (
-                        f"{nome} — {r0.get('CIDADE') or '—'}/{r0.get('UF') or '—'} · "
-                        f"CPF/CNPJ: {r0.get('CNPJ_CPF_PRESTADOR') or '—'} · Cluster: {r0.get('CLUSTER') or '—'}"
-                    )
-                    with st.container(border=True):
-                        st.markdown(f"**{cabecalho}**")
-                        for _, row in grupo.iterrows():
-                            texto = (
-                                f"**{nome}** ({row.get('CIDADE') or '—'}, CPF/CNPJ {row.get('CNPJ_CPF_PRESTADOR') or '—'}, "
-                                f"cluster {row.get('CLUSTER') or '—'}) teve aumento de **{row['variacao_qtd_pct']:+.0f}%** "
-                                f"na quantidade em relação a {mes_anterior_lbl}. Esse aumento aconteceu na especialidade "
-                                f"**{row['ESPECIALIDADE']}**, no procedimento **{row['NOME_PROCEDIMENTO']}**, que foi de "
-                                f"{fmt_int(row['qtd_anterior'])} para {fmt_int(row['qtd_atual'])} solicitações. "
-                                f"Em termos de valores, em {mes_anterior_lbl} foi {fmt_brl(row['valor_anterior'])} e em "
-                                f"{mes_atual_lbl} foi de {fmt_brl(row['valor_atual'])}, um aumento de "
-                                f"**{fmt_brl(row['delta_valor'])}**, que representa **{row['variacao_valor_pct']:+.0f}%**."
-                            )
-                            if pd.notna(row.get("variacao_usuarios_pct")):
-                                texto += (
-                                    f" Em termos de vidas, em {mes_anterior_lbl} foram {fmt_int(row['usuarios_anterior'])} "
-                                    f"e em {mes_atual_lbl} foram {fmt_int(row['usuarios_atual'])}, uma variação de "
-                                    f"**{row['variacao_usuarios_pct']:+.0f}%**."
-                                )
-                            else:
-                                texto += (
-                                    f" Em termos de vidas, em {mes_anterior_lbl} foram {fmt_int(row['usuarios_anterior'])} "
-                                    f"e em {mes_atual_lbl} foram {fmt_int(row['usuarios_atual'])}."
-                                )
-                            if pd.notna(row.get("fase_anterior")) and pd.notna(row.get("fase_atual")):
-                                if row["fase_atual"] < 0.009:
-                                    texto += " Sem variação relevante no FASE."
-                                else:
-                                    texto += (
-                                        f" O FASE em {mes_anterior_lbl} foi {fmt_fase(row['fase_anterior'])} e em "
-                                        f"{mes_atual_lbl} foi {fmt_fase(row['fase_atual'])}, com variação de "
-                                        f"**{row['variacao_fase_pct']:+.0f}%**."
-                                    )
-                            st.markdown(texto)
+#             # ---------- Especialidades ----------
+#             especialidades = resumo["especialidades"]
+#             if especialidades.empty:
+#                 st.markdown("##### 5 especialidades com maior aumento")
+#                 st.info("Nenhuma especialidade com volume suficiente nos dois meses para comparar.")
+#             else:
+#                 st.caption(_aviso_periodo_resumo)
+#                 if (especialidades["variacao_pct"] < 0).any():
+#                     st.warning(
+#                         "Nem todas as 5 abaixo tiveram alta de verdade — como faltaram "
+#                         "especialidades subindo o suficiente pra completar a lista, ela trouxe "
+#                         "também quem caiu menos (marcado com ⚠️ abaixo)."
+#                     )
+#                 with st.expander("5 especialidades com maior aumento", expanded=False):
+#                     for _, row in especialidades.iterrows():
+#                         titulo = f"{row['ESPECIALIDADE']} · {_rotulo_variacao(row['variacao_pct'])}"
+#                         with st.container(border=True):
+#                             st.markdown(f"**{titulo}**")
+#                             _linha_resumo(row)
+#                             det = resumo["detalhes_especialidade"].get(row["ESPECIALIDADE"])
+#                             if det is not None and not det.empty:
+#                                 st.markdown("**Procedimentos que causaram o aumento:**")
+#                                 _tabela_detalhe(det, "NOME_PROCEDIMENTO", "Procedimento")
+#         st.divider()
+#         if resumo is not None:
+#             # ---------- UFs ----------
+#             ufs = resumo["ufs"]
+#             if ufs.empty:
+#                 st.markdown("##### 10 UFs com maior aumento")
+#                 st.info("Nenhuma UF com volume suficiente nos dois meses para comparar.")
+#             else:
+#                 st.caption(_aviso_periodo_resumo)
+#                 if (ufs["variacao_pct"] < 0).any():
+#                     st.warning(
+#                         "Nem todas as 10 abaixo tiveram alta de verdade — como faltaram UFs "
+#                         "subindo o suficiente pra completar a lista, ela trouxe também quem caiu "
+#                         "menos (marcado com ⚠️ abaixo)."
+#                     )
+#                 with st.expander("10 UFs com maior aumento", expanded=False):
+#                     for _, row in ufs.iterrows():
+#                         titulo = f"{row['UF']} · {_rotulo_variacao(row['variacao_pct'])}"
+#                         with st.container(border=True):
+#                             st.markdown(f"**{titulo}**")
+#                             _linha_resumo(row)
+#                             det = resumo["detalhes_uf"].get(row["UF"])
+#                             if det is not None and not det.empty:
+#                                 st.markdown("**Cidades (com cluster) que causaram o aumento:**")
+#                                 _tabela_detalhe(det, "CIDADE_PRESTADOR", "Cidade", extra_cols=[("CLUSTER", "Cluster")])
+#         st.divider()
+#         if resumo is not None:
+#             # ---------- Prestadores ----------
+#             prestadores = resumo["prestadores"]
+#             if prestadores.empty:
+#                 st.markdown("##### 20 prestadores com maior aumento")
+#                 st.info("Nenhum prestador com volume suficiente nos dois meses para comparar.")
+#             else:
+#                 st.caption(_aviso_periodo_resumo)
+#                 if (prestadores["variacao_pct"] < 0).any():
+#                     st.warning(
+#                         "Nem todos os 20 abaixo tiveram alta de verdade — como faltaram "
+#                         "prestadores subindo o suficiente pra completar a lista, ela trouxe "
+#                         "também quem caiu menos (marcado com ⚠️ abaixo)."
+#                     )
+#                 with st.expander("20 prestadores com maior aumento", expanded=False):
+#                     for _, row in prestadores.iterrows():
+#                         nome = row.get("NOME_PRESTADOR") or f"Prestador {int(row['CD_PRESTADOR'])}"
+#                         st.markdown(
+#                             f"- **{nome}** — CPF/CNPJ: {row.get('CNPJ_CPF_PRESTADOR') or '—'} · "
+#                             f"{row.get('UF') or '—'} · {row.get('CIDADE') or '—'} · Cluster: {row.get('CLUSTER') or '—'} · "
+#                             f"Especialidade principal: {row.get('ESPECIALIDADE') or '—'} · "
+#                             f"{_rotulo_variacao(row['variacao_pct'])}"
+#                         )
+#         st.divider()
+#         # ---------- Alerta: prestador + procedimento com aumento relevante de qtde e valor ----------
+#         with st.expander("🚨 Prestadores com aumento relevante de quantidade e valor", expanded=False):
+#             st.caption(
+#                 "Critério (as 5 condições precisam valer juntas): qtde do procedimento no mês atual "
+#                 "> 50, aumento de valor pago > R$ 1.500,00 em relação ao mês anterior, variação de "
+#                 "pelo menos 50% tanto na qtde quanto no valor, e variação do FASE de pelo menos 50% "
+#                 "entre os dois meses. Qtde e valor usam números absolutos (qtde de guias e R$ pago) — "
+#                 "o FASE é calculado no mesmo recorte (prestador + especialidade + procedimento), um "
+#                 "valor por mês."
+#             )
+#             alertas, msg_alertas = alertas_prestador_procedimento(df_filtrado, usuarios=usuarios_filtrado)
+#             if alertas is None or alertas.empty:
+#                 st.info(msg_alertas)
+#             else:
+#                 st.caption(msg_alertas)
+#                 mes_anterior_lbl = label_mes(alertas["MES_ANTERIOR"].iloc[0])
+#                 mes_atual_lbl = label_mes(alertas["MES_ATUAL"].iloc[0])
+#                 for cd_prestador, grupo in alertas.groupby("CD_PRESTADOR", sort=False):
+#                     r0 = grupo.iloc[0]
+#                     nome = r0.get("NOME_PRESTADOR") or f"Prestador {int(cd_prestador)}"
+#                     cabecalho = (
+#                         f"{nome} — {r0.get('CIDADE') or '—'}/{r0.get('UF') or '—'} · "
+#                         f"CPF/CNPJ: {r0.get('CNPJ_CPF_PRESTADOR') or '—'} · Cluster: {r0.get('CLUSTER') or '—'}"
+#                     )
+#                     with st.container(border=True):
+#                         st.markdown(f"**{cabecalho}**")
+#                         for _, row in grupo.iterrows():
+#                             texto = (
+#                                 f"**{nome}** ({row.get('CIDADE') or '—'}, CPF/CNPJ {row.get('CNPJ_CPF_PRESTADOR') or '—'}, "
+#                                 f"cluster {row.get('CLUSTER') or '—'}) teve aumento de **{row['variacao_qtd_pct']:+.0f}%** "
+#                                 f"na quantidade em relação a {mes_anterior_lbl}. Esse aumento aconteceu na especialidade "
+#                                 f"**{row['ESPECIALIDADE']}**, no procedimento **{row['NOME_PROCEDIMENTO']}**, que foi de "
+#                                 f"{fmt_int(row['qtd_anterior'])} para {fmt_int(row['qtd_atual'])} solicitações. "
+#                                 f"Em termos de valores, em {mes_anterior_lbl} foi {fmt_brl(row['valor_anterior'])} e em "
+#                                 f"{mes_atual_lbl} foi de {fmt_brl(row['valor_atual'])}, um aumento de "
+#                                 f"**{fmt_brl(row['delta_valor'])}**, que representa **{row['variacao_valor_pct']:+.0f}%**."
+#                             )
+#                             if pd.notna(row.get("variacao_usuarios_pct")):
+#                                 texto += (
+#                                     f" Em termos de vidas, em {mes_anterior_lbl} foram {fmt_int(row['usuarios_anterior'])} "
+#                                     f"e em {mes_atual_lbl} foram {fmt_int(row['usuarios_atual'])}, uma variação de "
+#                                     f"**{row['variacao_usuarios_pct']:+.0f}%**."
+#                                 )
+#                             else:
+#                                 texto += (
+#                                     f" Em termos de vidas, em {mes_anterior_lbl} foram {fmt_int(row['usuarios_anterior'])} "
+#                                     f"e em {mes_atual_lbl} foram {fmt_int(row['usuarios_atual'])}."
+#                                 )
+#                             if pd.notna(row.get("fase_anterior")) and pd.notna(row.get("fase_atual")):
+#                                 if row["fase_atual"] < 0.009:
+#                                     texto += " Sem variação relevante no FASE."
+#                                 else:
+#                                     texto += (
+#                                         f" O FASE em {mes_anterior_lbl} foi {fmt_fase(row['fase_anterior'])} e em "
+#                                         f"{mes_atual_lbl} foi {fmt_fase(row['fase_atual'])}, com variação de "
+#                                         f"**{row['variacao_fase_pct']:+.0f}%**."
+#                                     )
+#                             st.markdown(texto)
     # ============================================================
     # PROJEÇÃO DE CREDENCIAMENTO — escolhe UF + Cidade (mesmo sem nenhum prestador lá
     # ainda) e projeta CS Ideal/Meta e valor unitário projetado. Procedimento sem nenhum
