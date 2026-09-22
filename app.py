@@ -152,6 +152,28 @@ try:
         "(limite aproximado do plano gratuito do Streamlit Cloud)"
     )
     st.sidebar.progress(_pct_mem_temp)
+    # ---------- libera cache acumulado quando a memória aperta ----------
+    # ranking_severidade / calcular_media_nacional / alertas_prestador_procedimento
+    # (severidade.py, cacheados com @st.cache_data) guardam 1 entrada nova pra cada
+    # combinação de filtro (Mês/Plano/Especialidade/UF/Cidade/Cluster/Prestador/
+    # Procedimento) que a sessão testa — sem limite automático de tamanho, então
+    # ficam acumulando pra sempre. Numa sessão testando vários filtros ao longo do
+    # tempo, isso empilha e é o principal motivo do app se aproximar do limite de
+    # RAM do plano gratuito mesmo sem nenhuma aba pesada. Em vez de tirar mês ou
+    # funcionalidade disponível, a saída é liberar esses 3 caches (NÃO o de
+    # carregar_base_severidade — esse é o carregamento caro que precisa continuar
+    # guardado) assim que a memória passa de 75% do limite: a próxima chamada
+    # recalcula na hora (rápido, é só a combinação de filtro atual), mas as
+    # combinações antigas acumuladas na memória são liberadas de vez. Só libera 1x
+    # por "aperto" (flag em session_state), pra não ficar recalculando à toa a cada
+    # rerun; a flag reseta quando a memória volta a ficar folgada (<50%), liberando
+    # de novo se precisar.
+    if _pct_mem_temp >= 0.75 and not st.session_state.get("_cache_liberado_mem_temp", False):
+        for _fn_cache_temp in (ranking_severidade, calcular_media_nacional, alertas_prestador_procedimento):
+            _fn_cache_temp.clear()
+        st.session_state["_cache_liberado_mem_temp"] = True
+    elif _pct_mem_temp < 0.5:
+        st.session_state["_cache_liberado_mem_temp"] = False
 except Exception:
     pass
 MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho",
