@@ -933,13 +933,15 @@ elif st.session_state.pagina == "severidade":
     m4.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
     m5.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
     st.divider()
-    # Sequência das abas: Ranking, Projeção, Resumo.
+    # Sequência das abas: Ranking, Projeção. (Resumo oculta — corpo comentado
+    # logo abaixo, em "with tab_resumo:"; pra trazer de volta, é só descomentar
+    # aquele bloco e devolver "Resumo" pra lista de labels/desempacotamento aqui.)
     _labels_abas_temp = [
-        "📊 Ranking", "📍 Projeção de Credenciamento", "Resumo",
+        "📊 Ranking", "📍 Projeção de Credenciamento",
     ]
     _abas_criadas_temp = st.tabs(_labels_abas_temp)
-    tab_ranking_temp, tab_credenciamento, tab_resumo = (
-        _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2],
+    tab_ranking_temp, tab_credenciamento = (
+        _abas_criadas_temp[0], _abas_criadas_temp[1],
     )
     # (tab_obj, título exibido, lista de códigos que restringe a aba — None = todos os
     # procedimentos, sufixo pra deixar as keys dos widgets únicas por aba, nome do prestador
