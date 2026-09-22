@@ -1497,13 +1497,6 @@ elif st.session_state.pagina == "severidade":
                                     "Especialidade", options=_opcoes_esp_cred_temp, key="cred_temp_especialidade"
                                 )
 
-                            # ---- limpar filtros de busca desta aba, de uma vez só (mesmo
-                            # padrão da aba Temporária: apaga a key do session_state + rerun) ----
-                            if st.button("Limpar filtros", key="limpar_filtros_cred_temp"):
-                                for _chave_filtro_cred_temp in ("cred_temp_busca_proc", "cred_temp_especialidade"):
-                                    st.session_state.pop(_chave_filtro_cred_temp, None)
-                                st.rerun()
-
                             _grade_exib_temp = _grade_cred_temp.copy()
                             if _busca_proc_cred_temp.strip():
                                 _grade_exib_temp = _grade_exib_temp[
@@ -1715,40 +1708,6 @@ elif st.session_state.pagina == "severidade":
                 "comparado se aproxima da própria base nacional e o CS fica pouco informativo."
             )
 
-            # ---- cada filtro com seu próprio "✕ limpar" embaixo, em vez de um botão só que
-            # limpa tudo de uma vez — apaga só a key desse campo específico do session_state e
-            # força um rerun; sem a key, o widget volta pro valor padrão dele ("Todos" no
-            # selectbox, lista vazia no multiselect) já na próxima rodada. Não dá pra só
-            # reatribuir o valor aqui porque o widget já foi instanciado nesta mesma rodada —
-            # Streamlit não permite mudar o valor de um widget já criado sem passar pelo
-            # session_state + rerun. Campo e botão ficam na MESMA coluna, um embaixo do
-            # outro (nada de coluna extra pro botão) — assim o botão não fica espremido
-            # numa coluna estreita demais pro texto/ícone aparecer (era isso que deixava
-            # ele com cara de "vazio"), e continua pequeno porque não usa
-            # use_container_width (o botão só ocupa o espaço do próprio conteúdo, não a
-            # largura toda da coluna). Definidas aqui (antes do primeiro uso, no bloco de
-            # Mês/Plano/Especialidade logo abaixo) e reaproveitadas também nos 6 filtros da
-            # aba e no "Ranquear por" mais adiante.
-            def _selectbox_com_limpar_temp(coluna, label, opcoes, chave):
-                with coluna:
-                    valor = st.selectbox(label, opcoes, key=chave)
-                    if st.button(
-                        "limpar", key=f"limpar_campo_temp_{chave}", help="Limpar este filtro"
-                    ):
-                        st.session_state.pop(chave, None)
-                        st.rerun()
-                return valor
-
-            def _multiselect_com_limpar_temp(coluna, label, opcoes, chave):
-                with coluna:
-                    valor = st.multiselect(label, options=opcoes, key=chave)
-                    if st.button(
-                        "limpar", key=f"limpar_campo_temp_{chave}", help="Limpar este filtro"
-                    ):
-                        st.session_state.pop(chave, None)
-                        st.rerun()
-                return valor
-
             if not MOSTRAR_FILTROS_TOPO and _sufixo_aba_temp == "_ranking":
                 # Mês/Plano/Especialidade do quadro de Filtros do topo (hoje oculto) — mesma
                 # funcionalidade de antes (afetam df_filtrado/usuarios_filtrado, a página toda),
@@ -1760,11 +1719,14 @@ elif st.session_state.pagina == "severidade":
                 # campo duplicado, já que Mês/Plano/Especialidade são únicos pra página toda,
                 # não por aba.
                 fmt1, fmt2, fmt3 = st.columns(3)
-                _multiselect_com_limpar_temp(fmt1, "Mês", opcoes_mes_temp, "temp_filtro_mes")
-                _multiselect_com_limpar_temp(fmt2, "Plano", opcoes_plano_temp, "temp_filtro_plano")
-                _multiselect_com_limpar_temp(
-                    fmt3, "Especialidade", opcoes_especialidade_temp, "temp_filtro_especialidade"
-                )
+                with fmt1:
+                    st.multiselect("Mês", options=opcoes_mes_temp, key="temp_filtro_mes")
+                with fmt2:
+                    st.multiselect("Plano", options=opcoes_plano_temp, key="temp_filtro_plano")
+                with fmt3:
+                    st.multiselect(
+                        "Especialidade", options=opcoes_especialidade_temp, key="temp_filtro_especialidade"
+                    )
 
             # Mapa código -> nome do procedimento, dentro dos filtros ativos. Sem restrição
             # (_codigos_restritos_temp is None), cobre TODOS os procedimentos presentes; com
@@ -1844,32 +1806,35 @@ elif st.session_state.pagina == "severidade":
                                 "o nome está exatamente assim na base."
                             )
 
-                # ---- cada filtro com seu próprio "limpar" embaixo, em vez de um botão só
-                # que limpa tudo de uma vez — _selectbox_com_limpar_temp já foi definida mais
-                # acima (antes do bloco Mês/Plano/Especialidade), reaproveitada aqui. 1 coluna
-                # por filtro (o botão fica na mesma coluna do campo, embaixo dele).
+                # ---- 6 filtros da aba, 1 coluna por filtro. ----
                 (
                     fc_proc_temp, fc_prest_temp, fc_uf_temp,
                     fc_regiao_temp, fc_cidade_temp, fc_cluster_temp,
                 ) = st.columns(6)
-                proc_sel_temp = _selectbox_com_limpar_temp(
-                    fc_proc_temp, "Procedimento", opcoes_proc_temp, f"temp_filtro_procedimento{_sufixo_aba_temp}"
-                )
-                prest_sel_temp = _selectbox_com_limpar_temp(
-                    fc_prest_temp, "Prestador", opcoes_prestador_temp, f"temp_filtro_prestador{_sufixo_aba_temp}"
-                )
-                uf_sel_temp = _selectbox_com_limpar_temp(
-                    fc_uf_temp, "UF", opcoes_uf_temp, f"temp_filtro_uf{_sufixo_aba_temp}"
-                )
-                regiao_sel_temp = _selectbox_com_limpar_temp(
-                    fc_regiao_temp, "Região", opcoes_regiao_temp, f"temp_filtro_regiao{_sufixo_aba_temp}"
-                )
-                cidade_sel_temp = _selectbox_com_limpar_temp(
-                    fc_cidade_temp, "Cidade", opcoes_cidade_temp, f"temp_filtro_cidade{_sufixo_aba_temp}"
-                )
-                cluster_sel_temp = _selectbox_com_limpar_temp(
-                    fc_cluster_temp, "Cluster", opcoes_cluster_temp, f"temp_filtro_cluster{_sufixo_aba_temp}"
-                )
+                with fc_proc_temp:
+                    proc_sel_temp = st.selectbox(
+                        "Procedimento", opcoes_proc_temp, key=f"temp_filtro_procedimento{_sufixo_aba_temp}"
+                    )
+                with fc_prest_temp:
+                    prest_sel_temp = st.selectbox(
+                        "Prestador", opcoes_prestador_temp, key=f"temp_filtro_prestador{_sufixo_aba_temp}"
+                    )
+                with fc_uf_temp:
+                    uf_sel_temp = st.selectbox(
+                        "UF", opcoes_uf_temp, key=f"temp_filtro_uf{_sufixo_aba_temp}"
+                    )
+                with fc_regiao_temp:
+                    regiao_sel_temp = st.selectbox(
+                        "Região", opcoes_regiao_temp, key=f"temp_filtro_regiao{_sufixo_aba_temp}"
+                    )
+                with fc_cidade_temp:
+                    cidade_sel_temp = st.selectbox(
+                        "Cidade", opcoes_cidade_temp, key=f"temp_filtro_cidade{_sufixo_aba_temp}"
+                    )
+                with fc_cluster_temp:
+                    cluster_sel_temp = st.selectbox(
+                        "Cluster", opcoes_cluster_temp, key=f"temp_filtro_cluster{_sufixo_aba_temp}"
+                    )
 
                 # ---- "Ranquear por" — só na aba "📊 Ranking": reordena a grade pela métrica
                 # escolhida (sempre do maior pro menor), em vez do CS decrescente fixo usado
@@ -1888,10 +1853,11 @@ elif st.session_state.pagina == "severidade":
                         "Índice de Atenção (Volume)": "indice_atencao_volume",
                     }
                     fc_ranquear_temp, _fc_ranquear_vazio_temp = st.columns([2, 4])
-                    ranquear_por_temp = _selectbox_com_limpar_temp(
-                        fc_ranquear_temp, "Ranquear por", list(_OPCOES_RANQUEAR_TEMP.keys()),
-                        f"temp_ranquear_por{_sufixo_aba_temp}",
-                    )
+                    with fc_ranquear_temp:
+                        ranquear_por_temp = st.selectbox(
+                            "Ranquear por", list(_OPCOES_RANQUEAR_TEMP.keys()),
+                            key=f"temp_ranquear_por{_sufixo_aba_temp}",
+                        )
 
                 # Sem nenhum dos 6 filtros desta aba aplicado, o corte comparado tende a se
                 # aproximar da própria base nacional usada como referência — o CS fica pouco
