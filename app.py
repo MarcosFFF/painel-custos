@@ -4149,11 +4149,13 @@ elif st.session_state.pagina == "severidade":
                         story_risco_temp.append(_tabela_meta_risco_temp)
                         story_risco_temp.append(Spacer(1, 6))
 
-                        # ---- resumo por faixa ----
+                        # ---- resumo por faixa (segue os filtros de UF/Cidade/Cluster/Prestador
+                        # aplicados na tela — mesma base que a tabela ranqueada logo abaixo, pra não
+                        # ficar incoerente com o "Filtros aplicados" da ficha técnica acima) ----
                         story_risco_temp.append(Paragraph("Resumo — prestadores por faixa", estilo_secao_risco_temp))
                         _linhas_resumo_faixa_temp = []
                         for _piso_f_temp, _rotulo_f2_temp, _cor_f_temp, _ordem_f_temp in _RISCO_FAIXAS_TEMP:
-                            _n_f_temp = int((_risco_tabela_completa_temp["classificacao"] == _rotulo_f2_temp).sum())
+                            _n_f_temp = int((_risco_exibicao_temp["classificacao"] == _rotulo_f2_temp).sum())
                             _linhas_resumo_faixa_temp.append([
                                 # sem emoji aqui também — o quadradinho colorido (BACKGROUND, logo
                                 # abaixo) já sinaliza a faixa, igual à legenda "Alerta de volume"
@@ -4405,9 +4407,12 @@ elif st.session_state.pagina == "severidade":
                             + f" ({len(_meses_considerados_risco_temp)} mês(es))."
                         )
 
-                    # ---------- resumo por faixa (sempre sobre a base inteira, não só o filtro) ----------
+                    # ---------- resumo por faixa -- segue o filtro de UF/Cidade/Cluster/Prestador
+                    # escolhido acima (corrigido em 23/09: antes esse resumo sempre somava a base
+                    # inteira, mesmo com um filtro ativo, e ficava incoerente com o gráfico e com
+                    # os expanders logo abaixo, que já respeitavam o filtro) ----------
                     st.markdown("**Resumo — prestadores por faixa**")
-                    _contagem_faixa_temp = _risco_tabela_completa_temp["classificacao"].value_counts()
+                    _contagem_faixa_temp = _risco_exibicao_temp["classificacao"].value_counts()
                     _cols_resumo_risco_temp = st.columns(len(_RISCO_FAIXAS_TEMP))
                     for _col_resumo_temp, (_, _rotulo_faixa_temp, _, _) in zip(
                         _cols_resumo_risco_temp, _RISCO_FAIXAS_TEMP
@@ -4417,10 +4422,68 @@ elif st.session_state.pagina == "severidade":
                             int(_contagem_faixa_temp.get(_rotulo_faixa_temp, 0)),
                         )
 
+                    # ---------- diagnóstico temporário da distribuição -- pedido em 23/09 pra
+                    # calibrar as faixas/pesos com dado real (histórico aponta ~500 prestadores em
+                    # Alerta forte, em média; a base atual está dando só 3). Antes de mudar os
+                    # cortes às cegas, isso mostra onde a base REAL está caindo em cada indicador
+                    # (e no Composto), pra calibrar com número, não achismo. Sempre sobre a base
+                    # inteira calculada (não só o filtro da tela), pra dar o panorama geral. ----------
+                    with st.expander(
+                        "📈 Diagnóstico da distribuição dos indicadores (temporário — ajuda a calibrar "
+                        "as faixas de classificação)"
+                    ):
+                        st.caption(
+                            "Onde a base calculada está caindo em cada indicador (valor bruto, antes "
+                            "de virar nota 0-100) e no Composto final — sempre sobre a base inteira "
+                            "calculada, não só o filtro da tela acima. Útil pra calibrar os cortes de "
+                            "cada indicador e as faixas do Composto com o dado real, em vez de "
+                            "advinhar."
+                        )
+                        _n_abaixo_piso_temp = int(_risco_tabela_completa_temp["abaixo_do_piso"].sum())
+                        st.caption(
+                            f"{_n_abaixo_piso_temp} de {len(_risco_tabela_completa_temp)} prestadores "
+                            f"({_n_abaixo_piso_temp / len(_risco_tabela_completa_temp) * 100:.1f}%) estão "
+                            "ABAIXO DO PISO DE MATERIALIDADE — viram \"Sem alerta\" direto, não importa "
+                            "o Composto. Se esse número estiver alto demais, pode ser o próprio piso "
+                            "(mediana do cluster, mínimo R$ 5.000) que está descartando gente demais, "
+                            "não as notas dos indicadores."
+                        )
+                        _colunas_diag_risco_temp = [
+                            ("i1_pct", "I1 — % uso no top-1"), ("i2_razao", "I2 — razão uso/vida"),
+                            ("i3_razao", "I3 — razão Custo Médio"), ("i4_variacao_pct", "I4 — variação %"),
+                            ("i5_pct", "I5 — score cluster×porte"), ("i6_pct", "I6 — % valor top-3"),
+                            ("i7_pct", "I7 — % valor concentrado"), ("composto", "Composto final"),
+                        ]
+                        _linhas_diag_risco_temp = []
+                        for _col_diag_temp, _rotulo_diag_temp in _colunas_diag_risco_temp:
+                            _serie_diag_temp = _risco_tabela_completa_temp[_col_diag_temp].dropna()
+                            if _serie_diag_temp.empty:
+                                continue
+                            _linha_diag_temp = {
+                                "Indicador": _rotulo_diag_temp, "Com dado": len(_serie_diag_temp),
+                            }
+                            for _p_diag_temp in (0.50, 0.75, 0.90, 0.95, 0.99):
+                                _linha_diag_temp[f"p{int(_p_diag_temp * 100)}"] = round(
+                                    float(_serie_diag_temp.quantile(_p_diag_temp)), 1
+                                )
+                            _linha_diag_temp["máx"] = round(float(_serie_diag_temp.max()), 1)
+                            _linhas_diag_risco_temp.append(_linha_diag_temp)
+                        st.dataframe(
+                            pd.DataFrame(_linhas_diag_risco_temp), hide_index=True, use_container_width=True,
+                        )
+                        st.caption(
+                            "p90 = valor que só 10% dos prestadores superam; p99 = só 1% supera. Ex.: "
+                            "se quiser ~7,5% da base em \"Alerta forte\" (pra bater com a média "
+                            "histórica de ~500 num total de ~6.600), o corte do Composto pra \"Alerta "
+                            "forte\" precisaria ficar perto do valor da coluna p92-p93 do Composto "
+                            "(não tem coluna exata pra isso na tabela acima, mas dá pra estimar entre "
+                            "p90 e p95)."
+                        )
+
                     # ---------- gráfico: qtde de prestador por classificação, segundo o filtro
-                    # (UF/Cidade/Cluster/Prestador) escolhido acima — diferente do resumo logo
-                    # acima, que é sempre sobre a base inteira. Ex.: filtrou Cidade X -> mostra
-                    # quantos prestadores de Cidade X caíram em cada classificação. ----------
+                    # (UF/Cidade/Cluster/Prestador) escolhido acima. Só aparece quando algum desses
+                    # 4 filtros está ativo -- sem filtro, seria a mesma informação do resumo em
+                    # cards logo acima, só que em gráfico. ----------
                     if not _risco_exibicao_temp.empty and (
                         f_uf_risco_temp or f_cidade_risco_temp or f_cluster_risco_temp or f_prestador_risco_temp
                     ):
