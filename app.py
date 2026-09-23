@@ -3003,9 +3003,9 @@ elif st.session_state.pagina == "severidade":
 
                     if _sufixo_aba_temp == "_ranking" and not rank_temp.empty:
                         st.caption(
-                            "Abra um prestador abaixo pra ver o detalhamento por procedimento "
-                            "(mesmas colunas de antes, uma linha por procedimento em vez de "
-                            "somadas). O título já traz o resumo do prestador."
+                            "Abra um prestador abaixo e clique em \"Ver detalhamento por "
+                            "procedimento\" (mesmas colunas de antes, uma linha por procedimento "
+                            "em vez de somadas). O título já traz o resumo do prestador."
                         )
                         # st.container(height=...) — caixa com rolagem própria (recurso nativo
                         # do Streamlit, não é gambiarra de CSS): a lista de prestadores rola
@@ -3024,13 +3024,37 @@ elif st.session_state.pagina == "severidade":
                                     f"{_linha_prest_exp_temp.indice_atencao_volume_rotulo}"
                                 )
                                 with st.expander(_resumo_prest_exp_temp):
-                                    _exib_detalhe_proc_temp = _detalhe_procedimentos_prestador_temp(
-                                        _cd_prest_exp_temp
+                                    # O detalhamento por procedimento só é calculado/desenhado
+                                    # depois de um clique — sem essa trava, o Streamlit reroda
+                                    # o script inteiro a cada troca de filtro e recalculava (e
+                                    # desenhava) a tabela de TODOS os prestadores da lista, não
+                                    # só do(s) que estavam abertos (expander fechado não impede
+                                    # o código de dentro de rodar) — com uma lista de centenas/
+                                    # milhares de prestadores isso é o principal motivo da aba
+                                    # ficar lenta em qualquer interação, não só no carregamento
+                                    # inicial. Mesmo padrão de "calcular só quando pedido" já
+                                    # usado antes na extinta aba Índice de Risco. Fica lembrado
+                                    # no session_state pra não perder o detalhamento já aberto
+                                    # numa próxima troca de filtro.
+                                    _chave_aberto_temp = (
+                                        f"_detalhe_prest_aberto_temp{_sufixo_aba_temp}_{_cd_prest_exp_temp}"
                                     )
-                                    if _exib_detalhe_proc_temp is None:
-                                        st.caption("Sem procedimentos pra detalhar.")
-                                    else:
-                                        _tabela_html_temp(_exib_detalhe_proc_temp, scroll=False)
+                                    _ja_aberto_temp = st.session_state.get(_chave_aberto_temp, False)
+                                    if not _ja_aberto_temp:
+                                        _ja_aberto_temp = st.button(
+                                            "🔎 Ver detalhamento por procedimento",
+                                            key=f"_botao_detalhe_prest_temp{_sufixo_aba_temp}_{_cd_prest_exp_temp}",
+                                        )
+                                        if _ja_aberto_temp:
+                                            st.session_state[_chave_aberto_temp] = True
+                                    if _ja_aberto_temp:
+                                        _exib_detalhe_proc_temp = _detalhe_procedimentos_prestador_temp(
+                                            _cd_prest_exp_temp
+                                        )
+                                        if _exib_detalhe_proc_temp is None:
+                                            st.caption("Sem procedimentos pra detalhar.")
+                                        else:
+                                            _tabela_html_temp(_exib_detalhe_proc_temp, scroll=False)
 
                 # ---- prestadores do procedimento selecionado, com FASE/QP/CS por prestador ----
                 # Só aparece quando um procedimento específico está selecionado no filtro acima (com
