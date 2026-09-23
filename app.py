@@ -432,29 +432,29 @@ def _calcular_indicadores_risco_temp(agregado_universo, usuarios_universo, valor
         base_temp["qtd_usuarios"] = np.nan
     base_temp["qtd_usuarios"] = base_temp["qtd_usuarios"].fillna(0)
 
-    # ---------- I1 (concentração top-1) + I6 (top-3 / diversificação) ----------
+    # ---------- I1 (concentração top-1, por QUANTIDADE DE USO — não por valor) + I6
+    # (top-3 por valor / diversificação) ----------
+    # I1 mudou em 23/09 a pedido do usuário: antes considerava o maior entre
+    # concentração por valor e por uso (o que desse maior); agora considera só a
+    # concentração por quantidade de uso mesmo. I6 continua olhando pra valor (top-3),
+    # que é uma dimensão diferente (diversificação financeira, não de uso).
     por_proc_temp = agregado_universo.groupby(
         ["CD_PRESTADOR", "CD_PROCEDIMENTO"], dropna=False, observed=True
     ).agg(valor=("soma_valor", "sum"), uso=("soma_uso", "sum")).reset_index()
     pv_temp = por_proc_temp.sort_values(["CD_PRESTADOR", "valor"], ascending=[True, False]).copy()
     pv_temp["rank_valor"] = pv_temp.groupby("CD_PRESTADOR").cumcount() + 1
-    top1_valor_temp = pv_temp[pv_temp["rank_valor"] == 1].set_index("CD_PRESTADOR")["valor"]
     top3_valor_temp = pv_temp[pv_temp["rank_valor"] <= 3].groupby("CD_PRESTADOR")["valor"].sum()
     pu_temp = por_proc_temp.sort_values(["CD_PRESTADOR", "uso"], ascending=[True, False]).copy()
     pu_temp["rank_uso"] = pu_temp.groupby("CD_PRESTADOR").cumcount() + 1
     top1_uso_temp = pu_temp[pu_temp["rank_uso"] == 1].set_index("CD_PRESTADOR")["uso"]
 
     base_temp = base_temp.set_index("CD_PRESTADOR")
-    base_temp["valor_top1"] = top1_valor_temp
     base_temp["valor_top3"] = top3_valor_temp
     base_temp["uso_top1"] = top1_uso_temp
     base_temp = base_temp.reset_index()
 
-    base_temp["top1_valor_pct"] = np.where(
-        base_temp["soma_valor"] > 0, base_temp["valor_top1"] / base_temp["soma_valor"] * 100, np.nan)
-    base_temp["top1_uso_pct"] = np.where(
+    base_temp["i1_pct"] = np.where(
         base_temp["soma_uso"] > 0, base_temp["uso_top1"] / base_temp["soma_uso"] * 100, np.nan)
-    base_temp["i1_pct"] = base_temp[["top1_valor_pct", "top1_uso_pct"]].max(axis=1)
     base_temp["i6_pct"] = np.where(
         base_temp["soma_valor"] > 0, base_temp["valor_top3"] / base_temp["soma_valor"] * 100, np.nan)
 
@@ -490,14 +490,15 @@ def _calcular_indicadores_risco_temp(agregado_universo, usuarios_universo, valor
     # (50) em vez de derrubar o I5 inteiro pra NaN.
     base_temp["i5_pct"] = 0.6 * base_temp["score_cluster"].fillna(50) + 0.4 * base_temp["score_porte"]
 
-    # ---------- I4 (tendência 3-6 meses — slope da regressão log(qtd) vs mês) ----------
+    # ---------- I4 (tendência — slope da regressão log(qtd) vs mês, últimos 3 meses) ----------
     # Vetorizado (sem .apply() por prestador — era o maior gargalo de performance da
     # aba, ~60% do tempo total em bases com muitos prestadores): a inclinação da
-    # regressão linear de log(qtd) vs mês (últimos até 6 meses, mínimo 3) é calculada
-    # pela fórmula fechada de OLS — slope = Sxy/Sxx, com x/y centralizados na média do
-    # próprio prestador — usando somas por grupo em vez de chamar np.polyfit uma vez
-    # por prestador. Matematicamente idêntico a np.polyfit(x, y, 1)[0] pra um ajuste
-    # de grau 1.
+    # regressão linear de log(qtd) vs mês (últimos 3 meses do período considerado) é
+    # calculada pela fórmula fechada de OLS — slope = Sxy/Sxx, com x/y centralizados na
+    # média do próprio prestador — usando somas por grupo em vez de chamar np.polyfit
+    # uma vez por prestador. Matematicamente idêntico a np.polyfit(x, y, 1)[0] pra um
+    # ajuste de grau 1. Com menos de 3 meses de histórico no período, não dá pra
+    # calcular tendência — fica "—" (i4_variacao_pct = NaN), não penaliza nem favorece.
     mensal_temp = agregado_universo.groupby(
         ["CD_PRESTADOR", "MES"], dropna=False, observed=True
     )["qtd_procedimentos"].sum().reset_index()
@@ -508,8 +509,8 @@ def _calcular_indicadores_risco_temp(agregado_universo, usuarios_universo, valor
         _m4_temp = mensal_temp.dropna(subset=["MES"]).sort_values(["CD_PRESTADOR", "MES"]).copy()
         _g4_temp = _m4_temp.groupby("CD_PRESTADOR")
         _m4_temp["_pos_fim_temp"] = _g4_temp.cumcount(ascending=False)  # 0 = mês mais recente
-        _m4_temp = _m4_temp[_m4_temp["_pos_fim_temp"] < 6].copy()  # só os últimos até 6 meses
-        _g4_temp = _m4_temp.groupby("CD_PRESTADOR")  # regroup após o filtro (janela de até 6 meses)
+        _m4_temp = _m4_temp[_m4_temp["_pos_fim_temp"] < 3].copy()  # só os últimos 3 meses
+        _g4_temp = _m4_temp.groupby("CD_PRESTADOR")  # regroup após o filtro (janela de 3 meses)
         _m4_temp["i4_n_meses"] = _g4_temp["MES"].transform("size")
         _m4_temp["_x_temp"] = _g4_temp.cumcount()  # 0..n-1 em ordem cronológica (mais antigo=0)
         _m4_temp["_y_temp"] = np.log(_m4_temp["qtd_procedimentos"].clip(lower=0).to_numpy() + 1)
@@ -1311,7 +1312,7 @@ elif st.session_state.pagina == "severidade":
     # trazida de volta em 23/09, reconstruída a partir de um backup — ver
     # comentário em "with tab_risco_temp:" logo abaixo.)
     _labels_abas_temp = [
-        "📊 Ranking", "🎯 Índice de Risco",
+        "📊 Ranking de Severidade", "🎯 Índice de Risco",
     ]
     _abas_criadas_temp = st.tabs(_labels_abas_temp)
     (tab_ranking_temp, tab_risco_temp) = (
@@ -1324,7 +1325,7 @@ elif st.session_state.pagina == "severidade":
     # roda uma vez por item desta lista; hoje só a "📊 Ranking" usa esse corpo (a
     # "🎯 Índice de Risco" tem corpo próprio, fora desse loop — ver "with tab_risco_temp:").
     _config_abas_cs_temp = [
-        (tab_ranking_temp, "📊 Ranking", None, "_ranking", None, False),
+        (tab_ranking_temp, "📊 Ranking de Severidade", None, "_ranking", None, False),
     ]
     # ---------- RESUMO (mês vs. mês anterior, por variação % de uso) ----------
 #     with tab_resumo:
@@ -3788,13 +3789,14 @@ elif st.session_state.pagina == "severidade":
                 "que define a classificação final de risco.\n"
                 "\n"
                 "**I1 — Dependência de procedimento único (peso 20%)**  \n"
-                "Mede o quanto o valor pago (ou a quantidade de uso) do prestador está "
-                "concentrado num ÚNICO tipo de procedimento. Se, por exemplo, 80% de tudo "
-                "que o prestador fatura vem de um só procedimento, isso é sinal de alerta — "
-                "pode indicar prática pouco diversificada ou dependência de um código que, "
-                "se mudar de regra, derruba o prestador inteiro. É o indicador de MAIOR "
-                "peso (20%) — o mais decisivo nesse modelo. Nota 100 = concentração ≥70% "
-                "num único procedimento; nota 0 = bem diversificado (<30%).\n"
+                "Mede o quanto a QUANTIDADE DE USO do prestador está concentrada num "
+                "ÚNICO tipo de procedimento (não olha valor pago aqui, só quantidade). Se, "
+                "por exemplo, 80% de todo o uso do prestador vem de um só procedimento, "
+                "isso é sinal de alerta — pode indicar prática pouco diversificada ou "
+                "dependência de um código que, se mudar de regra, derruba o prestador "
+                "inteiro. É o indicador de MAIOR peso (20%) — o mais decisivo nesse modelo. "
+                "Nota 100 = concentração ≥70% do uso num único procedimento; nota 0 = bem "
+                "diversificado (<30%).\n"
                 "\n"
                 "**I2 — Severidade da prática (peso 15%)**  \n"
                 "Compara o uso médio por paciente do prestador (quantidade de uso ÷ "
@@ -3803,29 +3805,51 @@ elif st.session_state.pagina == "severidade":
                 "quanto sobreutilização. Nota 100 = uso por vida ≥3× a mediana do cluster; "
                 "nota 0 = até a própria mediana.\n"
                 "\n"
-                "**I3 — Exposição financeira / ticket (peso 15%)**  \n"
-                "Compara o ticket médio do prestador (valor pago ÷ quantidade de "
-                "procedimentos) com a mediana de ticket de prestadores da MESMA "
-                "especialidade e do MESMO cluster. Ticket muito acima da mediana pode "
+                "**I3 — Exposição financeira / Custo Médio do Procedimento (peso 15%)**  \n"
+                "Compara o Custo Médio do Procedimento do prestador (valor pago ÷ "
+                "quantidade de procedimentos) com a mediana de prestadores da MESMA "
+                "especialidade e do MESMO cluster. Custo Médio muito acima da mediana pode "
                 "indicar cobrança de procedimentos mais caros que o padrão do grupo "
-                "comparável. Nota 100 = ticket ≥3× a mediana do grupo; nota 0 = até a "
+                "comparável. Nota 100 = Custo Médio ≥3× a mediana do grupo; nota 0 = até a "
                 "mediana.\n"
                 "\n"
                 "**I4 — Crescimento anômalo / tendência (peso 10%)**  \n"
                 "Mede a tendência de crescimento da quantidade de procedimentos do "
-                "prestador nos últimos 3 a 6 meses do período considerado. Um crescimento "
-                "muito acima do normal num período curto pode indicar um aumento repentino "
-                "e inexplicado de volume. Precisa de pelo menos 3 meses de histórico no "
-                "período — com menos que isso aparece como \"—\" (sem dado suficiente, não "
-                "penaliza nem favorece o prestador). Nota 100 = crescimento ≥400% no "
-                "período; nota 0 = sem crescimento relevante (até 50%).\n"
+                "prestador nos últimos 3 meses período considerado. Um crescimento muito "
+                "acima do normal num período curto pode indicar um aumento repentino e "
+                "inexplicado de volume. Nota 100 = crescimento ≥400% no período; nota 0 = "
+                "sem crescimento relevante (até 50%).\n"
                 "\n"
                 "**I5 — Criticidade cluster × porte (peso 15%)**  \n"
-                "Combina o cluster onde o prestador está (A a D, sendo D o de maior risco "
-                "intrínseco pré-definido) com o \"porte\" dele (tamanho, pela quantidade de "
-                "pacientes, comparado aos outros prestadores do mesmo cluster). "
-                "Prestadores em clusters de maior risco e de maior porte dentro do cluster "
-                "puxam esse indicador pra cima.\n"
+                "É uma MÉDIA de duas notas — 60% a nota do Cluster + 40% a nota do Porte — "
+                "cada uma calculada assim:\n"
+                "\n"
+                "*Nota do Cluster* — fixa por cluster (não depende dos dados do prestador, "
+                "é um valor de referência pré-definido pra cada um dos 4 clusters):  \n"
+                "Cluster A → nota 0 (menos crítico)  \n"
+                "Cluster B → nota 25  \n"
+                "Cluster C → nota 50  \n"
+                "Cluster D → nota 100 (mais crítico)  \n"
+                "(prestador sem nenhum desses 4 clusters cadastrados entra com nota neutra "
+                "50, pra não derrubar o I5 à toa.)\n"
+                "\n"
+                "*Nota do Porte* — compara a quantidade de PACIENTES (vidas) do prestador "
+                "com os outros prestadores do MESMO cluster (usando quartis — 25%, 50% e "
+                "75% da distribuição de pacientes dentro do cluster):  \n"
+                "Prestador entre os 25% com MENOS pacientes do cluster → nota 100 (porte "
+                "pequeno)  \n"
+                "Entre 25% e 50% → nota 66  \n"
+                "Entre 50% e 75% → nota 33  \n"
+                "Entre os 25% com MAIS pacientes do cluster → nota 0 (porte grande)  \n"
+                "Ou seja: quanto MENOS pacientes o prestador tem, comparado aos pares do "
+                "mesmo cluster, MAIOR a nota de porte — um prestador pequeno mas que já "
+                "passou pelo piso de materialidade (tem valor pago relevante) é visto como "
+                "mais atípico/concentrado dentro do cluster do que um prestador grande com "
+                "volume proporcional de pacientes.\n"
+                "\n"
+                "*Conta final:* I5 = (0,6 × Nota do Cluster) + (0,4 × Nota do Porte) — o "
+                "resultado já sai direto em 0-100 (sem outra conversão de faixa) e entra "
+                "no Composto multiplicado pelo peso de 15%.\n"
                 "\n"
                 "**I6 — Diversificação da produção (peso 15%)**  \n"
                 "Parecido com o I1, mas olhando pros TRÊS procedimentos mais relevantes "
@@ -4091,8 +4115,15 @@ elif st.session_state.pagina == "severidade":
                             "; ".join(_filtros_ativos_risco_temp) if _filtros_ativos_risco_temp
                             else "Nenhum — todos os prestadores da base"
                         )
+                        _meses_considerados_pdf_temp = st.session_state.get(
+                            "risco_meses_considerados_temp", []
+                        )
+                        _texto_periodo_pdf_temp = (
+                            ", ".join(label_mes(m) for m in _meses_considerados_pdf_temp)
+                            if _meses_considerados_pdf_temp else "—"
+                        )
                         _linhas_meta_risco_temp = [
-                            ("Escopo", "Histórico completo carregado na base (não recorta por mês)"),
+                            ("Período considerado", _texto_periodo_pdf_temp),
                             ("Modelo", "7 indicadores — I1 20% · I2 15% · I3 15% · I4 10% · I5 15% · I6 15% · I7 10%"),
                             ("Filtros aplicados", _texto_filtros_risco_temp),
                             ("Gerado em", _agora_brasilia_temp().strftime("%d/%m/%Y às %H:%M")),
@@ -4263,12 +4294,12 @@ elif st.session_state.pagina == "severidade":
                             _linhas_i_temp = [
                                 ["Indicador", "O que mede", "Peso", "Valor observado", "Nota"],
                                 ["I1", "Dependência de procedimento único", "20%",
-                                 _fmt_pct_temp(_linha_det_temp.i1_pct) + " do valor/uso no top-1",
+                                 _fmt_pct_temp(_linha_det_temp.i1_pct) + " da quantidade de uso no top-1",
                                  f"{_linha_det_temp.I1:.0f}"],
                                 ["I2", "Severidade da prática", "15%",
                                  _fmt_razao_temp(_linha_det_temp.i2_razao) + " a mediana do cluster",
                                  f"{_linha_det_temp.I2:.0f}"],
-                                ["I3", "Exposição financeira (ticket)", "15%",
+                                ["I3", "Exposição financeira (Custo Médio do Procedimento)", "15%",
                                  _fmt_razao_temp(_linha_det_temp.i3_razao) + " a mediana da especialidade",
                                  f"{_linha_det_temp.I3:.0f}"],
                                 ["I4", "Crescimento anômalo (tendência)", "10%",
@@ -4422,7 +4453,10 @@ elif st.session_state.pagina == "severidade":
                         ),
                         "I1": "Dependência de procedimento único (peso 20%). Veja a explicação no topo da aba.",
                         "I2": "Severidade da prática (peso 15%). Veja a explicação no topo da aba.",
-                        "I3": "Exposição financeira / ticket (peso 15%). Veja a explicação no topo da aba.",
+                        "I3": (
+                            "Exposição financeira / Custo Médio do Procedimento (peso 15%). Veja a "
+                            "explicação no topo da aba."
+                        ),
                         "I4": "Crescimento anômalo / tendência (peso 10%). Veja a explicação no topo da aba.",
                         "I5": "Criticidade cluster × porte (peso 15%). Veja a explicação no topo da aba.",
                         "I6": "Diversificação da produção (peso 15%). Veja a explicação no topo da aba.",
@@ -4513,14 +4547,14 @@ elif st.session_state.pagina == "severidade":
                                 )
                                 _linhas_indicadores_risco_temp = [
                                     ("I1", "Dependência de procedimento único", "20%",
-                                     f"{_linha_risco_temp['i1_pct']:.1f}% do valor/uso no top-1"
+                                     f"{_linha_risco_temp['i1_pct']:.1f}% da quantidade de uso no top-1"
                                      if pd.notna(_linha_risco_temp["i1_pct"]) else "—",
                                      _linha_risco_temp["I1"]),
                                     ("I2", "Severidade da prática", "15%",
                                      f"{_linha_risco_temp['i2_razao']:.2f}× a mediana do cluster"
                                      if pd.notna(_linha_risco_temp["i2_razao"]) else "—",
                                      _linha_risco_temp["I2"]),
-                                    ("I3", "Exposição financeira (ticket)", "15%",
+                                    ("I3", "Exposição financeira (Custo Médio do Procedimento)", "15%",
                                      f"{_linha_risco_temp['i3_razao']:.2f}× a mediana da especialidade "
                                      "no cluster" if pd.notna(_linha_risco_temp["i3_razao"]) else "—",
                                      _linha_risco_temp["I3"]),
