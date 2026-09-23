@@ -388,11 +388,56 @@ def _risco_pontuar_faixas_temp(serie, cortes, notas):
     sempre exclusivo na faixa de cima)."""
     condicoes = [serie < cortes[0], serie < cortes[1], serie < cortes[2], serie < cortes[3]]
     return np.select(condicoes, notas[:4], default=notas[4])
+# ---------- Calibração dos indicadores (editável pelo usuário, 23/09) ----------
+# Valores padrão = os mesmos hardcoded que já estavam em uso (conforme os anexos).
+# A ideia: separar o cálculo em duas etapas —
+#   (1) _risco_calcular_bruto_temp: a parte PESADA (relê CSV do I7, agrupamentos por
+#       prestador/procedimento/mês, regressão do I4...) — continua cacheada e só roda
+#       no clique em "Calcular Índice de Risco", exatamente como antes.
+#   (2) _risco_aplicar_calibracao_temp: a parte LEVE (pontuar cada indicador dentro
+#       das faixas, montar o composto ponderado, aplicar o piso de materialidade e
+#       classificar) — recebe os valores brutos já calculados (i1_pct, i2_razao...) e
+#       os parâmetros de calibração escolhidos na tela, e roda de novo a cada
+#       interação do usuário no painel de calibração (é só reaplicar fórmulas
+#       vetorizadas em cima de colunas já prontas — não relê CSV nem refaz
+#       agrupamento nenhum, por isso pode rodar sem precisar clicar em "Calcular"
+#       de novo).
+_RISCO_PESOS_PADRAO_TEMP = dict(_RISCO_PESOS_TEMP)
+_RISCO_CORTES_PADRAO_TEMP = {
+    "I1": [30, 40, 50, 70],
+    "I2": [1.0, 1.5, 2.0, 3.0],
+    "I3": [1.0, 1.5, 2.0, 3.0],
+    "I4": [50, 100, 200, 400],
+    "I6": [60, 75, 85, 95],
+    "I7": [30, 50, 70, 85],
+}
+_RISCO_CORTES_LABEL_TEMP = {
+    "I1": "% de uso no procedimento mais comum",
+    "I2": "razão uso/vida vs. mediana do cluster",
+    "I3": "razão Custo Médio do Procedimento vs. mediana",
+    "I4": "variação % da quantidade (últimos 3 meses)",
+    "I6": "% do valor nos 3 procedimentos mais caros",
+    "I7": "% do valor concentrado nos maiores pacientes",
+}
+# faixas do composto: (rótulo, cor hex p/ PDF, ordem — maior ordem = mais grave), derivadas
+# de _RISCO_FAIXAS_TEMP (rótulo/cor/ordem continuam fixos — só o piso do composto de cada
+# faixa é editável na tela, por isso sai daqui, separado do resto).
+_RISCO_FAIXAS_META_TEMP = [(rotulo, cor, ordem) for _, rotulo, cor, ordem in _RISCO_FAIXAS_TEMP]
+_RISCO_FAIXAS_PISOS_PADRAO_TEMP = [piso for piso, _, _, _ in _RISCO_FAIXAS_TEMP[:-1]]  # exclui "Sem alerta" (piso 0, fixo)
+_RISCO_PISO_MINIMO_PADRAO_TEMP = 5000.0
+_RISCO_PISO_CLUSTER_N_PADRAO_TEMP = 30
+_RISCO_EMOJI_FAIXA_TEMP = {
+    "Alerta forte": "🔴", "Alerta moderado alto": "🟠", "Alerta moderado baixo": "🟡",
+    "Alerta baixo": "🟢", "Sem alerta": "✅",
+}
 @st.cache_data(show_spinner=False)
-def _calcular_indicadores_risco_temp(agregado_universo, usuarios_universo, valor_paciente_temp):
+def _risco_calcular_bruto_temp(agregado_universo, usuarios_universo, valor_paciente_temp):
     """
-    Calcula, por prestador, os 7 indicadores (0-100 cada), o composto ponderado, o
-    piso de materialidade Y, os gates G1/G2 e a classificação final.
+    Calcula, por prestador, os valores BRUTOS dos 7 indicadores (i1_pct, i2_razao...) —
+    a parte pesada (releitura do CSV do Indicador 7, agrupamentos por prestador/
+    procedimento/mês, regressão do I4...). NÃO pontua (0-100), NÃO monta o composto e
+    NÃO classifica — isso fica em `_risco_aplicar_calibracao_temp`, que é leve e roda
+    de novo a cada ajuste no painel de calibração, sem precisar refazer nada daqui.
 
     IMPORTANTE — escopo: `agregado_universo` já deve vir com os filtros de Mês/Plano/
     Especialidade da página aplicados (a pedido do usuário em 23/09 — antes essa
@@ -476,7 +521,9 @@ def _calcular_indicadores_risco_temp(agregado_universo, usuarios_universo, valor
     base_temp["i3_razao"] = np.where(
         _mediana_ticket_temp > 0, base_temp["ticket"] / _mediana_ticket_temp, np.nan)
 
-    # ---------- I5 (criticidade cluster × porte) ----------
+    # ---------- I5 (criticidade cluster × porte) — não editável no painel de
+    # calibração por enquanto (fórmula com dois componentes distintos, cada um com
+    # sua própria escala; dá pra abrir isso também se precisar) ----------
     base_temp["score_cluster"] = base_temp["CLUSTER"].astype(str).map(_RISCO_SCORE_CLUSTER_TEMP)
     _p25_temp = base_temp.groupby("CLUSTER", observed=True)["qtd_usuarios"].transform(lambda s: s.quantile(0.25))
     _p50_temp = base_temp.groupby("CLUSTER", observed=True)["qtd_usuarios"].transform(lambda s: s.quantile(0.50))
@@ -561,38 +608,68 @@ def _calcular_indicadores_risco_temp(agregado_universo, usuarios_universo, valor
     else:
         base_temp["i7_pct"] = np.nan
 
-    # ---------- pontuação 0-100 de cada indicador (faixas dos anexos) ----------
+    return base_temp
+def _risco_aplicar_calibracao_temp(base_bruto_temp, pesos, cortes, faixas_pisos, piso_minimo, piso_cluster_n_min):
+    """
+    Parte LEVE do cálculo: recebe os valores brutos já prontos (i1_pct, i2_razao...,
+    vindos de `_risco_calcular_bruto_temp`) e os parâmetros de calibração escolhidos
+    na tela — pontua cada indicador dentro das faixas (`cortes`), monta o composto
+    ponderado (`pesos`), aplica o piso de materialidade (`piso_minimo`/
+    `piso_cluster_n_min`) e classifica (`faixas_pisos`). NÃO relê CSV nem refaz
+    nenhum agrupamento pesado — só reaplica fórmulas vetorizadas em cima de colunas
+    já calculadas, por isso é rápida o bastante pra rodar de novo a cada ajuste no
+    painel de calibração, sem precisar clicar em "Calcular" de novo.
+
+    pesos: dict {"I1":0.20, ...} (não precisa somar exatamente 1 — é normalizado
+    aqui pela soma real, pra o composto continuar sempre 0-100 mesmo que o usuário
+    não feche a soma em 100%).
+    cortes: dict {"I1":[c1,c2,c3,c4], ...} pros indicadores I1,I2,I3,I4,I6,I7 (I5 já
+    vem pronto 0-100 do cálculo bruto, não passa por corte).
+    faixas_pisos: lista [piso_forte, piso_mod_alto, piso_mod_baixo, piso_baixo] em
+    ordem decrescente (composto >= piso_forte -> Alerta forte, etc.; abaixo de
+    piso_baixo -> Sem alerta).
+    """
+    colunas_vazias = ["CD_PRESTADOR"]
+    if base_bruto_temp is None or base_bruto_temp.empty:
+        return pd.DataFrame(columns=colunas_vazias)
+    base_temp = base_bruto_temp.copy()
+
+    # ---------- pontuação 0-100 de cada indicador (faixas calibráveis) ----------
     base_temp["I1"] = np.where(base_temp["i1_pct"].notna(),
-        _risco_pontuar_faixas_temp(base_temp["i1_pct"], [30, 40, 50, 70], [0, 25, 50, 75, 100]), np.nan)
+        _risco_pontuar_faixas_temp(base_temp["i1_pct"], cortes["I1"], [0, 25, 50, 75, 100]), np.nan)
     base_temp["I2"] = np.where(base_temp["i2_razao"].notna(),
-        _risco_pontuar_faixas_temp(base_temp["i2_razao"], [1.0, 1.5, 2.0, 3.0], [0, 25, 50, 75, 100]), np.nan)
+        _risco_pontuar_faixas_temp(base_temp["i2_razao"], cortes["I2"], [0, 25, 50, 75, 100]), np.nan)
     base_temp["I3"] = np.where(base_temp["i3_razao"].notna(),
-        _risco_pontuar_faixas_temp(base_temp["i3_razao"], [1.0, 1.5, 2.0, 3.0], [0, 25, 50, 75, 100]), np.nan)
+        _risco_pontuar_faixas_temp(base_temp["i3_razao"], cortes["I3"], [0, 25, 50, 75, 100]), np.nan)
     base_temp["I4"] = np.where(base_temp["i4_variacao_pct"].notna(),
-        _risco_pontuar_faixas_temp(base_temp["i4_variacao_pct"], [50, 100, 200, 400], [0, 25, 50, 75, 100]), np.nan)
+        _risco_pontuar_faixas_temp(base_temp["i4_variacao_pct"], cortes["I4"], [0, 25, 50, 75, 100]), np.nan)
     base_temp["I5"] = base_temp["i5_pct"]
     base_temp["I6"] = np.where(base_temp["i6_pct"].notna(),
-        _risco_pontuar_faixas_temp(base_temp["i6_pct"], [60, 75, 85, 95], [0, 25, 50, 75, 100]), np.nan)
+        _risco_pontuar_faixas_temp(base_temp["i6_pct"], cortes["I6"], [0, 25, 50, 75, 100]), np.nan)
     base_temp["I7"] = np.where(base_temp["i7_pct"].notna(),
-        _risco_pontuar_faixas_temp(base_temp["i7_pct"], [30, 50, 70, 85], [0, 25, 50, 75, 100]), np.nan)
+        _risco_pontuar_faixas_temp(base_temp["i7_pct"], cortes["I7"], [0, 25, 50, 75, 100]), np.nan)
 
     # Indicador sem dado disponível (ex.: só 1-2 meses de histórico pro I4, ou
     # prestador fora da base de valor por paciente pro I7) entra com 0 no composto —
     # não penaliza nem favorece por ausência de dado; fica visível como "—" na tela/
-    # PDF através das colunas i*_pct/i*_razao (não das notas I1..I7).
+    # PDF através das colunas i*_pct/i*_razao (não das notas I1..I7). Pesos
+    # normalizados pela soma real (não trava em precisar somar 100%).
+    _soma_pesos_temp = sum(pesos.values()) or 1.0
     base_temp["composto"] = sum(
-        base_temp[k].fillna(0) * peso for k, peso in _RISCO_PESOS_TEMP.items()
+        base_temp[k].fillna(0) * (peso / _soma_pesos_temp) for k, peso in pesos.items()
     )
 
-    # ---------- Y: piso de materialidade ----------
+    # ---------- Y: piso de materialidade (mínimo e N mínimo por cluster calibráveis) ----------
     _mediana_nacional_temp = base_temp["soma_valor"].median()
     _contagem_cluster_temp = base_temp.groupby("CLUSTER", observed=True)["CD_PRESTADOR"].transform("count")
     _mediana_cluster_temp = base_temp.groupby("CLUSTER", observed=True)["soma_valor"].transform("median")
-    _mediana_ref_temp = np.where(_contagem_cluster_temp >= 30, _mediana_cluster_temp, _mediana_nacional_temp)
-    base_temp["Y"] = np.maximum(_mediana_ref_temp, 5000.0)
+    _mediana_ref_temp = np.where(
+        _contagem_cluster_temp >= piso_cluster_n_min, _mediana_cluster_temp, _mediana_nacional_temp)
+    base_temp["Y"] = np.maximum(_mediana_ref_temp, piso_minimo)
     base_temp["abaixo_do_piso"] = base_temp["soma_valor"] < base_temp["Y"]
 
-    # ---------- gates G1/G2 (pisos de classificação) ----------
+    # ---------- gates G1/G2 (pisos de classificação — limites fixos, não calibráveis
+    # ainda) ----------
     base_temp["gate_g1"] = (
         (base_temp["i1_pct"].fillna(0) >= 70) | (base_temp["i6_pct"].fillna(0) >= 90)
     ) & (base_temp["I2"].fillna(0) >= 50)
@@ -600,18 +677,24 @@ def _calcular_indicadores_risco_temp(agregado_universo, usuarios_universo, valor
         (base_temp["i1_pct"].fillna(0) >= 50) | (base_temp["i6_pct"].fillna(0) >= 85)
     )
 
-    # ---------- classificação final ----------
+    # ---------- classificação final (faixas do composto calibráveis) ----------
     # Vetorizado (sem .apply(axis=1) linha a linha — outro gargalo de performance em
     # bases com muitos prestadores): mesma regra em 3 passos — (1) ordem "natural" pelo
-    # composto, na ordem decrescente de _RISCO_FAIXAS_TEMP; (2) gates G1/G2 elevam pro
-    # piso "Alerta moderado alto" (ordem 3) quando a ordem natural for menor; (3) piso
-    # de materialidade (abaixo_do_piso) vence tudo e força "Sem alerta".
-    _rotulo_por_ordem_temp = {ordem: rotulo for _, rotulo, _, ordem in _RISCO_FAIXAS_TEMP}
-    _cor_por_ordem_temp = {ordem: cor for _, _, cor, ordem in _RISCO_FAIXAS_TEMP}
+    # composto, na ordem decrescente das faixas; (2) gates G1/G2 elevam pro piso
+    # "Alerta moderado alto" (ordem 3) quando a ordem natural for menor; (3) piso de
+    # materialidade (abaixo_do_piso) vence tudo e força "Sem alerta".
+    _faixas_ordenadas_temp = sorted(
+        zip(faixas_pisos, _RISCO_FAIXAS_META_TEMP[:-1]), key=lambda t: -t[1][2]
+    )  # [(piso, (rotulo, cor, ordem)), ...] na ordem decrescente de gravidade
+    _rotulo_por_ordem_temp = {ordem: rotulo for _, (rotulo, _, ordem) in _faixas_ordenadas_temp}
+    _cor_por_ordem_temp = {ordem: cor for _, (_, cor, ordem) in _faixas_ordenadas_temp}
+    _rotulo_sem_alerta_temp, _cor_sem_alerta_temp, _ordem_sem_alerta_temp = _RISCO_FAIXAS_META_TEMP[-1]
+    _rotulo_por_ordem_temp[_ordem_sem_alerta_temp] = _rotulo_sem_alerta_temp
+    _cor_por_ordem_temp[_ordem_sem_alerta_temp] = _cor_sem_alerta_temp
     _ordem_natural_temp = np.select(
-        [base_temp["composto"] >= piso for piso, _, _, _ in _RISCO_FAIXAS_TEMP[:-1]],
-        [ordem for _, _, _, ordem in _RISCO_FAIXAS_TEMP[:-1]],
-        default=_RISCO_FAIXAS_TEMP[-1][3],
+        [base_temp["composto"] >= piso for piso, _ in _faixas_ordenadas_temp],
+        [ordem for _, (_, _, ordem) in _faixas_ordenadas_temp],
+        default=_ordem_sem_alerta_temp,
     )
     _gate_ativo_temp = (base_temp["gate_g1"] | base_temp["gate_g2"]) & (_ordem_natural_temp < 3)
     _ordem_final_temp = np.where(_gate_ativo_temp, 3, _ordem_natural_temp)
@@ -3924,7 +4007,7 @@ elif st.session_state.pagina == "severidade":
                 tuple(sorted(f_mes or [])), tuple(sorted(f_plano or [])), tuple(sorted(f_especialidade or [])),
             )
             if (
-                "risco_resultado_temp" in st.session_state
+                "risco_bruto_temp" in st.session_state
                 and st.session_state.get("risco_assinatura_filtros_temp") != _assinatura_filtros_risco_temp
             ):
                 st.info(
@@ -3934,7 +4017,7 @@ elif st.session_state.pagina == "severidade":
             if st.button("🔄 Calcular Índice de Risco", key="risco_botao_calcular_temp"):
                 with st.spinner("Calculando os 7 indicadores..."):
                     _risco_valor_paciente_carregado_temp = _risco_valor_por_paciente_temp(".")
-                    st.session_state["risco_resultado_temp"] = _calcular_indicadores_risco_temp(
+                    st.session_state["risco_bruto_temp"] = _risco_calcular_bruto_temp(
                         _risco_universo_temp, _risco_usuarios_universo_temp,
                         _risco_valor_paciente_carregado_temp,
                     )
@@ -3948,16 +4031,144 @@ elif st.session_state.pagina == "severidade":
                         _risco_universo_temp["MES"].dropna().unique()
                     ) if "MES" in _risco_universo_temp.columns else []
 
-            if "risco_resultado_temp" not in st.session_state:
+            if "risco_bruto_temp" not in st.session_state:
                 st.info("Clique em \"🔄 Calcular Índice de Risco\" acima pra ver o ranking.")
+            elif st.session_state["risco_bruto_temp"].empty:
+                st.info("Nenhum prestador para calcular o Índice de Risco com os filtros atuais.")
             else:
-                _risco_tabela_completa_temp = st.session_state["risco_resultado_temp"]
+                # ---------- painel de calibração (editável, 23/09) — pesos, faixas de
+                # pontuação de cada indicador, faixas do composto e piso de materialidade.
+                # Roda a cada interação (é a parte LEVE do cálculo — só reaplica fórmulas
+                # em cima do resultado bruto já calculado acima, sem reler CSV nem refazer
+                # agrupamento nenhum), então o usuário vê o efeito na hora, sem precisar
+                # clicar em "Calcular" de novo. ----------
+                with st.expander(
+                    "⚙️ Calibração dos indicadores (editável) — ajuste pesos, faixas de "
+                    "pontuação e piso de materialidade"
+                ):
+                    st.caption(
+                        "Os valores abaixo partem do padrão original (conforme os anexos). "
+                        "Ajuste pra mais ou pra menos e o ranking/classificação abaixo já "
+                        "reflete na hora — não precisa clicar em \"Calcular\" de novo (só o "
+                        "cálculo dos valores brutos de cada indicador depende do botão acima; "
+                        "a calibração é reaplicada em cima desses valores)."
+                    )
+                    if st.button("↩️ Restaurar padrão de calibração", key="risco_cal_restaurar_temp"):
+                        for _k_temp in list(st.session_state.keys()):
+                            if _k_temp.startswith("risco_cal_"):
+                                del st.session_state[_k_temp]
+                        st.rerun()
+
+                    st.markdown("**Pesos de cada indicador no Composto (%)**")
+                    st.caption(
+                        "Não precisa somar exatamente 100% — é normalizado automaticamente "
+                        "pela soma real dos pesos informados."
+                    )
+                    _cols_peso_risco_temp = st.columns(7)
+                    _pesos_atuais_risco_temp = {}
+                    for _idx_p_temp, _ind_p_temp in enumerate(["I1", "I2", "I3", "I4", "I5", "I6", "I7"]):
+                        with _cols_peso_risco_temp[_idx_p_temp]:
+                            _pesos_atuais_risco_temp[_ind_p_temp] = st.number_input(
+                                _ind_p_temp, min_value=0.0, max_value=100.0,
+                                value=float(_RISCO_PESOS_PADRAO_TEMP[_ind_p_temp] * 100),
+                                step=1.0, key=f"risco_cal_peso_{_ind_p_temp}",
+                            ) / 100.0
+                    _soma_pesos_exibicao_temp = sum(_pesos_atuais_risco_temp.values()) * 100
+                    if abs(_soma_pesos_exibicao_temp - 100) > 0.01:
+                        st.caption(f"Soma atual dos pesos: {_soma_pesos_exibicao_temp:.0f}% (normalizado pra 100% no cálculo).")
+
+                    st.markdown("**Faixas de pontuação de cada indicador (mínimo → máximo)**")
+                    st.caption(
+                        "Pra cada indicador, os 4 valores abaixo definem onde começa cada "
+                        "faixa de nota (0 / 25 / 50 / 75 / 100). Ex.: I1 com 30/40/50/70 "
+                        "quer dizer: abaixo de 30% → nota 0; de 30% a 40% → 25; ... ; 70% ou "
+                        "mais → nota 100."
+                    )
+                    _cortes_atuais_risco_temp = {}
+                    for _ind_c_temp in ["I1", "I2", "I3", "I4", "I6", "I7"]:
+                        st.caption(f"{_ind_c_temp} — {_RISCO_CORTES_LABEL_TEMP[_ind_c_temp]}")
+                        _cols_corte_temp = st.columns(4)
+                        _lista_corte_temp = []
+                        for _j_temp in range(4):
+                            with _cols_corte_temp[_j_temp]:
+                                _rotulo_corte_temp = ["nota 25 a partir de", "nota 50 a partir de",
+                                                       "nota 75 a partir de", "nota 100 a partir de"][_j_temp]
+                                _lista_corte_temp.append(st.number_input(
+                                    _rotulo_corte_temp,
+                                    value=float(_RISCO_CORTES_PADRAO_TEMP[_ind_c_temp][_j_temp]),
+                                    step=0.5 if _ind_c_temp in ("I2", "I3") else 1.0,
+                                    key=f"risco_cal_corte_{_ind_c_temp}_{_j_temp}",
+                                ))
+                        _cortes_atuais_risco_temp[_ind_c_temp] = _lista_corte_temp
+
+                    st.markdown("**Faixas de classificação pelo Composto (0 a 100)**")
+                    _cols_faixa_temp = st.columns(4)
+                    with _cols_faixa_temp[0]:
+                        _faixa_forte_temp = st.number_input(
+                            "🔴 Alerta forte a partir de", min_value=0.0, max_value=100.0,
+                            value=float(_RISCO_FAIXAS_PISOS_PADRAO_TEMP[0]), step=1.0,
+                            key="risco_cal_faixa_forte",
+                        )
+                    with _cols_faixa_temp[1]:
+                        _faixa_modalto_temp = st.number_input(
+                            "🟠 Mod. alto a partir de", min_value=0.0, max_value=100.0,
+                            value=float(_RISCO_FAIXAS_PISOS_PADRAO_TEMP[1]), step=1.0,
+                            key="risco_cal_faixa_modalto",
+                        )
+                    with _cols_faixa_temp[2]:
+                        _faixa_modbaixo_temp = st.number_input(
+                            "🟡 Mod. baixo a partir de", min_value=0.0, max_value=100.0,
+                            value=float(_RISCO_FAIXAS_PISOS_PADRAO_TEMP[2]), step=1.0,
+                            key="risco_cal_faixa_modbaixo",
+                        )
+                    with _cols_faixa_temp[3]:
+                        _faixa_baixo_temp = st.number_input(
+                            "🟢 Baixo a partir de", min_value=0.0, max_value=100.0,
+                            value=float(_RISCO_FAIXAS_PISOS_PADRAO_TEMP[3]), step=1.0,
+                            key="risco_cal_faixa_baixo",
+                        )
+                    _faixas_pisos_atuais_temp = [
+                        _faixa_forte_temp, _faixa_modalto_temp, _faixa_modbaixo_temp, _faixa_baixo_temp,
+                    ]
+                    if not (
+                        _faixa_forte_temp > _faixa_modalto_temp > _faixa_modbaixo_temp > _faixa_baixo_temp >= 0
+                    ):
+                        st.warning(
+                            "As faixas deveriam estar em ordem decrescente (forte > mod. alto > "
+                            "mod. baixo > baixo ≥ 0) pra fazer sentido — confira os valores acima."
+                        )
+
+                    st.markdown("**Piso de materialidade**")
+                    _col_piso1_temp, _col_piso2_temp = st.columns(2)
+                    with _col_piso1_temp:
+                        _piso_minimo_atual_temp = st.number_input(
+                            "Valor mínimo (R$)", min_value=0.0,
+                            value=float(_RISCO_PISO_MINIMO_PADRAO_TEMP), step=500.0,
+                            key="risco_cal_piso_minimo",
+                        )
+                    with _col_piso2_temp:
+                        _piso_cluster_n_atual_temp = st.number_input(
+                            "Nº mínimo de prestadores no cluster (senão usa a mediana nacional)",
+                            min_value=1, value=int(_RISCO_PISO_CLUSTER_N_PADRAO_TEMP), step=1,
+                            key="risco_cal_piso_cluster_n",
+                        )
+                    st.caption(
+                        "O piso (Y) é o maior valor entre este mínimo e a mediana de faturamento "
+                        "do cluster do prestador (ou a mediana nacional, se o cluster tiver menos "
+                        "prestadores que o número mínimo acima). Prestador com faturamento total "
+                        "abaixo do piso é sempre \"Sem alerta\", não importa o Composto."
+                    )
+
+                _risco_tabela_completa_temp = _risco_aplicar_calibracao_temp(
+                    st.session_state["risco_bruto_temp"], _pesos_atuais_risco_temp, _cortes_atuais_risco_temp,
+                    _faixas_pisos_atuais_temp, _piso_minimo_atual_temp, _piso_cluster_n_atual_temp,
+                )
                 if _risco_tabela_completa_temp.empty:
                     st.info("Nenhum prestador para calcular o Índice de Risco com os filtros atuais.")
                 else:
                     # ---------- filtros da aba (só afetam a EXIBIÇÃO — as referências de cluster
                     # (mediana/percentis) já foram calculadas em cima do universo inteiro, antes
-                    # deste recorte — ver docstring de _calcular_indicadores_risco_temp) ----------
+                    # deste recorte — ver docstring de _risco_calcular_bruto_temp) ----------
                     fc1_risco, fc2_risco, fc3_risco, fc4_risco = st.columns(4)
                     with fc1_risco:
                         f_uf_risco_temp = st.multiselect(
