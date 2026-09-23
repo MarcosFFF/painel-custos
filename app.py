@@ -388,18 +388,21 @@ def _risco_pontuar_faixas_temp(serie, cortes, notas):
     sempre exclusivo na faixa de cima)."""
     condicoes = [serie < cortes[0], serie < cortes[1], serie < cortes[2], serie < cortes[3]]
     return np.select(condicoes, notas[:4], default=notas[4])
+@st.cache_data(show_spinner=False)
 def _calcular_indicadores_risco_temp(agregado_universo, usuarios_universo, valor_paciente_temp):
     """
     Calcula, por prestador, os 7 indicadores (0-100 cada), o composto ponderado, o
     piso de materialidade Y, os gates G1/G2 e a classificação final.
 
-    IMPORTANTE — escopo: `agregado_universo` deve vir SEM filtro de Mês (concentração
-    de produção, ticket e tendência só fazem sentido olhando o histórico completo
-    carregado, não um mês isolado) — filtros de Plano/Especialidade da página, se
-    houver, já devem ter sido aplicados antes de chamar esta função. Filtros de UF/
+    IMPORTANTE — escopo: `agregado_universo` já deve vir com os filtros de Mês/Plano/
+    Especialidade da página aplicados (a pedido do usuário em 23/09 — antes essa
+    função sempre ignorava o filtro de Mês; agora respeita, então filtrar pra 1 mês só
+    reduz o histórico disponível pro I4, que precisa de pelo menos 3 meses — com menos
+    que isso o I4 fica "—"/sem dado, não quebra o resto do cálculo). Filtros de UF/
     Cidade/Cluster/Prestador da aba são aplicados DEPOIS, só na exibição — aplicá-los
     aqui distorceria as referências de cluster (mediana/percentis calculados só
-    sobre quem sobrou do filtro, não sobre o cluster inteiro).
+    sobre quem sobrou do filtro, não sobre o cluster inteiro). Cacheada pelo Streamlit
+    (@st.cache_data) — com os mesmos argumentos (mesmos DataFrames), não recalcula.
     """
     colunas_vazias = ["CD_PRESTADOR"]
     if agregado_universo is None or agregado_universo.empty:
@@ -488,39 +491,70 @@ def _calcular_indicadores_risco_temp(agregado_universo, usuarios_universo, valor
     base_temp["i5_pct"] = 0.6 * base_temp["score_cluster"].fillna(50) + 0.4 * base_temp["score_porte"]
 
     # ---------- I4 (tendência 3-6 meses — slope da regressão log(qtd) vs mês) ----------
+    # Vetorizado (sem .apply() por prestador — era o maior gargalo de performance da
+    # aba, ~60% do tempo total em bases com muitos prestadores): a inclinação da
+    # regressão linear de log(qtd) vs mês (últimos até 6 meses, mínimo 3) é calculada
+    # pela fórmula fechada de OLS — slope = Sxy/Sxx, com x/y centralizados na média do
+    # próprio prestador — usando somas por grupo em vez de chamar np.polyfit uma vez
+    # por prestador. Matematicamente idêntico a np.polyfit(x, y, 1)[0] pra um ajuste
+    # de grau 1.
     mensal_temp = agregado_universo.groupby(
         ["CD_PRESTADOR", "MES"], dropna=False, observed=True
     )["qtd_procedimentos"].sum().reset_index()
-    def _slope_prestador_temp(grupo):
-        g = grupo.dropna(subset=["MES"]).sort_values("MES").tail(6)
-        if len(g) < 3:
-            return pd.Series({"i4_variacao_pct": np.nan, "i4_n_meses": len(g)})
-        x = np.arange(len(g))
-        y = np.log(g["qtd_procedimentos"].clip(lower=0).to_numpy() + 1)
-        slope = np.polyfit(x, y, 1)[0]
-        variacao_pct = (np.exp(slope * (len(g) - 1)) - 1) * 100
-        return pd.Series({"i4_variacao_pct": variacao_pct, "i4_n_meses": len(g)})
     if mensal_temp.empty:
         base_temp["i4_variacao_pct"] = np.nan
         base_temp["i4_n_meses"] = 0
     else:
-        _tendencia_temp = (
-            mensal_temp.groupby("CD_PRESTADOR").apply(_slope_prestador_temp)
-            .reset_index()
+        _m4_temp = mensal_temp.dropna(subset=["MES"]).sort_values(["CD_PRESTADOR", "MES"]).copy()
+        _g4_temp = _m4_temp.groupby("CD_PRESTADOR")
+        _m4_temp["_pos_fim_temp"] = _g4_temp.cumcount(ascending=False)  # 0 = mês mais recente
+        _m4_temp = _m4_temp[_m4_temp["_pos_fim_temp"] < 6].copy()  # só os últimos até 6 meses
+        _g4_temp = _m4_temp.groupby("CD_PRESTADOR")  # regroup após o filtro (janela de até 6 meses)
+        _m4_temp["i4_n_meses"] = _g4_temp["MES"].transform("size")
+        _m4_temp["_x_temp"] = _g4_temp.cumcount()  # 0..n-1 em ordem cronológica (mais antigo=0)
+        _m4_temp["_y_temp"] = np.log(_m4_temp["qtd_procedimentos"].clip(lower=0).to_numpy() + 1)
+        _dx_temp = _m4_temp["_x_temp"] - _g4_temp["_x_temp"].transform("mean")
+        _dy_temp = _m4_temp["_y_temp"] - _g4_temp["_y_temp"].transform("mean")
+        _m4_temp["_sxy_termo_temp"] = _dx_temp * _dy_temp
+        _m4_temp["_sxx_termo_temp"] = _dx_temp * _dx_temp
+        _somas4_temp = _m4_temp.groupby("CD_PRESTADOR", observed=True).agg(
+            i4_n_meses=("i4_n_meses", "first"),
+            _sxy_temp=("_sxy_termo_temp", "sum"),
+            _sxx_temp=("_sxx_termo_temp", "sum"),
         )
+        _slope4_temp = np.where(
+            _somas4_temp["_sxx_temp"] > 0, _somas4_temp["_sxy_temp"] / _somas4_temp["_sxx_temp"], np.nan)
+        _somas4_temp["i4_variacao_pct"] = np.where(
+            _somas4_temp["i4_n_meses"] >= 3,
+            (np.exp(_slope4_temp * (_somas4_temp["i4_n_meses"] - 1)) - 1) * 100,
+            np.nan,
+        )
+        _tendencia_temp = _somas4_temp[["i4_variacao_pct", "i4_n_meses"]].reset_index()
         base_temp = base_temp.merge(_tendencia_temp, on="CD_PRESTADOR", how="left")
+        base_temp["i4_n_meses"] = base_temp["i4_n_meses"].fillna(0).astype(int)
 
     # ---------- I7 (dependência de pacientes — top 10% do valor, ou top 1-2 se <10 vidas) ----------
-    def _i7_prestador_temp(grupo):
-        vals = grupo["VL_PAGO"].sort_values(ascending=False)
-        total = vals.sum()
-        if total <= 0:
-            return np.nan
-        n = len(vals)
-        k = min(2, n) if n < 10 else max(1, int(np.ceil(n * 0.10)))
-        return vals.iloc[:k].sum() / total * 100
+    # Vetorizado (sem .apply() por prestador — era o outro grande gargalo de
+    # performance da aba em bases com muitos prestadores/pacientes): mesma regra
+    # (k = 2 se <10 pacientes, senão 10% arredondado pra cima, mínimo 1), calculada
+    # via rank/cumcount em vez de um laço Python por grupo.
     if valor_paciente_temp is not None and not valor_paciente_temp.empty:
-        _i7_series_temp = valor_paciente_temp.groupby("CD_PRESTADOR").apply(_i7_prestador_temp)
+        _vp_temp = valor_paciente_temp.sort_values(
+            ["CD_PRESTADOR", "VL_PAGO"], ascending=[True, False]
+        ).copy()
+        _vp_temp["rank_valor"] = _vp_temp.groupby("CD_PRESTADOR").cumcount() + 1
+        _vp_temp["n_pacientes"] = _vp_temp.groupby("CD_PRESTADOR")["VL_PAGO"].transform("size")
+        _vp_temp["k_corte"] = np.where(
+            _vp_temp["n_pacientes"] < 10,
+            np.minimum(2, _vp_temp["n_pacientes"]),
+            np.ceil(_vp_temp["n_pacientes"] * 0.10).clip(lower=1),
+        )
+        _soma_topk_temp = (
+            _vp_temp[_vp_temp["rank_valor"] <= _vp_temp["k_corte"]]
+            .groupby("CD_PRESTADOR")["VL_PAGO"].sum()
+        )
+        _soma_total_temp = _vp_temp.groupby("CD_PRESTADOR")["VL_PAGO"].sum()
+        _i7_series_temp = (_soma_topk_temp / _soma_total_temp * 100).where(_soma_total_temp > 0)
         _i7_series_temp.name = "i7_pct"
         base_temp = base_temp.merge(_i7_series_temp, left_on="CD_PRESTADOR", right_index=True, how="left")
     else:
@@ -566,16 +600,24 @@ def _calcular_indicadores_risco_temp(agregado_universo, usuarios_universo, valor
     )
 
     # ---------- classificação final ----------
-    def _classificar_temp(row):
-        if row["abaixo_do_piso"]:
-            return pd.Series({"classificacao": "Sem alerta", "cor_classificacao": "#9aa5b1", "ordem_classificacao": 0})
-        for piso, rotulo, cor, ordem in _RISCO_FAIXAS_TEMP:
-            if row["composto"] >= piso:
-                if (row["gate_g1"] or row["gate_g2"]) and ordem < 3:
-                    rotulo, cor, ordem = "Alerta moderado alto", "#e67e22", 3
-                return pd.Series({"classificacao": rotulo, "cor_classificacao": cor, "ordem_classificacao": ordem})
-        return pd.Series({"classificacao": "Sem alerta", "cor_classificacao": "#9aa5b1", "ordem_classificacao": 0})
-    base_temp = pd.concat([base_temp, base_temp.apply(_classificar_temp, axis=1)], axis=1)
+    # Vetorizado (sem .apply(axis=1) linha a linha — outro gargalo de performance em
+    # bases com muitos prestadores): mesma regra em 3 passos — (1) ordem "natural" pelo
+    # composto, na ordem decrescente de _RISCO_FAIXAS_TEMP; (2) gates G1/G2 elevam pro
+    # piso "Alerta moderado alto" (ordem 3) quando a ordem natural for menor; (3) piso
+    # de materialidade (abaixo_do_piso) vence tudo e força "Sem alerta".
+    _rotulo_por_ordem_temp = {ordem: rotulo for _, rotulo, _, ordem in _RISCO_FAIXAS_TEMP}
+    _cor_por_ordem_temp = {ordem: cor for _, _, cor, ordem in _RISCO_FAIXAS_TEMP}
+    _ordem_natural_temp = np.select(
+        [base_temp["composto"] >= piso for piso, _, _, _ in _RISCO_FAIXAS_TEMP[:-1]],
+        [ordem for _, _, _, ordem in _RISCO_FAIXAS_TEMP[:-1]],
+        default=_RISCO_FAIXAS_TEMP[-1][3],
+    )
+    _gate_ativo_temp = (base_temp["gate_g1"] | base_temp["gate_g2"]) & (_ordem_natural_temp < 3)
+    _ordem_final_temp = np.where(_gate_ativo_temp, 3, _ordem_natural_temp)
+    _ordem_final_temp = np.where(base_temp["abaixo_do_piso"], 0, _ordem_final_temp)
+    base_temp["ordem_classificacao"] = _ordem_final_temp
+    base_temp["classificacao"] = pd.Series(_ordem_final_temp, index=base_temp.index).map(_rotulo_por_ordem_temp)
+    base_temp["cor_classificacao"] = pd.Series(_ordem_final_temp, index=base_temp.index).map(_cor_por_ordem_temp)
     base_temp["classificacao_emoji"] = (
         base_temp["classificacao"].map(_RISCO_EMOJI_FAIXA_TEMP) + " " + base_temp["classificacao"]
     )
@@ -3733,24 +3775,35 @@ elif st.session_state.pagina == "severidade":
 
     with tab_risco_temp:
         st.markdown("#### 🎯 Índice de Risco do Prestador")
-        st.caption(
-            "Modelo composto de 7 indicadores — I1 Dependência de procedimento único (20%) · "
-            "I2 Severidade da prática (15%) · I3 Exposição financeira/ticket (15%) · "
-            "I4 Crescimento anômalo/tendência (10%) · I5 Criticidade cluster×porte (15%) · "
-            "I6 Diversificação da produção (15%) · I7 Dependência de pacientes (10%). "
-            "**Usa todo o histórico de meses carregado na base** (não é afetado pelo filtro de "
-            "Mês) — concentração, ticket e tendência só fazem sentido no acumulado do "
-            "prestador, não num mês isolado. Filtros de Plano/Especialidade da página, se "
-            "aplicados, continuam valendo. Prestadores com valor pago abaixo do piso de "
-            "materialidade (mediana do cluster, mínimo R$ 5.000) ficam fora do ranqueamento "
-            "(\"Sem alerta\")."
+        st.markdown(
+            "Modelo composto de 7 indicadores:  \n"
+            "I1 Dependência de procedimento único (20%)  \n"
+            "I2 Severidade da prática (15%)  \n"
+            "I3 Exposição financeira/ticket (15%)  \n"
+            "I4 Crescimento anômalo/tendência (10%)  \n"
+            "I5 Criticidade cluster×porte (15%)  \n"
+            "I6 Diversificação da produção (15%)  \n"
+            "I7 Dependência de pacientes (10%).  \n"
+            "**Respeita os filtros de Mês/Plano/Especialidade da página** — filtrar pra 1 "
+            "mês só reduz o histórico disponível pro I4 (tendência), que fica \"—\" com "
+            "menos de 3 meses no período (o histórico mês a mês do prestador continua "
+            "disponível no detalhamento, independente do filtro de Mês). Prestadores com "
+            "valor pago abaixo do piso de materialidade (mediana do cluster, mínimo "
+            "R$ 5.000) ficam fora do ranqueamento (\"Sem alerta\")."
         )
 
         _risco_universo_temp = aplicar_filtros(
-            agregado, planos=f_plano or None, especialidades=f_especialidade or None,
+            agregado, meses=f_mes or None, planos=f_plano or None, especialidades=f_especialidade or None,
         )
         _risco_usuarios_universo_temp = aplicar_filtros(
-            base_usuarios, planos=f_plano or None, especialidades=f_especialidade or None,
+            base_usuarios, meses=f_mes or None, planos=f_plano or None, especialidades=f_especialidade or None,
+        )
+        # Histórico mês a mês do prestador (pro gráfico no detalhamento, logo abaixo)
+        # precisa do universo INTEIRO de meses, mesmo quando o filtro de Mês da página
+        # está restringindo o cálculo dos indicadores acima a um período menor — só
+        # Plano/Especialidade se aplicam a essa visão.
+        _risco_universo_todos_meses_temp = aplicar_filtros(
+            agregado, planos=f_plano or None, especialidades=f_especialidade or None,
         )
 
         if _risco_universo_temp.empty:
@@ -3763,16 +3816,20 @@ elif st.session_state.pagina == "severidade":
             # tivesse mexido em nada aqui -- foi o principal motivo do cálculo do
             # Índice de Risco "nunca terminar" antes (mesmo padrão de "só calcula
             # quando pedido" já usado agora também no detalhamento por prestador da
-            # aba Ranking).
+            # aba Ranking). A função em si também é cacheada (@st.cache_data) — some
+            # gargalos internos (I4/I7/classificação com .apply() por prestador, em vez
+            # de cálculo vetorizado em bloco) foram corrigidos em 23/09; sem essa
+            # correção, o clique em "Calcular" sozinho já levava mais de 1 minuto em
+            # bases com muitos prestadores, mesmo com o clique travado por botão.
             _assinatura_filtros_risco_temp = (
-                tuple(sorted(f_plano or [])), tuple(sorted(f_especialidade or [])),
+                tuple(sorted(f_mes or [])), tuple(sorted(f_plano or [])), tuple(sorted(f_especialidade or [])),
             )
             if (
                 "risco_resultado_temp" in st.session_state
                 and st.session_state.get("risco_assinatura_filtros_temp") != _assinatura_filtros_risco_temp
             ):
                 st.info(
-                    "Os filtros de Plano/Especialidade da página mudaram desde o último "
+                    "Os filtros de Mês/Plano/Especialidade da página mudaram desde o último "
                     "cálculo — clique em \"Calcular\" de novo pra atualizar o Índice de Risco."
                 )
             if st.button("🔄 Calcular Índice de Risco", key="risco_botao_calcular_temp"):
@@ -3839,6 +3896,11 @@ elif st.session_state.pagina == "severidade":
                         _risco_exibicao_temp = _risco_exibicao_temp[
                             _risco_exibicao_temp["NOME_PRESTADOR"].isin(f_prestador_risco_temp)
                         ]
+                    # Captura ANTES do corte de "Sem alerta" (linha logo abaixo) — o gráfico de
+                    # quantidade por classificação (mais abaixo) sempre mostra a distribuição
+                    # completa (incluindo "Sem alerta") dentro do recorte geográfico/cluster/
+                    # prestador escolhido acima, independente do checkbox "Mostrar também...".
+                    _risco_exibicao_grafico_temp = _risco_exibicao_temp.copy()
                     if not _mostrar_sem_alerta_risco_temp:
                         _risco_exibicao_temp = _risco_exibicao_temp[
                             _risco_exibicao_temp["classificacao"] != "Sem alerta"
@@ -3854,6 +3916,33 @@ elif st.session_state.pagina == "severidade":
                         _col_resumo_temp.metric(
                             f"{_RISCO_EMOJI_FAIXA_TEMP[_rotulo_faixa_temp]} {_rotulo_faixa_temp}",
                             int(_contagem_faixa_temp.get(_rotulo_faixa_temp, 0)),
+                        )
+
+                    # ---------- gráfico: qtde de prestador por classificação, segundo o filtro
+                    # (UF/Cidade/Cluster/Prestador) escolhido acima — diferente do resumo logo
+                    # acima, que é sempre sobre a base inteira. Ex.: filtrou Cidade X -> mostra
+                    # quantos prestadores de Cidade X caíram em cada classificação. ----------
+                    if not _risco_exibicao_grafico_temp.empty and (
+                        f_uf_risco_temp or f_cidade_risco_temp or f_cluster_risco_temp or f_prestador_risco_temp
+                    ):
+                        _contagem_filtro_temp = (
+                            _risco_exibicao_grafico_temp["classificacao"].value_counts().reindex(
+                                [rotulo for _, rotulo, _, _ in _RISCO_FAIXAS_TEMP], fill_value=0,
+                            ).reset_index()
+                        )
+                        _contagem_filtro_temp.columns = ["classificacao", "qtde"]
+                        _mapa_cor_faixa_temp = {rotulo: cor for _, rotulo, cor, _ in _RISCO_FAIXAS_TEMP}
+                        fig_qtde_faixa_temp = px.bar(
+                            _contagem_filtro_temp, x="classificacao", y="qtde", color="classificacao",
+                            color_discrete_map=_mapa_cor_faixa_temp, text="qtde",
+                            title="Prestadores por classificação (no filtro selecionado acima)",
+                        )
+                        fig_qtde_faixa_temp.update_layout(
+                            height=280, margin=dict(l=10, r=10, t=40, b=10),
+                            showlegend=False, xaxis_title=None, yaxis_title="Qtde de prestadores",
+                        )
+                        st.plotly_chart(
+                            fig_qtde_faixa_temp, use_container_width=True, key="grafico_qtde_faixa_risco_temp",
                         )
 
                     st.divider()
@@ -3959,6 +4048,43 @@ elif st.session_state.pagina == "severidade":
                                     f"Composto final: **{_linha_risco_temp['composto']:.1f}** → "
                                     f"{_linha_risco_temp['classificacao_emoji']}"
                                 )
+
+                                # ---------- histórico mês a mês do prestador ----------
+                                # Sempre com TODOS os meses carregados (não só o período filtrado
+                                # acima em f_mes) — o objetivo aqui é mostrar a evolução do
+                                # prestador no tempo, então limitar ao mês filtrado esvaziaria o
+                                # gráfico.
+                                _hist_prest_temp = _risco_universo_todos_meses_temp[
+                                    _risco_universo_todos_meses_temp["CD_PRESTADOR"]
+                                    == _linha_risco_temp["CD_PRESTADOR"]
+                                ]
+                                if "MES" in _hist_prest_temp.columns and not _hist_prest_temp.empty:
+                                    _hist_prest_mensal_temp = _hist_prest_temp.groupby(
+                                        "MES", dropna=True, observed=True
+                                    ).agg(
+                                        qtd_procedimentos=("qtd_procedimentos", "sum"),
+                                        soma_valor=("soma_valor", "sum"),
+                                    ).reset_index().sort_values("MES")
+                                    if len(_hist_prest_mensal_temp) >= 2:
+                                        _hist_prest_mensal_temp["mes_rotulo"] = (
+                                            _hist_prest_mensal_temp["MES"].map(label_mes)
+                                        )
+                                        fig_hist_prest_temp = px.line(
+                                            _hist_prest_mensal_temp, x="mes_rotulo", y="qtd_procedimentos",
+                                            markers=True, title="Procedimentos por mês (histórico completo)",
+                                        )
+                                        fig_hist_prest_temp.update_layout(
+                                            height=220, margin=dict(l=10, r=10, t=40, b=10),
+                                            xaxis_title=None, yaxis_title="Procedimentos",
+                                        )
+                                        st.plotly_chart(
+                                            fig_hist_prest_temp, use_container_width=True,
+                                            key=f"grafico_hist_prest_risco_temp_{_linha_risco_temp['CD_PRESTADOR']}",
+                                        )
+                                    else:
+                                        st.caption(
+                                            "Sem histórico de mais de 1 mês pra esse prestador ainda."
+                                        )
 
                     st.divider()
                     # ---------- Gerar PDF ----------
