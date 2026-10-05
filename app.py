@@ -426,6 +426,11 @@ _RISCO_FAIXAS_META_TEMP = [(rotulo, cor, ordem) for _, rotulo, cor, ordem in _RI
 _RISCO_FAIXAS_PISOS_PADRAO_TEMP = [piso for piso, _, _, _ in _RISCO_FAIXAS_TEMP[:-1]]  # exclui "Sem alerta" (piso 0, fixo)
 _RISCO_PISO_MINIMO_PADRAO_TEMP = 5000.0
 _RISCO_PISO_CLUSTER_N_PADRAO_TEMP = 30
+# Piso de materialidade também por QUANTIDADE de procedimentos (além do valor pago).
+# "E": só fica abaixo do piso quem está abaixo nos DOIS (valor E qtde) — basta um dos dois
+# estar acima do piso pra o prestador continuar no ranqueamento. "OU": abaixo em qualquer um.
+_RISCO_PISO_MINIMO_QTD_PADRAO_TEMP = 0
+_RISCO_PISO_LOGICA_PADRAO_TEMP = "E"
 _RISCO_EMOJI_FAIXA_TEMP = {
     "Alerta forte": "🔴", "Alerta moderado alto": "🟠", "Alerta moderado baixo": "🟡",
     "Alerta baixo": "🟢", "Sem alerta": "✅",
@@ -609,7 +614,8 @@ def _risco_calcular_bruto_temp(agregado_universo, usuarios_universo, valor_pacie
         base_temp["i7_pct"] = np.nan
 
     return base_temp
-def _risco_aplicar_calibracao_temp(base_bruto_temp, pesos, cortes, faixas_pisos, piso_minimo, piso_cluster_n_min):
+def _risco_aplicar_calibracao_temp(base_bruto_temp, pesos, cortes, faixas_pisos, piso_minimo, piso_cluster_n_min,
+                                    piso_minimo_qtd=0, piso_logica="E"):
     """
     Parte LEVE do cálculo: recebe os valores brutos já prontos (i1_pct, i2_razao...,
     vindos de `_risco_calcular_bruto_temp`) e os parâmetros de calibração escolhidos
@@ -666,7 +672,20 @@ def _risco_aplicar_calibracao_temp(base_bruto_temp, pesos, cortes, faixas_pisos,
     _mediana_ref_temp = np.where(
         _contagem_cluster_temp >= piso_cluster_n_min, _mediana_cluster_temp, _mediana_nacional_temp)
     base_temp["Y"] = np.maximum(_mediana_ref_temp, piso_minimo)
-    base_temp["abaixo_do_piso"] = base_temp["soma_valor"] < base_temp["Y"]
+    # Mesmo critério, agora pra QUANTIDADE de procedimentos: piso = maior entre a quantidade
+    # mínima informada e a mediana de qtd do cluster (ou a nacional, se o cluster for pequeno).
+    _mediana_nacional_qtd_temp = base_temp["qtd_procedimentos"].median()
+    _mediana_cluster_qtd_temp = base_temp.groupby("CLUSTER", observed=True)["qtd_procedimentos"].transform("median")
+    _mediana_ref_qtd_temp = np.where(
+        _contagem_cluster_temp >= piso_cluster_n_min, _mediana_cluster_qtd_temp, _mediana_nacional_qtd_temp)
+    base_temp["Y_qtd"] = np.maximum(_mediana_ref_qtd_temp, piso_minimo_qtd)
+    base_temp["abaixo_piso_valor"] = base_temp["soma_valor"] < base_temp["Y"]
+    base_temp["abaixo_piso_qtd"] = base_temp["qtd_procedimentos"] < base_temp["Y_qtd"]
+    # "E": abaixo do piso só se estiver abaixo em valor E em quantidade. "OU": em qualquer um.
+    if piso_logica == "OU":
+        base_temp["abaixo_do_piso"] = base_temp["abaixo_piso_valor"] | base_temp["abaixo_piso_qtd"]
+    else:
+        base_temp["abaixo_do_piso"] = base_temp["abaixo_piso_valor"] & base_temp["abaixo_piso_qtd"]
 
     # ---------- gates G1/G2 (pisos de classificação — limites fixos, não calibráveis
     # ainda) ----------
@@ -3963,10 +3982,14 @@ elif st.session_state.pagina == "severidade":
                 "Composto < 25 → ✅ Sem alerta  \n"
                 "\n"
                 "Duas regras podem alterar essa classificação \"natural\" pelo Composto:  \n"
-                "**Piso de materialidade (Y):** se o valor total pago ao prestador no "
-                "período é menor que a mediana do cluster (mínimo R$ 5.000), ele é sempre "
-                "\"Sem alerta\", não importa o Composto — não faz sentido investigar um "
-                "prestador com volume financeiro irrelevante.  \n"
+                "**Piso de materialidade (Y):** olha o valor total pago ao prestador no "
+                "período (piso = mediana do cluster, com mínimo configurável, padrão R$ 5.000) "
+                "e também a quantidade de procedimentos (piso = mediana do cluster, com mínimo "
+                "configurável). Na lógica **valor E quantidade** (padrão), o prestador só vira "
+                "\"Sem alerta\" se estiver abaixo do piso nos dois; na lógica **valor OU "
+                "quantidade**, basta estar abaixo em um. Abaixo do piso, é sempre \"Sem "
+                "alerta\", não importa o Composto — não faz sentido investigar um "
+                "prestador com volume irrelevante.  \n"
                 "**Gates G1/G2:** mesmo com Composto baixo, se I1 ≥ 70% ou I6 ≥ 90% junto "
                 "com I2 ≥ 50 (Gate G1), ou se o prestador é do cluster D com I1 ≥ 50% ou "
                 "I6 ≥ 85% (Gate G2), a classificação é elevada pra no mínimo \"Alerta "
@@ -4159,11 +4182,31 @@ elif st.session_state.pagina == "severidade":
                                 min_value=1, value=int(_RISCO_PISO_CLUSTER_N_PADRAO_TEMP), step=1,
                                 key="risco_cal_piso_cluster_n",
                             )
+                        _col_piso3_temp, _col_piso4_temp = st.columns(2)
+                        with _col_piso3_temp:
+                            _piso_minimo_qtd_atual_temp = st.number_input(
+                                "Quantidade mínima de procedimentos", min_value=0,
+                                value=int(_RISCO_PISO_MINIMO_QTD_PADRAO_TEMP), step=10,
+                                key="risco_cal_piso_minimo_qtd",
+                            )
+                        with _col_piso4_temp:
+                            _piso_logica_rotulo_temp = st.radio(
+                                "Prestador fica abaixo do piso quando…",
+                                ["valor E quantidade", "valor OU quantidade"],
+                                index=0 if _RISCO_PISO_LOGICA_PADRAO_TEMP == "E" else 1,
+                                key="risco_cal_piso_logica",
+                            )
+                            _piso_logica_atual_temp = "E" if _piso_logica_rotulo_temp == "valor E quantidade" else "OU"
                         st.caption(
-                            "O piso (Y) é o maior valor entre este mínimo e a mediana de faturamento "
-                            "do cluster do prestador (ou a mediana nacional, se o cluster tiver menos "
-                            "prestadores que o número mínimo acima). Prestador com faturamento total "
-                            "abaixo do piso é sempre \"Sem alerta\", não importa o Composto."
+                            "O piso de valor (Y) é o maior entre o valor mínimo acima e a mediana de "
+                            "valor pago do cluster do prestador; o de quantidade é o maior entre a "
+                            "quantidade mínima acima e a mediana de procedimentos do cluster (nos dois "
+                            "casos usa a mediana nacional se o cluster tiver menos prestadores que o "
+                            "número mínimo informado). **valor E quantidade**: o prestador só é "
+                            "descartado (\"Sem alerta\", não importa o Composto) se estiver abaixo "
+                            "do piso nos dois — basta um dos dois estar acima pra ele seguir no "
+                            "ranqueamento. **valor OU quantidade**: é descartado se estiver abaixo em "
+                            "qualquer um dos dois."
                         )
 
                         st.form_submit_button(
@@ -4173,6 +4216,7 @@ elif st.session_state.pagina == "severidade":
                 _risco_tabela_completa_temp = _risco_aplicar_calibracao_temp(
                     st.session_state["risco_bruto_temp"], _pesos_atuais_risco_temp, _cortes_atuais_risco_temp,
                     _faixas_pisos_atuais_temp, _piso_minimo_atual_temp, _piso_cluster_n_atual_temp,
+                    piso_minimo_qtd=_piso_minimo_qtd_atual_temp, piso_logica=_piso_logica_atual_temp,
                 )
                 if _risco_tabela_completa_temp.empty:
                     st.info("Nenhum prestador para calcular o Índice de Risco com os filtros atuais.")
@@ -4667,8 +4711,8 @@ elif st.session_state.pagina == "severidade":
                             f"({_n_abaixo_piso_temp / len(_risco_tabela_completa_temp) * 100:.1f}%) estão "
                             "ABAIXO DO PISO DE MATERIALIDADE — viram \"Sem alerta\" direto, não importa "
                             "o Composto. Se esse número estiver alto demais, pode ser o próprio piso "
-                            "(mediana do cluster, mínimo R$ 5.000) que está descartando gente demais, "
-                            "não as notas dos indicadores."
+                            "(valor e/ou quantidade, conforme a calibração acima) que está descartando "
+                            "gente demais, não as notas dos indicadores."
                         )
                         _colunas_diag_risco_temp = [
                             ("i1_pct", "I1 — % uso no top-1"), ("i2_razao", "I2 — razão uso/vida"),
@@ -4808,9 +4852,11 @@ elif st.session_state.pagina == "severidade":
                                     st.markdown(f"**{_titulo_bloco_prest_temp}**")
                                 if _linha_risco_temp["abaixo_do_piso"]:
                                     st.info(
-                                        f"Valor pago total ({fmt_brl(_linha_risco_temp['soma_valor'])}) "
-                                        f"abaixo do piso de materialidade Y "
-                                        f"({fmt_brl(_linha_risco_temp['Y'])}) — prestador fora do "
+                                        f"Abaixo do piso de materialidade — valor pago total "
+                                        f"{fmt_brl(_linha_risco_temp['soma_valor'])} (piso "
+                                        f"{fmt_brl(_linha_risco_temp['Y'])}) e "
+                                        f"{fmt_int(_linha_risco_temp['qtd_procedimentos'])} procedimentos "
+                                        f"(piso {fmt_int(_linha_risco_temp['Y_qtd'])}) — prestador fora do "
                                         "ranqueamento de risco."
                                     )
                                 if _linha_risco_temp["gate_g1"]:
