@@ -4038,20 +4038,23 @@ elif st.session_state.pagina == "severidade":
             else:
                 # ---------- painel de calibração (editável, 23/09) — pesos, faixas de
                 # pontuação de cada indicador, faixas do composto e piso de materialidade.
-                # Roda a cada interação (é a parte LEVE do cálculo — só reaplica fórmulas
-                # em cima do resultado bruto já calculado acima, sem reler CSV nem refazer
-                # agrupamento nenhum), então o usuário vê o efeito na hora, sem precisar
-                # clicar em "Calcular" de novo. ----------
+                # Só é reaplicada quando o usuário clica em "Recalcular" no formulário (é a
+                # parte LEVE do cálculo — só reaplica fórmulas em cima do resultado bruto já
+                # calculado acima, sem reler CSV nem refazer agrupamento nenhum). Editar os
+                # campos não dispara nada: os valores só mudam de verdade no envio do form.
+                # ----------
                 with st.expander(
                     "⚙️ Calibração dos indicadores (editável) — ajuste pesos, faixas de "
                     "pontuação e piso de materialidade"
                 ):
                     st.caption(
                         "Os valores abaixo partem do padrão original (conforme os anexos). "
-                        "Ajuste pra mais ou pra menos e o ranking/classificação abaixo já "
-                        "reflete na hora — não precisa clicar em \"Calcular\" de novo (só o "
-                        "cálculo dos valores brutos de cada indicador depende do botão acima; "
-                        "a calibração é reaplicada em cima desses valores)."
+                        "Ajuste quantos campos quiser — nada é recalculado enquanto você edita. "
+                        "Só depois de clicar em \"Recalcular com estes parâmetros\" (ou apertar "
+                        "Enter num campo) o ranking/classificação abaixo é atualizado. Não precisa "
+                        "clicar em \"Calcular Índice de Risco\" de novo (só o cálculo dos valores "
+                        "brutos de cada indicador depende desse botão; a calibração é reaplicada "
+                        "em cima desses valores)."
                     )
                     if st.button("↩️ Restaurar padrão de calibração", key="risco_cal_restaurar_temp"):
                         for _k_temp in list(st.session_state.keys()):
@@ -4059,105 +4062,113 @@ elif st.session_state.pagina == "severidade":
                                 del st.session_state[_k_temp]
                         st.rerun()
 
-                    st.markdown("**Pesos de cada indicador no Composto (%)**")
-                    st.caption(
-                        "Não precisa somar exatamente 100% — é normalizado automaticamente "
-                        "pela soma real dos pesos informados."
-                    )
-                    _cols_peso_risco_temp = st.columns(7)
-                    _pesos_atuais_risco_temp = {}
-                    for _idx_p_temp, _ind_p_temp in enumerate(["I1", "I2", "I3", "I4", "I5", "I6", "I7"]):
-                        with _cols_peso_risco_temp[_idx_p_temp]:
-                            _pesos_atuais_risco_temp[_ind_p_temp] = st.number_input(
-                                _ind_p_temp, min_value=0.0, max_value=100.0,
-                                value=float(_RISCO_PESOS_PADRAO_TEMP[_ind_p_temp] * 100),
-                                step=1.0, key=f"risco_cal_peso_{_ind_p_temp}",
-                            ) / 100.0
-                    _soma_pesos_exibicao_temp = sum(_pesos_atuais_risco_temp.values()) * 100
-                    if abs(_soma_pesos_exibicao_temp - 100) > 0.01:
-                        st.caption(f"Soma atual dos pesos: {_soma_pesos_exibicao_temp:.0f}% (normalizado pra 100% no cálculo).")
+                    # Formulário: os campos abaixo NÃO disparam recálculo a cada mudança — só quando
+                    # o botão "Recalcular" (ou Enter num campo) é acionado. Enquanto isso, a tabela e a
+                    # classificação logo abaixo continuam com os últimos parâmetros aplicados.
+                    with st.form("risco_cal_form_temp"):
+                        st.markdown("**Pesos de cada indicador no Composto (%)**")
+                        st.caption(
+                            "Não precisa somar exatamente 100% — é normalizado automaticamente "
+                            "pela soma real dos pesos informados."
+                        )
+                        _cols_peso_risco_temp = st.columns(7)
+                        _pesos_atuais_risco_temp = {}
+                        for _idx_p_temp, _ind_p_temp in enumerate(["I1", "I2", "I3", "I4", "I5", "I6", "I7"]):
+                            with _cols_peso_risco_temp[_idx_p_temp]:
+                                _pesos_atuais_risco_temp[_ind_p_temp] = st.number_input(
+                                    _ind_p_temp, min_value=0.0, max_value=100.0,
+                                    value=float(_RISCO_PESOS_PADRAO_TEMP[_ind_p_temp] * 100),
+                                    step=1.0, key=f"risco_cal_peso_{_ind_p_temp}",
+                                ) / 100.0
+                        _soma_pesos_exibicao_temp = sum(_pesos_atuais_risco_temp.values()) * 100
+                        if abs(_soma_pesos_exibicao_temp - 100) > 0.01:
+                            st.caption(f"Soma atual dos pesos: {_soma_pesos_exibicao_temp:.0f}% (normalizado pra 100% no cálculo).")
 
-                    st.markdown("**Faixas de pontuação de cada indicador (mínimo → máximo)**")
-                    st.caption(
-                        "Pra cada indicador, os 4 valores abaixo definem onde começa cada "
-                        "faixa de nota (0 / 25 / 50 / 75 / 100). Ex.: I1 com 30/40/50/70 "
-                        "quer dizer: abaixo de 30% → nota 0; de 30% a 40% → 25; ... ; 70% ou "
-                        "mais → nota 100."
-                    )
-                    _cortes_atuais_risco_temp = {}
-                    for _ind_c_temp in ["I1", "I2", "I3", "I4", "I6", "I7"]:
-                        st.caption(f"{_ind_c_temp} — {_RISCO_CORTES_LABEL_TEMP[_ind_c_temp]}")
-                        _cols_corte_temp = st.columns(4)
-                        _lista_corte_temp = []
-                        for _j_temp in range(4):
-                            with _cols_corte_temp[_j_temp]:
-                                _rotulo_corte_temp = ["nota 25 a partir de", "nota 50 a partir de",
-                                                       "nota 75 a partir de", "nota 100 a partir de"][_j_temp]
-                                _lista_corte_temp.append(st.number_input(
-                                    _rotulo_corte_temp,
-                                    value=float(_RISCO_CORTES_PADRAO_TEMP[_ind_c_temp][_j_temp]),
-                                    step=0.5 if _ind_c_temp in ("I2", "I3") else 1.0,
-                                    key=f"risco_cal_corte_{_ind_c_temp}_{_j_temp}",
-                                ))
-                        _cortes_atuais_risco_temp[_ind_c_temp] = _lista_corte_temp
+                        st.markdown("**Faixas de pontuação de cada indicador (mínimo → máximo)**")
+                        st.caption(
+                            "Pra cada indicador, os 4 valores abaixo definem onde começa cada "
+                            "faixa de nota (0 / 25 / 50 / 75 / 100). Ex.: I1 com 30/40/50/70 "
+                            "quer dizer: abaixo de 30% → nota 0; de 30% a 40% → 25; ... ; 70% ou "
+                            "mais → nota 100."
+                        )
+                        _cortes_atuais_risco_temp = {}
+                        for _ind_c_temp in ["I1", "I2", "I3", "I4", "I6", "I7"]:
+                            st.caption(f"{_ind_c_temp} — {_RISCO_CORTES_LABEL_TEMP[_ind_c_temp]}")
+                            _cols_corte_temp = st.columns(4)
+                            _lista_corte_temp = []
+                            for _j_temp in range(4):
+                                with _cols_corte_temp[_j_temp]:
+                                    _rotulo_corte_temp = ["nota 25 a partir de", "nota 50 a partir de",
+                                                           "nota 75 a partir de", "nota 100 a partir de"][_j_temp]
+                                    _lista_corte_temp.append(st.number_input(
+                                        _rotulo_corte_temp,
+                                        value=float(_RISCO_CORTES_PADRAO_TEMP[_ind_c_temp][_j_temp]),
+                                        step=0.5 if _ind_c_temp in ("I2", "I3") else 1.0,
+                                        key=f"risco_cal_corte_{_ind_c_temp}_{_j_temp}",
+                                    ))
+                            _cortes_atuais_risco_temp[_ind_c_temp] = _lista_corte_temp
 
-                    st.markdown("**Faixas de classificação pelo Composto (0 a 100)**")
-                    _cols_faixa_temp = st.columns(4)
-                    with _cols_faixa_temp[0]:
-                        _faixa_forte_temp = st.number_input(
-                            "🔴 Alerta forte a partir de", min_value=0.0, max_value=100.0,
-                            value=float(_RISCO_FAIXAS_PISOS_PADRAO_TEMP[0]), step=1.0,
-                            key="risco_cal_faixa_forte",
-                        )
-                    with _cols_faixa_temp[1]:
-                        _faixa_modalto_temp = st.number_input(
-                            "🟠 Mod. alto a partir de", min_value=0.0, max_value=100.0,
-                            value=float(_RISCO_FAIXAS_PISOS_PADRAO_TEMP[1]), step=1.0,
-                            key="risco_cal_faixa_modalto",
-                        )
-                    with _cols_faixa_temp[2]:
-                        _faixa_modbaixo_temp = st.number_input(
-                            "🟡 Mod. baixo a partir de", min_value=0.0, max_value=100.0,
-                            value=float(_RISCO_FAIXAS_PISOS_PADRAO_TEMP[2]), step=1.0,
-                            key="risco_cal_faixa_modbaixo",
-                        )
-                    with _cols_faixa_temp[3]:
-                        _faixa_baixo_temp = st.number_input(
-                            "🟢 Baixo a partir de", min_value=0.0, max_value=100.0,
-                            value=float(_RISCO_FAIXAS_PISOS_PADRAO_TEMP[3]), step=1.0,
-                            key="risco_cal_faixa_baixo",
-                        )
-                    _faixas_pisos_atuais_temp = [
-                        _faixa_forte_temp, _faixa_modalto_temp, _faixa_modbaixo_temp, _faixa_baixo_temp,
-                    ]
-                    if not (
-                        _faixa_forte_temp > _faixa_modalto_temp > _faixa_modbaixo_temp > _faixa_baixo_temp >= 0
-                    ):
-                        st.warning(
-                            "As faixas deveriam estar em ordem decrescente (forte > mod. alto > "
-                            "mod. baixo > baixo ≥ 0) pra fazer sentido — confira os valores acima."
+                        st.markdown("**Faixas de classificação pelo Composto (0 a 100)**")
+                        _cols_faixa_temp = st.columns(4)
+                        with _cols_faixa_temp[0]:
+                            _faixa_forte_temp = st.number_input(
+                                "🔴 Alerta forte a partir de", min_value=0.0, max_value=100.0,
+                                value=float(_RISCO_FAIXAS_PISOS_PADRAO_TEMP[0]), step=1.0,
+                                key="risco_cal_faixa_forte",
+                            )
+                        with _cols_faixa_temp[1]:
+                            _faixa_modalto_temp = st.number_input(
+                                "🟠 Mod. alto a partir de", min_value=0.0, max_value=100.0,
+                                value=float(_RISCO_FAIXAS_PISOS_PADRAO_TEMP[1]), step=1.0,
+                                key="risco_cal_faixa_modalto",
+                            )
+                        with _cols_faixa_temp[2]:
+                            _faixa_modbaixo_temp = st.number_input(
+                                "🟡 Mod. baixo a partir de", min_value=0.0, max_value=100.0,
+                                value=float(_RISCO_FAIXAS_PISOS_PADRAO_TEMP[2]), step=1.0,
+                                key="risco_cal_faixa_modbaixo",
+                            )
+                        with _cols_faixa_temp[3]:
+                            _faixa_baixo_temp = st.number_input(
+                                "🟢 Baixo a partir de", min_value=0.0, max_value=100.0,
+                                value=float(_RISCO_FAIXAS_PISOS_PADRAO_TEMP[3]), step=1.0,
+                                key="risco_cal_faixa_baixo",
+                            )
+                        _faixas_pisos_atuais_temp = [
+                            _faixa_forte_temp, _faixa_modalto_temp, _faixa_modbaixo_temp, _faixa_baixo_temp,
+                        ]
+                        if not (
+                            _faixa_forte_temp > _faixa_modalto_temp > _faixa_modbaixo_temp > _faixa_baixo_temp >= 0
+                        ):
+                            st.warning(
+                                "As faixas deveriam estar em ordem decrescente (forte > mod. alto > "
+                                "mod. baixo > baixo ≥ 0) pra fazer sentido — confira os valores acima."
+                            )
+
+                        st.markdown("**Piso de materialidade**")
+                        _col_piso1_temp, _col_piso2_temp = st.columns(2)
+                        with _col_piso1_temp:
+                            _piso_minimo_atual_temp = st.number_input(
+                                "Valor mínimo (R$)", min_value=0.0,
+                                value=float(_RISCO_PISO_MINIMO_PADRAO_TEMP), step=500.0,
+                                key="risco_cal_piso_minimo",
+                            )
+                        with _col_piso2_temp:
+                            _piso_cluster_n_atual_temp = st.number_input(
+                                "Nº mínimo de prestadores no cluster (senão usa a mediana nacional)",
+                                min_value=1, value=int(_RISCO_PISO_CLUSTER_N_PADRAO_TEMP), step=1,
+                                key="risco_cal_piso_cluster_n",
+                            )
+                        st.caption(
+                            "O piso (Y) é o maior valor entre este mínimo e a mediana de faturamento "
+                            "do cluster do prestador (ou a mediana nacional, se o cluster tiver menos "
+                            "prestadores que o número mínimo acima). Prestador com faturamento total "
+                            "abaixo do piso é sempre \"Sem alerta\", não importa o Composto."
                         )
 
-                    st.markdown("**Piso de materialidade**")
-                    _col_piso1_temp, _col_piso2_temp = st.columns(2)
-                    with _col_piso1_temp:
-                        _piso_minimo_atual_temp = st.number_input(
-                            "Valor mínimo (R$)", min_value=0.0,
-                            value=float(_RISCO_PISO_MINIMO_PADRAO_TEMP), step=500.0,
-                            key="risco_cal_piso_minimo",
+                        st.form_submit_button(
+                            "🔄 Recalcular com estes parâmetros", type="primary", use_container_width=True,
                         )
-                    with _col_piso2_temp:
-                        _piso_cluster_n_atual_temp = st.number_input(
-                            "Nº mínimo de prestadores no cluster (senão usa a mediana nacional)",
-                            min_value=1, value=int(_RISCO_PISO_CLUSTER_N_PADRAO_TEMP), step=1,
-                            key="risco_cal_piso_cluster_n",
-                        )
-                    st.caption(
-                        "O piso (Y) é o maior valor entre este mínimo e a mediana de faturamento "
-                        "do cluster do prestador (ou a mediana nacional, se o cluster tiver menos "
-                        "prestadores que o número mínimo acima). Prestador com faturamento total "
-                        "abaixo do piso é sempre \"Sem alerta\", não importa o Composto."
-                    )
 
                 _risco_tabela_completa_temp = _risco_aplicar_calibracao_temp(
                     st.session_state["risco_bruto_temp"], _pesos_atuais_risco_temp, _cortes_atuais_risco_temp,
