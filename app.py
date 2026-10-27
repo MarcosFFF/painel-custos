@@ -373,7 +373,7 @@ def _ler_csv_parte_enxuto_temp(caminho):
         v: normalizar_texto(_corrigir_mojibake(v)) for v in df["STATUS_PROCED"].dropna().unique()
     }
     df["VL_PAGO"] = df["VL_PAGO"].where(df["STATUS_PROCED"].map(_mapa_status_temp).isin(STATUS_VALOR_AUTORIZADO))
-    df = df.drop_duplicates()
+    df = df.drop_duplicates().drop(columns=["STATUS_PROCED"])
     return df
 @st.cache_data(show_spinner="Carregando valor por paciente (Indicador 7 — Índice de Risco)...")
 def _risco_valor_por_paciente_temp(pasta="."):
@@ -410,6 +410,97 @@ def _risco_valor_por_paciente_temp(pasta="."):
         bruto.groupby(["CD_PRESTADOR", "CD_USUARIO"], dropna=False, observed=True)["VL_PAGO"]
         .sum().reset_index()
     )
+# ---------- Aba "👥 Prestadores": Top 10 de aumento de severidade + justificativa ----------
+def _moda_ponderada_temp(d, coluna):
+    """Valor mais frequente (ponderado por qtd_procedimentos) de `coluna` para cada CD_PRESTADOR."""
+    if coluna not in d.columns:
+        return pd.Series(dtype=object)
+    g = d.groupby(["CD_PRESTADOR", coluna], observed=True)["qtd_procedimentos"].sum().reset_index()
+    g = g.sort_values("qtd_procedimentos", ascending=False).drop_duplicates("CD_PRESTADOR")
+    return g.set_index("CD_PRESTADOR")[coluna].astype(str)
+@st.cache_data(show_spinner="Calculando prestadores com maior aumento de severidade...")
+def _prestadores_aumento_cs_temp(_df, _usuarios, nacional, chave_filtros, volume_minimo=30, top_n=10):
+    """
+    Compara os DOIS MESES MAIS RECENTES presentes em `_df` (já com os filtros da página), só até o
+    MESMO dia do mês (maior dia do mês atual) — não compara mês fechado com mês em andamento.
+    `_df`/`_usuarios` começam com "_" para o cache NÃO tentar hashear as bases grandes; o que
+    invalida o cache é `chave_filtros` (filtros ativos + tamanho/soma da base).
+
+    Por prestador e mês: QP; vidas (distintas); FASE = soma, por procedimento, de (taxa nacional x
+    vidas do prestador naquele procedimento); CS = QP ÷ FASE × 10 (mesma regra do painel).
+    "Acima do esperado" = QP − FASE (por procedimento): soma exatamente para o prestador, então a
+    variação dele se decompõe, sem sobra, por procedimento e por especialidade.
+    Só entram prestadores com QP >= volume_minimo nos DOIS meses (evita ruído de amostra pequena).
+    """
+    meses = sorted(_df["MES"].astype(str).unique())
+    if len(meses) < 2:
+        return None
+    mes_atual, mes_ant = meses[-1], meses[-2]
+    dia_corte = int(_df.loc[_df["MES"].astype(str) == mes_atual, "DIA"].max())
+    d = _df[_df["MES"].isin([mes_ant, mes_atual]) & (_df["DIA"] <= dia_corte)]
+    u = _usuarios[_usuarios["MES"].isin([mes_ant, mes_atual]) & (_usuarios["DIA"] <= dia_corte)]
+    if d.empty or u.empty:
+        return None
+    # --- QP/uso e vidas por prestador x procedimento x mês ---
+    base = d.groupby(["CD_PRESTADOR", "NOME_PROCEDIMENTO", "MES"], observed=True).agg(
+        qp=("qtd_procedimentos", "sum"), uso=("soma_uso", "sum"),
+    ).reset_index()
+    vid = u.groupby(["CD_PRESTADOR", "NOME_PROCEDIMENTO", "MES"], observed=True)["CD_USUARIO"].nunique() \
+        .rename("vidas").reset_index()
+    vid_p = u.groupby(["CD_PRESTADOR", "MES"], observed=True)["CD_USUARIO"].nunique() \
+        .rename("vidas_prest").reset_index()
+    for x in (base, vid, vid_p):
+        x["MES"] = x["MES"].astype(str)
+        if "NOME_PROCEDIMENTO" in x.columns:
+            x["NOME_PROCEDIMENTO"] = x["NOME_PROCEDIMENTO"].astype(str)
+    taxa = nacional.copy()
+    taxa["NOME_PROCEDIMENTO"] = taxa["NOME_PROCEDIMENTO"].astype(str)
+    taxa["taxa"] = np.where(
+        taxa["qtd_vidas_nacional"] > 0, taxa["qtd_procedimentos_nacional"] / taxa["qtd_vidas_nacional"], np.nan
+    )
+    base = base.merge(vid, on=["CD_PRESTADOR", "NOME_PROCEDIMENTO", "MES"], how="left") \
+        .merge(taxa[["NOME_PROCEDIMENTO", "taxa"]], on="NOME_PROCEDIMENTO", how="left")
+    base["vidas"] = base["vidas"].fillna(0)
+    base["fase"] = base["taxa"] * base["vidas"]
+    base["exc"] = base["qp"] - base["fase"]  # procedimentos acima (+) / abaixo (−) do esperado
+    # --- consolidado por prestador x mês ---
+    pm = base.groupby(["CD_PRESTADOR", "MES"]).agg(qp=("qp", "sum"), uso=("uso", "sum"), fase=("fase", "sum")).reset_index() \
+        .merge(vid_p, on=["CD_PRESTADOR", "MES"], how="left")
+    pm["vidas_prest"] = pm["vidas_prest"].fillna(0)
+    pm["cs"] = np.where(pm["fase"] > 0, pm["qp"] / pm["fase"] * 10, np.nan)
+    a = pm[pm["MES"] == mes_ant].set_index("CD_PRESTADOR").add_suffix("_ant")
+    b = pm[pm["MES"] == mes_atual].set_index("CD_PRESTADOR").add_suffix("_atual")
+    w = a.join(b, how="inner").drop(columns=["MES_ant", "MES_atual"])
+    elegiveis = w[(w["qp_ant"] >= volume_minimo) & (w["qp_atual"] >= volume_minimo)
+                  & w["cs_ant"].notna() & w["cs_atual"].notna()].copy()
+    elegiveis["delta_cs"] = elegiveis["cs_atual"] - elegiveis["cs_ant"]
+    top = elegiveis[elegiveis["delta_cs"] > 0].sort_values("delta_cs", ascending=False).head(top_n).copy()
+    # --- rótulos do prestador (nome, cidade, UF, cluster) ---
+    for col, novo in (("NOME_PRESTADOR", "nome"), ("CIDADE_PRESTADOR", "cidade"), ("UF", "uf"), ("CLUSTER", "cluster")):
+        top[novo] = _moda_ponderada_temp(d, col).reindex(top.index)
+    top = top.reset_index()
+    # --- decomposição por procedimento (e especialidade) só dos prestadores do Top ---
+    cods = set(top["CD_PRESTADOR"])
+    bt = base[base["CD_PRESTADOR"].isin(cods)]
+    esp = d.groupby(["NOME_PROCEDIMENTO", "ESPECIALIDADE"], observed=True)["qtd_procedimentos"].sum().reset_index()
+    esp["NOME_PROCEDIMENTO"] = esp["NOME_PROCEDIMENTO"].astype(str)
+    esp = esp.sort_values("qtd_procedimentos", ascending=False).drop_duplicates("NOME_PROCEDIMENTO")
+    esp["ESPECIALIDADE"] = esp["ESPECIALIDADE"].astype(str)
+    linhas = bt.pivot_table(
+        index=["CD_PRESTADOR", "NOME_PROCEDIMENTO"], columns="MES", values=["qp", "vidas", "exc", "uso"],
+        aggfunc="sum", fill_value=0,
+    )
+    linhas.columns = [f"{m}_{'ant' if t == mes_ant else 'atual'}" for m, t in linhas.columns]
+    for c in ("qp", "vidas", "exc", "uso"):
+        for suf in ("ant", "atual"):
+            if f"{c}_{suf}" not in linhas.columns:
+                linhas[f"{c}_{suf}"] = 0.0
+    linhas = linhas.reset_index().merge(esp[["NOME_PROCEDIMENTO", "ESPECIALIDADE"]], on="NOME_PROCEDIMENTO", how="left")
+    linhas["ESPECIALIDADE"] = linhas["ESPECIALIDADE"].fillna("—")
+    return {
+        "mes_atual": mes_atual, "mes_ant": mes_ant, "dia_corte": dia_corte,
+        "n_elegiveis": int(len(elegiveis)), "top": top, "linhas": linhas,
+    }
 def _risco_pontuar_faixas_temp(serie, cortes, notas):
     """cortes = [c1,c2,c3,c4] (4 fronteiras -> 5 faixas), notas = [n0,n1,n2,n3,n4].
     Mesma convenção em todo o Índice de Risco: valor < c1 -> n0 | < c2 -> n1 | ...
@@ -1490,11 +1581,11 @@ elif st.session_state.pagina == "severidade":
     # trazida de volta em 23/09, reconstruída a partir de um backup — ver
     # comentário em "with tab_risco_temp:" logo abaixo.)
     _labels_abas_temp = [
-        "📊 Acompanhamento de Severidade", "🎯 Índice de Risco", "📖 Como ler o Ranking",
+        "📊 Acompanhamento de Severidade", "👥 Prestadores", "🎯 Índice de Risco", "📖 Como ler o Ranking",
     ]
     _abas_criadas_temp = st.tabs(_labels_abas_temp)
-    (tab_ranking_temp, tab_risco_temp, tab_como_ler_temp) = (
-        _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2],
+    (tab_ranking_temp, tab_prestadores_temp, tab_risco_temp, tab_como_ler_temp) = (
+        _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2], _abas_criadas_temp[3],
     )
     # (tab_obj, título exibido, lista de códigos que restringe a aba — None = todos os
     # procedimentos, sufixo pra deixar as keys dos widgets únicas por aba, nome do prestador
@@ -3971,6 +4062,170 @@ elif st.session_state.pagina == "severidade":
                             ):
                                 with _col_hist_temp:
                                     _grafico_mensal_temp(_c_h_temp, _t_h_temp, prefixo=_p_h_temp)
+
+    with tab_prestadores_temp:
+        # Top 10 prestadores com maior AUMENTO de CS (mês atual vs anterior, mesmo dia de corte),
+        # cada um num expansor com a justificativa: o que subiu (vidas, procedimentos, uso) e onde
+        # (especialidades e procedimentos). Respeita os filtros da página (Mês/Plano/Especialidade/Período).
+        _chave_prest_temp = (
+            tuple(f_mes), tuple(f_plano), tuple(f_especialidade), modo_periodo_temp,
+            int(dia_ini_temp), int(dia_fim_temp),
+            int(len(df_filtrado)), round(float(df_filtrado["qtd_procedimentos"].sum()), 2),
+        )
+        _res_prest_temp = _prestadores_aumento_cs_temp(
+            df_filtrado, usuarios_filtrado, nacional_temp_flat, _chave_prest_temp, volume_minimo=volume_minimo,
+        )
+
+        def _pct_br_temp(novo, antigo):
+            if antigo is None or pd.isna(antigo) or antigo == 0 or pd.isna(novo):
+                return "—"
+            return f"{(novo / antigo - 1) * 100:+.1f}%".replace(".", ",")
+
+        def _fmt1_temp(v):
+            return "—" if v is None or pd.isna(v) else f"{v:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+        def _verbo_temp(novo, antigo, nome):
+            # "aumentou" / "diminuiu" / "ficou estável" (menos de 1% de diferença).
+            if antigo is None or pd.isna(antigo) or antigo == 0:
+                return f"{nome}: sem base de comparação."
+            var = (novo / antigo - 1) * 100
+            if abs(var) < 1:
+                acao = "ficou estável"
+            else:
+                acao = "aumentou" if var > 0 else "diminuiu"
+            return f"**{nome}** {acao}: {fmt_int(antigo)} → {fmt_int(novo)} ({_pct_br_temp(novo, antigo)})"
+
+        if _res_prest_temp is None:
+            st.info(
+                "Preciso de pelo menos 2 meses nos filtros atuais para comparar. Ajuste Mês/Plano/"
+                "Especialidade/Período na barra lateral."
+            )
+        else:
+            _ma_temp, _mb_temp = _res_prest_temp["mes_ant"], _res_prest_temp["mes_atual"]
+            _lbl_a_temp, _lbl_b_temp = label_mes(_ma_temp), label_mes(_mb_temp)
+            st.caption(
+                f"Comparando **{_lbl_b_temp}** com **{_lbl_a_temp}**, ambos até o dia "
+                f"{_res_prest_temp['dia_corte']:02d} · Considera prestadores com pelo menos "
+                f"{volume_minimo} procedimentos nos dois meses ({_res_prest_temp['n_elegiveis']} prestadores "
+                "elegíveis) · Respeita os filtros da barra lateral."
+            )
+            _top_temp = _res_prest_temp["top"]
+            if _top_temp.empty:
+                st.info("Nenhum prestador elegível teve aumento de CS nesse comparativo.")
+            for _pos_temp, _r_temp in enumerate(_top_temp.itertuples(index=False), start=1):
+                _nome_temp = (
+                    str(_r_temp.nome) if pd.notna(_r_temp.nome) and str(_r_temp.nome).strip()
+                    else f"Prestador {int(_r_temp.CD_PRESTADOR)}"
+                )
+                _local_temp = " / ".join(
+                    str(x) for x in (_r_temp.cidade, _r_temp.uf) if pd.notna(x) and str(x).strip()
+                )
+                _titulo_prest_temp = (
+                    f"#{_pos_temp} · {_nome_temp}" + (f" — {_local_temp}" if _local_temp else "")
+                    + f" · CS {_fmt1_temp(_r_temp.cs_ant)} → {_fmt1_temp(_r_temp.cs_atual)} "
+                    f"(+{_fmt1_temp(_r_temp.delta_cs)})"
+                )
+                with st.expander(_titulo_prest_temp, expanded=False):
+                    # ---- quadro comparativo ----
+                    _qa, _qb = _r_temp.qp_ant, _r_temp.qp_atual
+                    _va, _vb = _r_temp.vidas_prest_ant, _r_temp.vidas_prest_atual
+                    _ua, _ub = _r_temp.uso_ant, _r_temp.uso_atual
+                    _fa, _fb = _r_temp.fase_ant, _r_temp.fase_atual
+                    _quadro_temp = pd.DataFrame([
+                        ["Qtde de vidas", fmt_int(_va), fmt_int(_vb), _pct_br_temp(_vb, _va)],
+                        ["Qtde de procedimentos (QP)", fmt_int(_qa), fmt_int(_qb), _pct_br_temp(_qb, _qa)],
+                        ["Soma de uso", fmt_int(_ua), fmt_int(_ub), _pct_br_temp(_ub, _ua)],
+                        ["Procedimentos por vida", _fmt1_temp(_qa / _va if _va else np.nan),
+                         _fmt1_temp(_qb / _vb if _vb else np.nan),
+                         _pct_br_temp(_qb / _vb if _vb else np.nan, _qa / _va if _va else np.nan)],
+                        ["Uso por vida", _fmt1_temp(_ua / _va if _va else np.nan),
+                         _fmt1_temp(_ub / _vb if _vb else np.nan),
+                         _pct_br_temp(_ub / _vb if _vb else np.nan, _ua / _va if _va else np.nan)],
+                        ["FASE (esperado pela taxa nacional)", _fmt1_temp(_fa), _fmt1_temp(_fb), _pct_br_temp(_fb, _fa)],
+                        ["CS (Coeficiente de Severidade)", _fmt1_temp(_r_temp.cs_ant), _fmt1_temp(_r_temp.cs_atual),
+                         _pct_br_temp(_r_temp.cs_atual, _r_temp.cs_ant)],
+                    ], columns=["Indicador", _lbl_a_temp, _lbl_b_temp, "Variação"])
+                    st.dataframe(_quadro_temp, hide_index=True, use_container_width=True)
+
+                    # ---- decomposição por procedimento e especialidade ----
+                    _lin_temp = _res_prest_temp["linhas"]
+                    _lin_temp = _lin_temp[_lin_temp["CD_PRESTADOR"] == _r_temp.CD_PRESTADOR].copy()
+                    _lin_temp["delta_exc"] = _lin_temp["exc_atual"] - _lin_temp["exc_ant"]
+                    _esp_temp = _lin_temp.groupby("ESPECIALIDADE", as_index=False).agg(
+                        qp_ant=("qp_ant", "sum"), qp_atual=("qp_atual", "sum"),
+                        exc_ant=("exc_ant", "sum"), exc_atual=("exc_atual", "sum"),
+                        delta_exc=("delta_exc", "sum"),
+                    )
+
+                    # ---- justificativa em texto (só o que os números mostram) ----
+                    _linhas_just_temp = [
+                        _verbo_temp(_vb, _va, "Qtde de vidas"),
+                        _verbo_temp(_qb, _qa, "Qtde de procedimentos"),
+                        _verbo_temp(_ub, _ua, "Qtde de uso"),
+                    ]
+                    if pd.notna(_fa) and _fa:
+                        _linhas_just_temp.append(
+                            f"O CS é QP ÷ FASE × 10: nesse período o QP variou {_pct_br_temp(_qb, _qa)} e a FASE "
+                            f"(esperado pelas vidas atendidas e pelo mix de procedimentos) variou "
+                            f"{_pct_br_temp(_fb, _fa)}."
+                        )
+                    _pos_esp_temp = _esp_temp[_esp_temp["delta_exc"] > 0].sort_values("delta_exc", ascending=False)
+                    _pos_proc_temp = _lin_temp[_lin_temp["delta_exc"] > 0].sort_values("delta_exc", ascending=False)
+                    _tot_pos_temp = _pos_proc_temp["delta_exc"].sum()
+                    if _tot_pos_temp > 0:
+                        _e1 = _pos_esp_temp.iloc[0]
+                        _p1 = _pos_proc_temp.iloc[0]
+                        _share_e = _e1["delta_exc"] / _tot_pos_temp * 100
+                        _share_p = _p1["delta_exc"] / _tot_pos_temp * 100
+                        _linhas_just_temp.append(
+                            f"Especialidade que mais pesou: **{_e1['ESPECIALIDADE']}** "
+                            f"(+{fmt_int(_e1['delta_exc'])} procedimentos acima do esperado, "
+                            f"{_share_e:.0f}% do aumento)."
+                        )
+                        _linhas_just_temp.append(
+                            f"Procedimento que mais pesou: **{_p1['NOME_PROCEDIMENTO']}** "
+                            f"(+{fmt_int(_p1['delta_exc'])} acima do esperado, {_share_p:.0f}% do aumento)."
+                        )
+                        _linhas_just_temp.append(
+                            "Leitura: aumento **concentrado** em uma especialidade."
+                            if _share_e >= 50 else
+                            "Leitura: aumento **espalhado** por várias especialidades."
+                        )
+                    else:
+                        _linhas_just_temp.append(
+                            "Nenhum procedimento/especialidade aumentou acima do esperado — a alta do CS "
+                            "vem da queda da FASE (menos vidas ou mix de menor taxa nacional)."
+                        )
+                    st.markdown("**Justificativa**  \n" + "  \n".join(f"- {t}" for t in _linhas_just_temp))
+
+                    def _tabela_contrib_temp(df_c, col_nome, titulo_col):
+                        t = df_c.sort_values("delta_exc", ascending=False).head(5)
+                        return pd.DataFrame({
+                            titulo_col: t[col_nome].astype(str).values,
+                            f"QP {_lbl_a_temp}": [fmt_int(x) for x in t["qp_ant"]],
+                            f"QP {_lbl_b_temp}": [fmt_int(x) for x in t["qp_atual"]],
+                            "Acima do esperado (variação)": [f"{x:+,.0f}".replace(",", ".") for x in t["delta_exc"]],
+                        })
+
+                    _c_esp_temp, _c_proc_temp = st.columns(2)
+                    with _c_esp_temp:
+                        st.markdown("**Especialidades** (maior contribuição)")
+                        st.dataframe(
+                            _tabela_contrib_temp(_esp_temp, "ESPECIALIDADE", "Especialidade"),
+                            hide_index=True, use_container_width=True,
+                        )
+                    with _c_proc_temp:
+                        st.markdown("**Procedimentos** (maior contribuição)")
+                        st.dataframe(
+                            _tabela_contrib_temp(_lin_temp, "NOME_PROCEDIMENTO", "Procedimento"),
+                            hide_index=True, use_container_width=True,
+                        )
+                    st.caption(
+                        "\"Acima do esperado\" = QP − FASE do procedimento (quantos procedimentos a mais que a "
+                        "taxa nacional prevê para as vidas atendidas). A soma de todos os procedimentos dá o "
+                        "total do prestador. Procedimentos de cada especialidade = especialidade mais "
+                        "frequente do procedimento na base."
+                    )
 
     with tab_risco_temp:
         st.markdown("#### 🎯 Índice de Risco do Prestador")
