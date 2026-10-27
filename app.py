@@ -1315,14 +1315,28 @@ elif st.session_state.pagina == "severidade":
     opcoes_mes_temp = sorted(agregado["MES"].dropna().unique(), reverse=True)
     opcoes_plano_temp = sorted(agregado["NR_PLANO"].dropna().unique())
     opcoes_especialidade_temp = sorted(agregado["ESPECIALIDADE"].dropna().unique())
-    # Lidos direto do session_state (e não via widget) porque os campos de Mês/Plano/
-    # Especialidade agora só são desenhados (st.multiselect) lá dentro da aba, depois de
-    # df_filtrado já ter sido montado aqui — o Streamlit sincroniza o session_state com a
-    # última interação do usuário antes do script rodar de novo, então ler pela key já pega
-    # o valor atual mesmo antes do widget em si aparecer no código.
-    f_mes = st.session_state.get("temp_filtro_mes", [])
-    f_plano = st.session_state.get("temp_filtro_plano", [])
-    f_especialidade = st.session_state.get("temp_filtro_especialidade", [])
+    # Expansor único "🔎 Filtros" — concentra os filtros da página (Período, Mês, Plano,
+    # Especialidade, desenhados logo abaixo) e os filtros do Ranking (Procedimento, Prestador,
+    # UF, Região, Cidade, Cluster e "Ranquear por"), que são desenhados mais adiante, dentro
+    # da aba Ranking, reaproveitando este mesmo expansor via `with _exp_filtros_temp:` (as
+    # opções desses filtros dependem de dados calculados só lá embaixo).
+    _exp_filtros_temp = st.expander("🔎 Filtros", expanded=False)
+    f_mes, f_plano, f_especialidade = [], [], []
+    if not MOSTRAR_FILTROS_TOPO:
+        with _exp_filtros_temp:
+            st.caption(
+                "Período, Mês, Plano e Especialidade valem para a página toda; os demais "
+                "filtros e o \"Ranquear por\" valem só para a aba Ranking."
+            )
+            fmt1, fmt2, fmt3 = st.columns(3)
+            with fmt1:
+                f_mes = st.multiselect("Mês", options=opcoes_mes_temp, key="temp_filtro_mes")
+            with fmt2:
+                f_plano = st.multiselect("Plano", options=opcoes_plano_temp, key="temp_filtro_plano")
+            with fmt3:
+                f_especialidade = st.multiselect(
+                    "Especialidade", options=opcoes_especialidade_temp, key="temp_filtro_especialidade"
+                )
     # Região/UF/Cluster/Cidade da página ficam sem filtro próprio aqui — já têm equivalente
     # dentro da aba Ranking, que filtra em cima do resultado destes.
     f_regiao, f_uf, f_cluster, f_cidade = [], [], [], []
@@ -1373,18 +1387,21 @@ elif st.session_state.pagina == "severidade":
     # qualquer aba ler eles) — "Mês completo" não corta nada por dia; "Escolher dias" recorta
     # pelo dia do mês (coluna DIA), útil pra comparar um pedaço específico de um mês em
     # andamento sem esperar ele fechar.
-    col_periodo_modo_temp, col_periodo_dias_temp = st.columns([1, 2])
-    with col_periodo_modo_temp:
-        modo_periodo_temp = st.radio(
-            "Período do mês", ["Mês completo", "Escolher dias"],
-            horizontal=True, key="periodo_modo_temp",
-        )
-    if modo_periodo_temp == "Escolher dias":
-        with col_periodo_dias_temp:
-            dia_ini_temp, dia_fim_temp = st.slider(
-                "Intervalo de dias (dia tal ao dia tal)",
-                min_value=1, max_value=31, value=(1, 31), key="periodo_dias_temp",
+    with _exp_filtros_temp:
+        col_periodo_modo_temp, col_periodo_dias_temp = st.columns([1, 2])
+        with col_periodo_modo_temp:
+            modo_periodo_temp = st.radio(
+                "Período do mês", ["Mês completo", "Escolher dias"],
+                horizontal=True, key="periodo_modo_temp",
             )
+        dia_ini_temp, dia_fim_temp = 1, 31
+        if modo_periodo_temp == "Escolher dias":
+            with col_periodo_dias_temp:
+                dia_ini_temp, dia_fim_temp = st.slider(
+                    "Intervalo de dias (dia tal ao dia tal)",
+                    min_value=1, max_value=31, value=(1, 31), key="periodo_dias_temp",
+                )
+    if modo_periodo_temp == "Escolher dias":
         if "DIA" in df_filtrado.columns:
             df_filtrado = df_filtrado[
                 (df_filtrado["DIA"] >= dia_ini_temp) & (df_filtrado["DIA"] <= dia_fim_temp)
@@ -1681,25 +1698,6 @@ elif st.session_state.pagina == "severidade":
                 "comparado se aproxima da própria base nacional e o CS fica pouco informativo."
             )
 
-            if not MOSTRAR_FILTROS_TOPO and _sufixo_aba_temp == "_ranking":
-                # Mês/Plano/Especialidade do quadro de Filtros do topo (hoje oculto) — mesma
-                # funcionalidade de antes (afetam df_filtrado/usuarios_filtrado, a página toda),
-                # só que os campos agora aparecem aqui, dentro da aba "📊 Ranking". O valor já
-                # foi lido do session_state mais acima (antes de df_filtrado ser montado);
-                # declarar o widget aqui só sincroniza a próxima interação do usuário, não
-                # afeta o resultado já calculado nesta rodada.
-                # Desenhado só na aba Ranking (identificada pelo sufixo "_ranking") — evita
-                # campo duplicado, já que Mês/Plano/Especialidade são únicos pra página toda,
-                # não por aba.
-                fmt1, fmt2, fmt3 = st.columns(3)
-                with fmt1:
-                    st.multiselect("Mês", options=opcoes_mes_temp, key="temp_filtro_mes")
-                with fmt2:
-                    st.multiselect("Plano", options=opcoes_plano_temp, key="temp_filtro_plano")
-                with fmt3:
-                    st.multiselect(
-                        "Especialidade", options=opcoes_especialidade_temp, key="temp_filtro_especialidade"
-                    )
 
             # Mapa código -> nome do procedimento, dentro dos filtros ativos. Sem restrição
             # (_codigos_restritos_temp is None), cobre TODOS os procedimentos presentes; com
@@ -1779,58 +1777,59 @@ elif st.session_state.pagina == "severidade":
                                 "o nome está exatamente assim na base."
                             )
 
-                # ---- 6 filtros da aba, 1 coluna por filtro. ----
-                (
-                    fc_proc_temp, fc_prest_temp, fc_uf_temp,
-                    fc_regiao_temp, fc_cidade_temp, fc_cluster_temp,
-                ) = st.columns(6)
-                with fc_proc_temp:
-                    proc_sel_temp = st.selectbox(
-                        "Procedimento", opcoes_proc_temp, key=f"temp_filtro_procedimento{_sufixo_aba_temp}"
-                    )
-                with fc_prest_temp:
-                    prest_sel_temp = st.selectbox(
-                        "Prestador", opcoes_prestador_temp, key=f"temp_filtro_prestador{_sufixo_aba_temp}"
-                    )
-                with fc_uf_temp:
-                    uf_sel_temp = st.selectbox(
-                        "UF", opcoes_uf_temp, key=f"temp_filtro_uf{_sufixo_aba_temp}"
-                    )
-                with fc_regiao_temp:
-                    regiao_sel_temp = st.selectbox(
-                        "Região", opcoes_regiao_temp, key=f"temp_filtro_regiao{_sufixo_aba_temp}"
-                    )
-                with fc_cidade_temp:
-                    cidade_sel_temp = st.selectbox(
-                        "Cidade", opcoes_cidade_temp, key=f"temp_filtro_cidade{_sufixo_aba_temp}"
-                    )
-                with fc_cluster_temp:
-                    cluster_sel_temp = st.selectbox(
-                        "Cluster", opcoes_cluster_temp, key=f"temp_filtro_cluster{_sufixo_aba_temp}"
-                    )
-
-                # ---- "Ranquear por" — só na aba "📊 Ranking": reordena a grade pela métrica
-                # escolhida (sempre do maior pro menor), em vez do CS decrescente fixo usado
-                # nas outras abas. As chaves do dicionário são os mesmos nomes internos de
-                # coluna já calculados mais abaixo em rank_temp — reaproveitados no
-                # .sort_values() logo antes de montar a grade de exibição. ----
-                if _sufixo_aba_temp == "_ranking":
-                    _OPCOES_RANQUEAR_TEMP = {
-                        "Qtde de vidas": "qtd_usuarios",
-                        "Qtde de procedimentos": "qtd_procedimentos",
-                        "Qtde por prestador (Nacional)": "qtd_por_prestador_nacional",
-                        "Qtde por prestador (Cidade)": "qtd_por_prestador_cidade",
-                        "FASE": "fase_esperado",
-                        "CS": "cs",
-                        "CS da Cidade": "cs_cidade",
-                        "Índice de Atenção (Volume)": "indice_atencao_volume",
-                    }
-                    fc_ranquear_temp, _fc_ranquear_vazio_temp = st.columns([2, 4])
-                    with fc_ranquear_temp:
-                        ranquear_por_temp = st.selectbox(
-                            "Ranquear por", list(_OPCOES_RANQUEAR_TEMP.keys()),
-                            key=f"temp_ranquear_por{_sufixo_aba_temp}",
+                with _exp_filtros_temp:
+                    # ---- 6 filtros da aba, 1 coluna por filtro. ----
+                    (
+                        fc_proc_temp, fc_prest_temp, fc_uf_temp,
+                        fc_regiao_temp, fc_cidade_temp, fc_cluster_temp,
+                    ) = st.columns(6)
+                    with fc_proc_temp:
+                        proc_sel_temp = st.selectbox(
+                            "Procedimento", opcoes_proc_temp, key=f"temp_filtro_procedimento{_sufixo_aba_temp}"
                         )
+                    with fc_prest_temp:
+                        prest_sel_temp = st.selectbox(
+                            "Prestador", opcoes_prestador_temp, key=f"temp_filtro_prestador{_sufixo_aba_temp}"
+                        )
+                    with fc_uf_temp:
+                        uf_sel_temp = st.selectbox(
+                            "UF", opcoes_uf_temp, key=f"temp_filtro_uf{_sufixo_aba_temp}"
+                        )
+                    with fc_regiao_temp:
+                        regiao_sel_temp = st.selectbox(
+                            "Região", opcoes_regiao_temp, key=f"temp_filtro_regiao{_sufixo_aba_temp}"
+                        )
+                    with fc_cidade_temp:
+                        cidade_sel_temp = st.selectbox(
+                            "Cidade", opcoes_cidade_temp, key=f"temp_filtro_cidade{_sufixo_aba_temp}"
+                        )
+                    with fc_cluster_temp:
+                        cluster_sel_temp = st.selectbox(
+                            "Cluster", opcoes_cluster_temp, key=f"temp_filtro_cluster{_sufixo_aba_temp}"
+                        )
+
+                    # ---- "Ranquear por" — só na aba "📊 Ranking": reordena a grade pela métrica
+                    # escolhida (sempre do maior pro menor), em vez do CS decrescente fixo usado
+                    # nas outras abas. As chaves do dicionário são os mesmos nomes internos de
+                    # coluna já calculados mais abaixo em rank_temp — reaproveitados no
+                    # .sort_values() logo antes de montar a grade de exibição. ----
+                    if _sufixo_aba_temp == "_ranking":
+                        _OPCOES_RANQUEAR_TEMP = {
+                            "Qtde de vidas": "qtd_usuarios",
+                            "Qtde de procedimentos": "qtd_procedimentos",
+                            "Qtde por prestador (Nacional)": "qtd_por_prestador_nacional",
+                            "Qtde por prestador (Cidade)": "qtd_por_prestador_cidade",
+                            "FASE": "fase_esperado",
+                            "CS": "cs",
+                            "CS da Cidade": "cs_cidade",
+                            "Índice de Atenção (Volume)": "indice_atencao_volume",
+                        }
+                        fc_ranquear_temp, _fc_ranquear_vazio_temp = st.columns([2, 4])
+                        with fc_ranquear_temp:
+                            ranquear_por_temp = st.selectbox(
+                                "Ranquear por", list(_OPCOES_RANQUEAR_TEMP.keys()),
+                                key=f"temp_ranquear_por{_sufixo_aba_temp}",
+                            )
 
                 # Sem nenhum dos 6 filtros desta aba aplicado, o corte comparado tende a se
                 # aproximar da própria base nacional usada como referência — o CS fica pouco
@@ -3817,64 +3816,60 @@ elif st.session_state.pagina == "severidade":
                                 df_disp_esp_temp["rotulo"] = df_disp_esp_temp["ESPECIALIDADE"].astype(str)
                             _grafico_dispersao_cs_temp(df_disp_esp_temp, "rotulo", "Especialidade")
 
-                # ---- histórico por mês: CS, qtd de vidas, qtd de procedimentos, soma de uso ----
-                # Mesma exigência de "pelo menos 1 filtro acionado" do bloco de dispersão acima —
-                # sem filtro, o corte se aproxima da própria base nacional e a série mês a mês
-                # fica pouco informativa.
+                # ---- histórico por mês: 5 gráficos (procedimentos, vidas, soma de uso, uso por
+                # vida e valor). Segue os filtros ativos (df_temp/usuarios_temp). Não depende do CS,
+                # então aparece mesmo sem nenhum filtro da aba selecionado. ----
                 st.divider()
                 st.markdown("**Histórico por mês**")
-                if nenhum_filtro_temp:
-                    st.info(
-                        "Selecione ao menos um filtro acima (procedimento, prestador, UF, região, "
-                        "cidade ou cluster) para ver o histórico por mês."
-                    )
-                elif "MES" not in df_temp.columns:
+                if "MES" not in df_temp.columns:
                     st.info("Sem coluna de mês nos dados pra montar o histórico.")
                 else:
-                    metrica_hist_temp = st.selectbox(
-                        "Métrica do histórico",
-                        ["CS", "Qtd de vidas", "Qtd de procedimentos", "Soma de uso"],
-                        key=f"temp_hist_metrica{_sufixo_aba_temp}",
+                    df_hist_temp = df_temp.groupby("MES", observed=True).agg(
+                        qtd_procedimentos=("qtd_procedimentos", "sum"),
+                        soma_uso=("soma_uso", "sum"),
+                        soma_valor=("soma_valor", "sum"),
+                    ).reset_index()
+                    df_hist_temp["MES"] = df_hist_temp["MES"].astype(str)
+                    _vidas_hist_temp = vidas_por(usuarios_temp, "MES")
+                    _vidas_hist_temp["MES"] = _vidas_hist_temp["MES"].astype(str)
+                    df_hist_temp = df_hist_temp.merge(_vidas_hist_temp, on="MES", how="left")
+                    df_hist_temp["qtd_usuarios"] = df_hist_temp["qtd_usuarios"].fillna(0)
+                    df_hist_temp["uso_por_vida"] = np.where(
+                        df_hist_temp["qtd_usuarios"] > 0,
+                        df_hist_temp["soma_uso"] / df_hist_temp["qtd_usuarios"], np.nan,
                     )
-                    # CS/qtd de vidas/qtd de procedimentos por mês vêm do mesmo agregador usado nos
-                    # gráficos de dispersão acima, só que agrupando por MES em vez de prestador/
-                    # cidade/etc. Soma de uso não faz parte desse cálculo (não entra na fórmula do
-                    # CS), então é somada à parte, direto de df_temp.
-                    df_hist_temp = _severidade_agregada_temp("MES")
-                    soma_uso_mes_temp = (
-                        df_temp.groupby("MES", dropna=False, observed=True)["soma_uso"]
-                        .sum().rename("soma_uso_mes").reset_index()
-                    )
-                    if not df_hist_temp.empty:
-                        df_hist_temp = df_hist_temp.merge(soma_uso_mes_temp, on="MES", how="outer")
-                    else:
-                        df_hist_temp = soma_uso_mes_temp.copy()
-                        for _col_vazia in ("cs", "qtd_usuarios", "qp_praticado"):
-                            df_hist_temp[_col_vazia] = float("nan")
-                    df_hist_temp = df_hist_temp[df_hist_temp["MES"].notna()]
+                    df_hist_temp = df_hist_temp.sort_values("MES")
+                    df_hist_temp["mes_rotulo"] = df_hist_temp["MES"].map(label_mes)
                     if df_hist_temp.empty:
                         st.info("Sem dados suficientes para o histórico.")
                     else:
-                        df_hist_temp = df_hist_temp.sort_values("MES")
-                        df_hist_temp["mes_rotulo"] = df_hist_temp["MES"].map(label_mes)
-                        _col_metrica_hist_temp = {
-                            "CS": "cs", "Qtd de vidas": "qtd_usuarios",
-                            "Qtd de procedimentos": "qp_praticado", "Soma de uso": "soma_uso_mes",
-                        }[metrica_hist_temp]
-                        fig_hist_temp = px.line(
-                            df_hist_temp, x="mes_rotulo", y=_col_metrica_hist_temp, markers=True,
-                            title=f"{metrica_hist_temp} por mês",
-                        )
-                        if metrica_hist_temp == "CS":
-                            fig_hist_temp.add_hline(y=10, line_dash="dash", line_color="#888")
-                        fig_hist_temp.update_layout(
-                            height=320, margin=dict(l=10, r=10, t=40, b=10),
-                            xaxis_title="Mês", yaxis_title=metrica_hist_temp,
-                        )
-                        st.plotly_chart(
-                            fig_hist_temp, use_container_width=True,
-                            key=f"grafico_hist_temp{_sufixo_aba_temp}",
-                        )
+                        def _grafico_mensal_temp(coluna, titulo, prefixo=""):
+                            fig_mensal_temp = px.line(
+                                df_hist_temp, x="mes_rotulo", y=coluna, markers=True, title=titulo,
+                            )
+                            fig_mensal_temp.update_layout(
+                                height=250, margin=dict(l=10, r=10, t=40, b=10),
+                                xaxis_title=None, yaxis_title=None,
+                            )
+                            if prefixo:
+                                fig_mensal_temp.update_yaxes(tickprefix=prefixo)
+                            st.plotly_chart(
+                                fig_mensal_temp, use_container_width=True,
+                                key=f"grafico_hist_{coluna}_temp{_sufixo_aba_temp}",
+                            )
+
+                        _hist_c1_temp, _hist_c2_temp, _hist_c3_temp = st.columns(3)
+                        with _hist_c1_temp:
+                            _grafico_mensal_temp("qtd_procedimentos", "Qtde de procedimentos")
+                        with _hist_c2_temp:
+                            _grafico_mensal_temp("qtd_usuarios", "Qtde de vidas")
+                        with _hist_c3_temp:
+                            _grafico_mensal_temp("soma_uso", "Soma de uso")
+                        _hist_c4_temp, _hist_c5_temp, _hist_c6_temp = st.columns(3)
+                        with _hist_c4_temp:
+                            _grafico_mensal_temp("uso_por_vida", "Uso por vida")
+                        with _hist_c5_temp:
+                            _grafico_mensal_temp("soma_valor", "Valor pago (R$)", prefixo="R$ ")
 
     with tab_risco_temp:
         st.markdown("#### 🎯 Índice de Risco do Prestador")
