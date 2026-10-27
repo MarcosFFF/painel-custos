@@ -39,6 +39,18 @@ for ext in ("png", "jpg", "jpeg", "svg", "webp"):
         LOGO_PATH = candidato
         break
 st.set_page_config(page_title="Gestão de Sinistro - Odonto", page_icon=(LOGO_PATH or "📊"), layout="wide", initial_sidebar_state="expanded")
+# Barra lateral fixa: esconde os botões de recolher/expandir (os nomes dos seletores variam
+# um pouco entre versões do Streamlit, por isso vários).
+st.markdown(
+    """
+    <style>
+    [data-testid="stSidebarCollapseButton"],
+    [data-testid="stSidebarCollapsedControl"],
+    [data-testid="collapsedControl"] { display: none !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 st.markdown("""
 <style>
 button[kind="primary"] {
@@ -146,12 +158,16 @@ try:
         _icone_mem_temp = "🟡"
     else:
         _icone_mem_temp = "🟢"
-    st.sidebar.caption(
-        f"{_icone_mem_temp} Memória em uso: **"
-        f"{_mem_mb_temp:,.0f}".replace(",", ".") + " MB** de ~1.024 MB "
-        "(limite aproximado do plano gratuito do Streamlit Cloud)"
-    )
-    st.sidebar.progress(_pct_mem_temp)
+    # Indicador de memória oculto (a pedido) — o monitoramento e a liberação automática de
+    # cache logo abaixo continuam ativos; pra voltar a exibir o indicador, troque para True.
+    MOSTRAR_MEMORIA_TEMP = False
+    if MOSTRAR_MEMORIA_TEMP:
+        st.sidebar.caption(
+            f"{_icone_mem_temp} Memória em uso: **"
+            f"{_mem_mb_temp:,.0f}".replace(",", ".") + " MB** de ~1.024 MB "
+            "(limite aproximado do plano gratuito do Streamlit Cloud)"
+        )
+        st.sidebar.progress(_pct_mem_temp)
     # ---------- libera cache acumulado quando a memória aperta ----------
     # ranking_severidade / calcular_media_nacional / alertas_prestador_procedimento
     # (severidade.py, cacheados com @st.cache_data) guardam 1 entrada nova pra cada
