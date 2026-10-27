@@ -31,6 +31,11 @@ COLUNAS_PRESTADORES = ["CODIGO", "CREDENCIADO", "CNPJ_CPF"]
 # atendimento clínico de fato) — comparação por texto normalizado, então
 # funciona com ou sem acento/maiúsculas.
 ESPECIALIDADES_EXCLUIDAS = {"RESPONSABILIDADE TECNICA"}
+# Valor Autorizado (coluna soma_valor): só soma o VL_PAGO de procedimentos com um destes status
+# (STATUS_PROCED, comparado por texto normalizado: sem acento/maiúsculas). Procedimentos com
+# qualquer outro status (cancelado, negado etc.) continuam contando em quantidade, vidas e uso —
+# só não entram no valor.
+STATUS_VALOR_AUTORIZADO = {"COM RESTRICAO", "SEM RESTRICAO"}
 def normalizar_texto(v):
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return None
@@ -198,9 +203,11 @@ def carregar_base_severidade(pasta="."):
     # a função, e ele fica montado por inteiro até a linha em que base_usuarios é
     # extraída dele.
     colunas_raw_nao_usadas = [
-        "VL_PROCEDIMENTO", "VL_FRANQUIA", "STATUS_PROCED", "EXECUCAO", "CD_TUSS",
+        "VL_PROCEDIMENTO", "VL_FRANQUIA", "EXECUCAO", "CD_TUSS",
         "DATA_AUT", "DATA_ATEND",
     ]
+    # (STATUS_PROCED saiu desta lista: agora é usado pra decidir quais linhas entram no Valor
+    # Autorizado — ver STATUS_VALOR_AUTORIZADO. É descartado logo depois de calcular VL_AUTORIZADO.)
     partes = []
     for chave_grupo, arquivos_do_grupo in grupos_arquivo.items():
         for arq in arquivos_do_grupo:
@@ -255,13 +262,30 @@ def carregar_base_severidade(pasta="."):
     else:
         dados["NOME_PRESTADOR"] = None
         dados["CNPJ_CPF_PRESTADOR"] = None
+    # Valor Autorizado: VL_PAGO só das linhas com status "Com Restrição" ou "Sem Restrição".
+    # Normaliza só os valores ÚNICOS de STATUS_PROCED (poucos) e mapeia — bem mais rápido que
+    # normalizar linha a linha na base inteira.
+    _status_unicos = dados["STATUS_PROCED"].dropna().unique()
+    _mapa_status = {v: normalizar_texto(v) for v in _status_unicos}
+    _status_norm = dados["STATUS_PROCED"].map(_mapa_status)
+    _linhas_valor_ok = _status_norm.isin(STATUS_VALOR_AUTORIZADO)
+    dados["VL_AUTORIZADO"] = dados["VL_PAGO"].where(_linhas_valor_ok)
+    aviso_status = None
+    if not _linhas_valor_ok.any():
+        aviso_status = (
+            "Nenhuma linha com status 'Com Restrição' ou 'Sem Restrição' foi encontrada — "
+            "o Valor Autorizado ficou zerado. Status existentes: "
+            + ", ".join(sorted(str(v) for v in _status_unicos)[:10])
+        )
+    del _status_norm, _linhas_valor_ok
+    dados = dados.drop(columns=["STATUS_PROCED"])
     grupos = [
         "MES", "DIA", "UF", "REGIAO", "ESPECIALIDADE", "CD_PLANO", "NR_PLANO", "CLUSTER",
         "CD_PROCEDIMENTO", "NOME_PROCEDIMENTO", "CD_PRESTADOR", "NOME_PRESTADOR",
         "CNPJ_CPF_PRESTADOR", "CIDADE_PRESTADOR",
     ]
     # Nota: a análise de severidade (FASE, rankings, watchlist, ofensores) continua
-    # 100% baseada em uso e volume — não em R$. A coluna soma_valor (VL_PAGO) volta
+    # 100% baseada em uso e volume — não em R$. A coluna soma_valor (Valor Autorizado: VL_PAGO só de Com/Sem Restrição) volta
     # a existir só para o alerta de aumento de qtde+valor (prestadores críticos).
     #
     # qtd_procedimentos = quantidade REAL de procedimentos (uma linha da base = um
@@ -272,7 +296,7 @@ def carregar_base_severidade(pasta="."):
         qtd_procedimentos=("NU_GUIA", "count"),
         qtd_usuarios=("CD_USUARIO", "nunique"),
         soma_uso=("QTD_USO", "sum"),
-        soma_valor=("VL_PAGO", "sum"),
+        soma_valor=("VL_AUTORIZADO", "sum"),  # Valor Autorizado (só Com/Sem Restrição)
     ).reset_index()
     # soma_uso/soma_valor não precisam da precisão de float64 (só são exibidas
     # arredondadas — fmt_brl/fmt_float2 — ou usadas em somas/razões, nunca em
@@ -353,6 +377,8 @@ def carregar_base_severidade(pasta="."):
         if col in base_usuarios.columns:
             base_usuarios[col] = base_usuarios[col].astype("category")
     avisos = []
+    if aviso_status:
+        avisos.append(aviso_status)
     if caminho_prestadores is None:
         avisos.append(
             "Relação de prestadores (nome/CPF-CNPJ) não encontrada na pasta — "
