@@ -3858,6 +3858,33 @@ elif st.session_state.pagina == "severidade":
                         df_hist_temp["qtd_usuarios"] > 0,
                         df_hist_temp["soma_uso"] / df_hist_temp["qtd_usuarios"], np.nan,
                     )
+                    # ---- CS por mês: mesma conta do Ranking (CS = QP ÷ FASE × 10), em que o FASE é a soma,
+                    # procedimento a procedimento, de (taxa nacional do procedimento × vidas do mês
+                    # naquele procedimento). Calculado aqui à parte pra não depender do bloco de
+                    # dispersão (hoje oculto). ----
+                    _cs_base_temp = df_temp.groupby(
+                        ["MES", "NOME_PROCEDIMENTO"], observed=True
+                    )["qtd_procedimentos"].sum().reset_index()
+                    _cs_vidas_temp = vidas_por(usuarios_temp, ["MES", "NOME_PROCEDIMENTO"])
+                    _cs_nacional_temp = nacional_temp_flat[
+                        ["NOME_PROCEDIMENTO", "qtd_procedimentos_nacional", "qtd_vidas_nacional"]
+                    ].copy()
+                    for _df_cs_temp in (_cs_base_temp, _cs_vidas_temp, _cs_nacional_temp):
+                        if "MES" in _df_cs_temp.columns:
+                            _df_cs_temp["MES"] = _df_cs_temp["MES"].astype(str)
+                        _df_cs_temp["NOME_PROCEDIMENTO"] = _df_cs_temp["NOME_PROCEDIMENTO"].astype(str)
+                    _cs_base_temp = _cs_base_temp.merge(
+                        _cs_vidas_temp, on=["MES", "NOME_PROCEDIMENTO"], how="left"
+                    ).merge(_cs_nacional_temp, on="NOME_PROCEDIMENTO", how="left")
+                    _cs_base_temp["qtd_usuarios"] = _cs_base_temp["qtd_usuarios"].fillna(0)
+                    _cs_base_temp["fase_linha"] = (
+                        _cs_base_temp["qtd_procedimentos_nacional"] / _cs_base_temp["qtd_vidas_nacional"]
+                    ) * _cs_base_temp["qtd_usuarios"]
+                    _cs_mes_temp = _cs_base_temp.groupby("MES").agg(
+                        _qp=("qtd_procedimentos", "sum"), _fase=("fase_linha", "sum"),
+                    )
+                    _cs_mes_temp["cs"] = np.where(_cs_mes_temp["_fase"] > 0, _cs_mes_temp["_qp"] / _cs_mes_temp["_fase"] * 10, np.nan)
+                    df_hist_temp["cs"] = df_hist_temp["MES"].map(_cs_mes_temp["cs"])
                     df_hist_temp = df_hist_temp.sort_values("MES")
                     df_hist_temp["mes_rotulo"] = df_hist_temp["MES"].map(label_mes)
                     if df_hist_temp.empty:
@@ -3873,6 +3900,8 @@ elif st.session_state.pagina == "severidade":
                             )
                             if prefixo:
                                 fig_mensal_temp.update_yaxes(tickprefix=prefixo)
+                            if coluna == "cs":
+                                fig_mensal_temp.add_hline(y=10, line_dash="dash", line_color="#888")
                             st.plotly_chart(
                                 fig_mensal_temp, use_container_width=True,
                                 key=f"grafico_hist_{coluna}_temp{_sufixo_aba_temp}",
@@ -3890,6 +3919,8 @@ elif st.session_state.pagina == "severidade":
                             _grafico_mensal_temp("uso_por_vida", "Uso por vida")
                         with _hist_c5_temp:
                             _grafico_mensal_temp("soma_valor", "Valor pago (R$)", prefixo="R$ ")
+                        with _hist_c6_temp:
+                            _grafico_mensal_temp("cs", "CS (Coeficiente de Severidade)")
 
     with tab_risco_temp:
         st.markdown("#### 🎯 Índice de Risco do Prestador")
