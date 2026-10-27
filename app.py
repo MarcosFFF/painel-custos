@@ -1303,6 +1303,8 @@ elif st.session_state.pagina == "severidade":
     # Lista de prestadores do Ranking (um expansor por prestador, com o resumo no título) — oculta por
     # padrão. Troque pra True pra exibir de volta. PDF e e-mail do Ranking continuam disponíveis.
     MOSTRAR_LISTA_PRESTADORES_TEMP = False
+    # Botões de gerar/baixar PDF do Ranking — ocultos por padrão. Troque pra True pra exibir de volta.
+    MOSTRAR_PDF_TEMP = False
     col_titulo_sev, col_atualizar_sev = st.columns([5, 1])
     with col_titulo_sev:
         st.subheader("🕵️ Severidade")
@@ -3349,59 +3351,59 @@ elif st.session_state.pagina == "severidade":
                             return _partes_temp
 
                         st.divider()
-                        st.markdown("**📄 Relatório em PDF**")
-                        st.caption(
-                            "Gera um PDF com os filtros atuais desta aba: cabeçalho com a logo, "
-                            "período trabalhado e filtros aplicados, legenda, um resumo em texto "
-                            "do que chama a atenção (🚩/⚠️) e do que desvia (CS acima/abaixo de "
-                            "10) nesta seleção, gráficos (dispersão CS × volume e Top 10 pela "
-                            "métrica de \"Ranquear por\") e o detalhamento por prestador já "
-                            "\"aberto\" (mesmo conteúdo dos expanders logo abaixo)."
-                        )
-                        # Trava: nunca deixa gerar o PDF com a base toda (sem nenhum recorte) —
-                        # obrigatório escolher pelo menos UF, Cidade, Cluster ou Prestador ali
-                        # em cima. Procedimento/Região sozinhos não contam.
+                        # PDF do Ranking oculto por padrão (MOSTRAR_PDF_TEMP = False no topo da página).
+                        # A trava de filtro continua valendo pro envio por e-mail logo abaixo.
                         _tem_filtro_pdf_temp = (
                             uf_sel_temp != "Todos" or cidade_sel_temp != "Todos"
                             or cluster_sel_temp != "Todos" or prest_sel_temp != "Todos"
                         )
+                        if MOSTRAR_PDF_TEMP:
+                            st.markdown("**📄 Relatório em PDF**")
+                            st.caption(
+                                "Gera um PDF com os filtros atuais desta aba: cabeçalho com a logo, "
+                                "período trabalhado e filtros aplicados, legenda, um resumo em texto "
+                                "do que chama a atenção (🚩/⚠️) e do que desvia (CS acima/abaixo de "
+                                "10) nesta seleção, gráficos (dispersão CS × volume e Top 10 pela "
+                                "métrica de \"Ranquear por\") e o detalhamento por prestador já "
+                                "\"aberto\" (mesmo conteúdo dos expanders logo abaixo)."
+                            )
                         if not _tem_filtro_pdf_temp:
                             st.warning(
                                 "Selecione pelo menos UF, Cidade, Cluster ou Prestador nos "
-                                "filtros acima pra liberar o PDF — ele nunca pode ser gerado "
-                                "com a base toda."
+                                "filtros pra liberar o envio — nunca é permitido usar a base toda."
                             )
-                        col_gerar_pdf_temp, col_baixar_pdf_temp = st.columns([1, 2])
-                        with col_gerar_pdf_temp:
-                            if st.button(
-                                "📄 Gerar PDF", key="gerar_pdf_ranking_temp", use_container_width=True,
-                                disabled=not _tem_filtro_pdf_temp,
-                            ):
-                                with st.spinner("Gerando PDF..."):
-                                    _pdf_bytes_temp = _gerar_pdf_ranking_temp()
-                                if _pdf_bytes_temp:
-                                    st.session_state["pdf_ranking_bytes_temp"] = _pdf_bytes_temp
-                                    st.session_state["pdf_ranking_nome_temp"] = (
-                                        f"ranking_odonto_{datetime.now():%Y%m%d_%H%M}.pdf"
+                        if MOSTRAR_PDF_TEMP:
+                            col_gerar_pdf_temp, col_baixar_pdf_temp = st.columns([1, 2])
+                            with col_gerar_pdf_temp:
+                                if st.button(
+                                    "📄 Gerar PDF", key="gerar_pdf_ranking_temp", use_container_width=True,
+                                    disabled=not _tem_filtro_pdf_temp,
+                                ):
+                                    with st.spinner("Gerando PDF..."):
+                                        _pdf_bytes_temp = _gerar_pdf_ranking_temp()
+                                    if _pdf_bytes_temp:
+                                        st.session_state["pdf_ranking_bytes_temp"] = _pdf_bytes_temp
+                                        st.session_state["pdf_ranking_nome_temp"] = (
+                                            f"ranking_odonto_{datetime.now():%Y%m%d_%H%M}.pdf"
+                                        )
+                            with col_baixar_pdf_temp:
+                                if st.session_state.get("pdf_ranking_bytes_temp"):
+                                    st.download_button(
+                                        "⬇️ Baixar PDF",
+                                        data=st.session_state["pdf_ranking_bytes_temp"],
+                                        file_name=st.session_state.get(
+                                            "pdf_ranking_nome_temp", "ranking_odonto.pdf"
+                                        ),
+                                        mime="application/pdf",
+                                        key="baixar_pdf_ranking_temp",
+                                        use_container_width=True,
                                     )
-                        with col_baixar_pdf_temp:
-                            if st.session_state.get("pdf_ranking_bytes_temp"):
-                                st.download_button(
-                                    "⬇️ Baixar PDF",
-                                    data=st.session_state["pdf_ranking_bytes_temp"],
-                                    file_name=st.session_state.get(
-                                        "pdf_ranking_nome_temp", "ranking_odonto.pdf"
-                                    ),
-                                    mime="application/pdf",
-                                    key="baixar_pdf_ranking_temp",
-                                    use_container_width=True,
-                                )
 
                         st.markdown("**📧 Resumo por e-mail**")
                         st.caption(
                             "Envia por e-mail só o texto do \"Resumo — o que chama a atenção\" "
-                            "desta seleção (sem anexar o PDF) — mesma trava de filtro do PDF "
-                            "acima: nunca envia com a base toda."
+                            "desta seleção (sem anexar o PDF) — só envia com pelo menos UF, "
+                            "Cidade, Cluster ou Prestador filtrado, nunca com a base toda."
                         )
                         _destino_email_resumo_temp = st.text_input(
                             "E-mail(s) de destino (separe por vírgula)",
