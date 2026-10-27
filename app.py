@@ -38,7 +38,7 @@ for ext in ("png", "jpg", "jpeg", "svg", "webp"):
     if os.path.exists(candidato):
         LOGO_PATH = candidato
         break
-st.set_page_config(page_title="Gestão de Sinistro - Odonto", page_icon=(LOGO_PATH or "📊"), layout="wide")
+st.set_page_config(page_title="Gestão de Sinistro - Odonto", page_icon=(LOGO_PATH or "📊"), layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
 <style>
 button[kind="primary"] {
@@ -1333,15 +1333,18 @@ elif st.session_state.pagina == "severidade":
     # UF, Região, Cidade, Cluster e "Ranquear por"), que são desenhados mais adiante, dentro
     # da aba Ranking, reaproveitando este mesmo expansor via `with _exp_filtros_temp:` (as
     # opções desses filtros dependem de dados calculados só lá embaixo).
-    _exp_filtros_temp = st.expander("🔎 Filtros", expanded=False)
+    # Agora na barra lateral (st.sidebar), empilhados na vertical — a barra é estreita demais
+    # para colunas lado a lado.
+    _exp_filtros_temp = st.sidebar.container()
     f_mes, f_plano, f_especialidade = [], [], []
     if not MOSTRAR_FILTROS_TOPO:
         with _exp_filtros_temp:
+            st.markdown("### 🔎 Filtros")
             st.caption(
                 "Período, Mês, Plano e Especialidade valem para a página toda; os demais "
                 "filtros e o \"Ranquear por\" valem só para a aba Ranking."
             )
-            fmt1, fmt2, fmt3 = st.columns(3)
+            fmt1, fmt2, fmt3 = st.container(), st.container(), st.container()
             with fmt1:
                 f_mes = st.multiselect("Mês", options=opcoes_mes_temp, key="temp_filtro_mes")
             with fmt2:
@@ -1401,7 +1404,7 @@ elif st.session_state.pagina == "severidade":
     # pelo dia do mês (coluna DIA), útil pra comparar um pedaço específico de um mês em
     # andamento sem esperar ele fechar.
     with _exp_filtros_temp:
-        col_periodo_modo_temp, col_periodo_dias_temp = st.columns([1, 2])
+        col_periodo_modo_temp, col_periodo_dias_temp = st.container(), st.container()
         with col_periodo_modo_temp:
             modo_periodo_temp = st.radio(
                 "Período do mês", ["Mês completo", "Escolher dias"],
@@ -1805,7 +1808,7 @@ elif st.session_state.pagina == "severidade":
                     (
                         fc_proc_temp, fc_prest_temp, fc_uf_temp,
                         fc_regiao_temp, fc_cidade_temp, fc_cluster_temp,
-                    ) = st.columns(6)
+                    ) = [st.container() for _ in range(6)]
                     with fc_proc_temp:
                         proc_sel_temp = st.selectbox(
                             "Procedimento", opcoes_proc_temp, key=f"temp_filtro_procedimento{_sufixo_aba_temp}"
@@ -1847,7 +1850,7 @@ elif st.session_state.pagina == "severidade":
                             "CS da Cidade": "cs_cidade",
                             "Índice de Atenção (Volume)": "indice_atencao_volume",
                         }
-                        fc_ranquear_temp, _fc_ranquear_vazio_temp = st.columns([2, 4])
+                        fc_ranquear_temp = st.container()
                         with fc_ranquear_temp:
                             ranquear_por_temp = st.selectbox(
                                 "Ranquear por", list(_OPCOES_RANQUEAR_TEMP.keys()),
