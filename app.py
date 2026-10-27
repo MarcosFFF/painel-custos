@@ -21,6 +21,7 @@ try:
         resumo_comparativo, alertas_prestador_procedimento,
         calcular_media_nacional, vidas_por,
         _casar_colunas, _corrigir_mojibake,
+        normalizar_texto, STATUS_VALOR_AUTORIZADO,
     )
 except Exception as _erro_import_severidade:
     # O Streamlit Cloud redige a mensagem de erro padrão — mostramos o traceback
@@ -323,7 +324,7 @@ _RISCO_EMOJI_FAIXA_TEMP = {
 def _ler_csv_parte_enxuto_temp(caminho):
     """
     Leitura enxuta do mesmo CSV 4016R usado por severidade.py, só pra alimentar o
-    Indicador 7 (valor pago por paciente) da aba "Índice de Risco" — lê só as 5
+    Indicador 7 (valor autorizado por paciente) da aba "Índice de Risco" — lê só as 6
     colunas realmente usadas (em vez das 18 de _ler_csv_parte, importado de
     severidade.py), sem a correção de mojibake (não há texto livre nessas colunas)
     e com o valor monetário parseado de forma vetorizada (em cima da coluna
@@ -331,7 +332,7 @@ def _ler_csv_parte_enxuto_temp(caminho):
     novo, devagar, só pra esse indicador (era o motivo do cálculo do Índice de
     Risco nunca terminar antes).
     """
-    colunas_esperadas = ["NU_GUIA", "DATA_SOL", "CD_PRESTADOR", "CD_USUARIO", "VL_PAGO"]
+    colunas_esperadas = ["NU_GUIA", "DATA_SOL", "CD_PRESTADOR", "CD_USUARIO", "VL_PAGO", "STATUS_PROCED"]
     cabecalho = None
     enc_usado = None
     for enc in ["utf-8", "latin1"]:
@@ -365,12 +366,19 @@ def _ler_csv_parte_enxuto_temp(caminho):
     valor_convertido = valor_str.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
     valor_str = valor_str.mask(tem_virgula, valor_convertido)
     df["VL_PAGO"] = pd.to_numeric(valor_str, errors="coerce")
+    # Valor Autorizado: só conta o VL_PAGO de procedimentos "Com Restrição"/"Sem Restrição"
+    # (mesma regra de severidade.py) — os demais status ficam com valor nulo (viram 0 na soma).
+    # O mojibake do status é corrigido só nos valores únicos (poucos), não linha a linha.
+    _mapa_status_temp = {
+        v: normalizar_texto(_corrigir_mojibake(v)) for v in df["STATUS_PROCED"].dropna().unique()
+    }
+    df["VL_PAGO"] = df["VL_PAGO"].where(df["STATUS_PROCED"].map(_mapa_status_temp).isin(STATUS_VALOR_AUTORIZADO))
     df = df.drop_duplicates()
     return df
 @st.cache_data(show_spinner="Carregando valor por paciente (Indicador 7 — Índice de Risco)...")
 def _risco_valor_por_paciente_temp(pasta="."):
     """
-    Valor pago (VL_PAGO) somado por paciente (CD_USUARIO) dentro de cada prestador
+    Valor Autorizado (VL_PAGO) somado por paciente (CD_USUARIO) dentro de cada prestador
     (CD_PRESTADOR) — usado só pelo Indicador 7 (Dependência de Pacientes) da aba
     "Índice de Risco". O `agregado` que carregar_base_severidade() devolve nunca tem
     essa combinação (é agrupado por MES/UF/ESPECIALIDADE/... — perde o paciente
@@ -448,7 +456,7 @@ _RISCO_FAIXAS_META_TEMP = [(rotulo, cor, ordem) for _, rotulo, cor, ordem in _RI
 _RISCO_FAIXAS_PISOS_PADRAO_TEMP = [piso for piso, _, _, _ in _RISCO_FAIXAS_TEMP[:-1]]  # exclui "Sem alerta" (piso 0, fixo)
 _RISCO_PISO_MINIMO_PADRAO_TEMP = 5000.0
 _RISCO_PISO_CLUSTER_N_PADRAO_TEMP = 30
-# Piso de materialidade também por QUANTIDADE de procedimentos (além do valor pago).
+# Piso de materialidade também por QUANTIDADE de procedimentos (além do valor autorizado).
 # "E": só fica abaixo do piso quem está abaixo nos DOIS (valor E qtde) — basta um dos dois
 # estar acima do piso pra o prestador continuar no ranqueamento. "OU": abaixo em qualquer um.
 _RISCO_PISO_MINIMO_QTD_PADRAO_TEMP = 0
@@ -1656,7 +1664,7 @@ elif st.session_state.pagina == "severidade":
 #         with st.expander("🚨 Prestadores com aumento relevante de quantidade e valor", expanded=False):
 #             st.caption(
 #                 "Critério (as 5 condições precisam valer juntas): qtde do procedimento no mês atual "
-#                 "> 50, aumento de valor pago > R$ 1.500,00 em relação ao mês anterior, variação de "
+#                 "> 50, aumento de valor autorizado > R$ 1.500,00 em relação ao mês anterior, variação de "
 #                 "pelo menos 50% tanto na qtde quanto no valor, e variação do FASE de pelo menos 50% "
 #                 "entre os dois meses. Qtde e valor usam números absolutos (qtde de guias e R$ pago) — "
 #                 "o FASE é calculado no mesmo recorte (prestador + especialidade + procedimento), um "
@@ -1741,7 +1749,10 @@ elif st.session_state.pagina == "severidade":
                     "significa que o corte praticou exatamente o esperado pela taxa nacional; acima "
                     "de 10, mais severo; abaixo de 10, menos severo.) Não considera valores em R$.  \n"
                     "FASE = (qtd procedimentos nacional ÷ qtd vidas nacional) × qtd vidas em utilização  \n"
-                    "QP = qtd de procedimentos"
+                    "QP = qtd de procedimentos  \n"
+                    "Valor Autorizado = soma do VL_PAGO apenas dos procedimentos com status "
+                    "**Com Restrição** ou **Sem Restrição** (cancelados, negados e demais status "
+                    "não entram no valor, mas continuam contando em QP, vidas e uso)."
                 )
 
                 st.caption(
@@ -3949,7 +3960,7 @@ elif st.session_state.pagina == "severidade":
                             ("qtd_usuarios", "Qtde de vidas", ""),
                             ("soma_uso", "Soma de uso", ""),
                             ("uso_por_vida", "Uso por vida", ""),
-                            ("soma_valor", "Valor pago (R$)", "R$ "),
+                            ("soma_valor", "Valor Autorizado (R$)", "R$ "),
                             ("cs", "CS (Coeficiente de Severidade)", ""),
                         ]
                         # Quantos gráficos por linha (3 = 2 linhas de 3; 6 = tudo numa linha só).
@@ -3977,7 +3988,7 @@ elif st.session_state.pagina == "severidade":
                 "\n"
                 "**I1 — Dependência de procedimento único (peso 20%)**  \n"
                 "Mede o quanto a QUANTIDADE DE USO do prestador está concentrada num "
-                "ÚNICO tipo de procedimento (não olha valor pago aqui, só quantidade). Se, "
+                "ÚNICO tipo de procedimento (não olha valor autorizado aqui, só quantidade). Se, "
                 "por exemplo, 80% de todo o uso do prestador vem de um só procedimento, "
                 "isso é sinal de alerta — pode indicar prática pouco diversificada ou "
                 "dependência de um código que, se mudar de regra, derruba o prestador "
@@ -3993,7 +4004,7 @@ elif st.session_state.pagina == "severidade":
                 "nota 0 = até a própria mediana.\n"
                 "\n"
                 "**I3 — Exposição financeira / Custo Médio do Procedimento (peso 15%)**  \n"
-                "Compara o Custo Médio do Procedimento do prestador (valor pago ÷ "
+                "Compara o Custo Médio do Procedimento do prestador (valor autorizado ÷ "
                 "quantidade de procedimentos) com a mediana de prestadores da MESMA "
                 "especialidade e do MESMO cluster. Custo Médio muito acima da mediana pode "
                 "indicar cobrança de procedimentos mais caros que o padrão do grupo "
@@ -4030,7 +4041,7 @@ elif st.session_state.pagina == "severidade":
                 "Entre os 25% com MAIS pacientes do cluster → nota 0 (porte grande)  \n"
                 "Ou seja: quanto MENOS pacientes o prestador tem, comparado aos pares do "
                 "mesmo cluster, MAIOR a nota de porte — um prestador pequeno mas que já "
-                "passou pelo piso de materialidade (tem valor pago relevante) é visto como "
+                "passou pelo piso de materialidade (tem valor autorizado relevante) é visto como "
                 "mais atípico/concentrado dentro do cluster do que um prestador grande com "
                 "volume proporcional de pacientes.\n"
                 "\n"
@@ -4045,7 +4056,7 @@ elif st.session_state.pagina == "severidade":
                 "nota 0 = bem diversificado (até 60% nos top-3).\n"
                 "\n"
                 "**I7 — Dependência de pacientes (peso 10%)**  \n"
-                "Mede que fatia do valor pago do prestador vem de um pequeno grupo de "
+                "Mede que fatia do valor autorizado do prestador vem de um pequeno grupo de "
                 "pacientes específicos (os 10% de pacientes que mais geraram valor pra "
                 "ele, ou os 1-2 principais se ele tiver menos de 10 pacientes no total). "
                 "Alta dependência de poucos pacientes é um risco de concentração — se esses "
@@ -4067,7 +4078,7 @@ elif st.session_state.pagina == "severidade":
                 "Composto < 25 → ✅ Sem alerta  \n"
                 "\n"
                 "Duas regras podem alterar essa classificação \"natural\" pelo Composto:  \n"
-                "**Piso de materialidade (Y):** olha o valor total pago ao prestador no "
+                "**Piso de materialidade (Y):** olha o valor autorizado total do prestador no "
                 "período (piso = mediana do cluster, com mínimo configurável, padrão R$ 5.000) "
                 "e também a quantidade de procedimentos (piso = mediana do cluster, com mínimo "
                 "configurável). Na lógica **valor E quantidade** (padrão), o prestador só vira "
@@ -4284,7 +4295,7 @@ elif st.session_state.pagina == "severidade":
                             _piso_logica_atual_temp = "E" if _piso_logica_rotulo_temp == "valor E quantidade" else "OU"
                         st.caption(
                             "O piso de valor (Y) é o maior entre o valor mínimo acima e a mediana de "
-                            "valor pago do cluster do prestador; o de quantidade é o maior entre a "
+                            "valor autorizado do cluster do prestador; o de quantidade é o maior entre a "
                             "quantidade mínima acima e a mediana de procedimentos do cluster (nos dois "
                             "casos usa a mediana nacional se o cluster tiver menos prestadores que o "
                             "número mínimo informado). **valor E quantidade**: o prestador só é "
@@ -4895,7 +4906,7 @@ elif st.session_state.pagina == "severidade":
                             "composto", "I1", "I2", "I3", "I4", "I5", "I6", "I7", "soma_valor",
                         ]].rename(columns={
                             "NOME_PRESTADOR": "Prestador", "CIDADE_PRESTADOR": "Cidade",
-                            "composto": "Composto", "soma_valor": "Valor pago",
+                            "composto": "Composto", "soma_valor": "Valor Autorizado",
                         })
                         st.dataframe(
                             _tabela_bloco_temp, hide_index=True, use_container_width=True,
@@ -4904,7 +4915,7 @@ elif st.session_state.pagina == "severidade":
                                     "Composto", min_value=0, max_value=100, format="%.0f",
                                     help=_HELP_COLUNAS_RISCO_TEMP["Composto"],
                                 ),
-                                "Valor pago": st.column_config.NumberColumn("Valor pago", format="R$ %.0f"),
+                                "Valor Autorizado": st.column_config.NumberColumn("Valor Autorizado", format="R$ %.0f"),
                                 **{
                                     _col_ind_temp: st.column_config.NumberColumn(
                                         _col_ind_temp, format="%.0f", help=_HELP_COLUNAS_RISCO_TEMP[_col_ind_temp],
@@ -4937,7 +4948,7 @@ elif st.session_state.pagina == "severidade":
                                     st.markdown(f"**{_titulo_bloco_prest_temp}**")
                                 if _linha_risco_temp["abaixo_do_piso"]:
                                     st.info(
-                                        f"Abaixo do piso de materialidade — valor pago total "
+                                        f"Abaixo do piso de materialidade — valor autorizado total "
                                         f"{fmt_brl(_linha_risco_temp['soma_valor'])} (piso "
                                         f"{fmt_brl(_linha_risco_temp['Y'])}) e "
                                         f"{fmt_int(_linha_risco_temp['qtd_procedimentos'])} procedimentos "
@@ -5003,7 +5014,7 @@ elif st.session_state.pagina == "severidade":
                                 st.caption(
                                     f"Vidas: {fmt_int(_linha_risco_temp['qtd_usuarios'])} · "
                                     f"Procedimentos: {fmt_int(_linha_risco_temp['qtd_procedimentos'])} · "
-                                    f"Valor pago: {fmt_brl(_linha_risco_temp['soma_valor'])} · "
+                                    f"Valor Autorizado: {fmt_brl(_linha_risco_temp['soma_valor'])} · "
                                     f"Composto final: **{_linha_risco_temp['composto']:.1f}** → "
                                     f"{_linha_risco_temp['classificacao_emoji']}"
                                 )
