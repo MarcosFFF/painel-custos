@@ -1300,6 +1300,9 @@ elif st.session_state.pagina == "severidade":
     # página quanto a da aba Ranking — ocultas por padrão (layout mais limpo). Troque pra True pra
     # exibir de volta.
     MOSTRAR_METRICAS_TEMP = False
+    # Lista de prestadores do Ranking (um expansor por prestador, com o resumo no título) — oculta por
+    # padrão. Troque pra True pra exibir de volta. PDF e e-mail do Ranking continuam disponíveis.
+    MOSTRAR_LISTA_PRESTADORES_TEMP = False
     col_titulo_sev, col_atualizar_sev = st.columns([5, 1])
     with col_titulo_sev:
         st.subheader("🕵️ Severidade")
@@ -3462,7 +3465,7 @@ elif st.session_state.pagina == "severidade":
                                 else:
                                     st.error(f"Erro ao enviar e-mail: {_erro_email_resumo_temp}")
 
-                    if _sufixo_aba_temp == "_ranking" and not rank_temp.empty:
+                    if MOSTRAR_LISTA_PRESTADORES_TEMP and _sufixo_aba_temp == "_ranking" and not rank_temp.empty:
                         st.caption(
                             "Abra um prestador abaixo e clique em \"Ver detalhamento por "
                             "procedimento\" (mesmas colunas de antes, uma linha por procedimento "
