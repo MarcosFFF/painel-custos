@@ -1296,6 +1296,10 @@ elif st.session_state.pagina == "severidade":
     # logo antes da chamada que desenha a grade). Deixe True aqui pra forçar ela sempre visível,
     # mesmo sem prestador selecionado.
     MOSTRAR_GRADE_CS_PROCEDIMENTO_TEMP = False
+    # Faixas de métricas (Procedimentos/Uso total/Vidas/Uso por proced./Uso por vida), tanto a da
+    # página quanto a da aba Ranking — ocultas por padrão (layout mais limpo). Troque pra True pra
+    # exibir de volta.
+    MOSTRAR_METRICAS_TEMP = False
     col_titulo_sev, col_atualizar_sev = st.columns([5, 1])
     with col_titulo_sev:
         st.subheader("🕵️ Severidade")
@@ -1413,16 +1417,17 @@ elif st.session_state.pagina == "severidade":
     if df_filtrado.empty:
         st.info("Nenhum dado para esses filtros.")
         st.stop()
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Procedimentos", fmt_int(df_filtrado["qtd_procedimentos"].sum()))
-    m2.metric("Uso total", fmt_int(df_filtrado["soma_uso"].sum()))
-    _uso_total = df_filtrado["soma_uso"].sum()
-    _qtd_total = df_filtrado["qtd_procedimentos"].sum()
-    _usuarios_total = usuarios_filtrado["CD_USUARIO"].nunique()
-    m3.metric("Qtde de vidas", fmt_int(_usuarios_total))
-    m4.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
-    m5.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
-    st.divider()
+    if MOSTRAR_METRICAS_TEMP:
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Procedimentos", fmt_int(df_filtrado["qtd_procedimentos"].sum()))
+        m2.metric("Uso total", fmt_int(df_filtrado["soma_uso"].sum()))
+        _uso_total = df_filtrado["soma_uso"].sum()
+        _qtd_total = df_filtrado["qtd_procedimentos"].sum()
+        _usuarios_total = usuarios_filtrado["CD_USUARIO"].nunique()
+        m3.metric("Qtde de vidas", fmt_int(_usuarios_total))
+        m4.metric("Uso por procedimento", fmt_float2(_uso_total / _qtd_total) if _qtd_total else "—")
+        m5.metric("Uso por vida", fmt_float2(_uso_total / _usuarios_total) if _usuarios_total else "—")
+        st.divider()
     # Ranking + Índice de Risco. (Resumo e Projeção de Credenciamento ocultas — o
     # corpo de Resumo está comentado logo abaixo, em "with tab_resumo:"; o de
     # Projeção de Credenciamento foi removido junto com sua aba a pedido do
@@ -1668,35 +1673,44 @@ elif st.session_state.pagina == "severidade":
         _prestador_fixo_temp, _mostrar_calculo_qp_temp,
     ) in _config_abas_cs_temp:
         with _tab_obj_cs_temp:
-            st.markdown(f"#### {_titulo_aba_temp}")
+            # Título + textos explicativos viraram um expansor (fechado por padrão) — a aba já se
+            # chama "📊 Ranking de Severidade", então o título solto era redundante.
+            with st.expander(_titulo_aba_temp, expanded=False):
+                if _sufixo_aba_temp == "_ranking":
+                    st.caption(
+                        "Cada LINHA aqui é um prestador (não um procedimento) — soma todos os "
+                        "procedimentos que ele faz dentro dos filtros atuais (Procedimento, "
+                        "Prestador, UF, Região, Cidade, Cluster). \"Qtde por prestador Nacional/"
+                        "Cidade\", FASE, CS e CS da Cidade são somados procedimento a "
+                        "procedimento (cada um com sua própria taxa nacional) e só depois viram "
+                        "um número só por prestador — não é média dos procedimentos. \"Qtde por "
+                        "prestador - Cidade\"/\"CS da Cidade\" comparam cada prestador com a "
+                        "PRÓPRIA cidade dele (cada linha pode ser de uma cidade diferente). Use "
+                        "\"Ranquear por\" (no expansor Filtros) pra reordenar a grade pela métrica "
+                        "que interessar — sempre do maior pro menor."
+                    )
 
-            if _sufixo_aba_temp == "_ranking":
                 st.caption(
-                    "Cada LINHA aqui é um prestador (não um procedimento) — soma todos os "
-                    "procedimentos que ele faz dentro dos filtros atuais (Procedimento, "
-                    "Prestador, UF, Região, Cidade, Cluster). \"Qtde por prestador Nacional/"
-                    "Cidade\", FASE, CS e CS da Cidade são somados procedimento a "
-                    "procedimento (cada um com sua própria taxa nacional) e só depois viram "
-                    "um número só por prestador — não é média dos procedimentos. \"Qtde por "
-                    "prestador - Cidade\"/\"CS da Cidade\" comparam cada prestador com a "
-                    "PRÓPRIA cidade dele (cada linha pode ser de uma cidade diferente). Use "
-                    "\"Ranquear por\" (abaixo dos filtros) pra reordenar a grade pela métrica "
-                    "que interessar — sempre do maior pro menor."
+                    "CS (Coeficiente de Severidade) = (QP ÷ FASE) × 10 (Se o resultado igual a 10 "
+                    "significa que o corte praticou exatamente o esperado pela taxa nacional; acima "
+                    "de 10, mais severo; abaixo de 10, menos severo.) Não considera valores em R$.  \n"
+                    "FASE = (qtd procedimentos nacional ÷ qtd vidas nacional) × qtd vidas em utilização  \n"
+                    "QP = qtd de procedimentos"
                 )
 
-            st.caption(
-                "CS (Coeficiente de Severidade) = (QP ÷ FASE) × 10 (Se o resultado igual a 10 "
-                "significa que o corte praticou exatamente o esperado pela taxa nacional; acima "
-                "de 10, mais severo; abaixo de 10, menos severo.) Não considera valores em R$.  \n"
-                "FASE = (qtd procedimentos nacional ÷ qtd vidas nacional) × qtd vidas em utilização  \n"
-                "QP = qtd de procedimentos"
-            )
+                st.caption(
+                    "**Alerta de volume**  \n"
+                    "🚩 bandeirinha vermelha: volume ≥ 5× a média por prestador (alerta "
+                    "forte)  \n"
+                    "⚠️ triângulo amarelo: volume ≥ 2× a média por prestador (atenção "
+                    "moderada)"
+                )
 
-            st.caption(
-                "Selecione ao menos um filtro acima (procedimento, prestador, UF, região, cidade "
-                "ou cluster) para ver a dispersão de severidade — sem nenhum filtro, o corte "
-                "comparado se aproxima da própria base nacional e o CS fica pouco informativo."
-            )
+                st.caption(
+                    "Selecione ao menos um filtro (procedimento, prestador, UF, região, cidade "
+                    "ou cluster) para ver a dispersão de severidade — sem nenhum filtro, o corte "
+                    "comparado se aproxima da própria base nacional e o CS fica pouco informativo."
+                )
 
 
             # Mapa código -> nome do procedimento, dentro dos filtros ativos. Sem restrição
@@ -1876,14 +1890,15 @@ elif st.session_state.pagina == "severidade":
                 _uso_geral_temp = df_temp["soma_uso"].sum()
                 _vidas_geral_temp = usuarios_temp["CD_USUARIO"].nunique()
 
-                mt1, mt2, mt3, mt4 = st.columns(4)
-                mt1.metric("Qtde de procedimentos", fmt_int(_qtd_geral_temp))
-                mt2.metric("Qtde de vidas", fmt_int(_vidas_geral_temp))
-                mt3.metric("Soma de uso", fmt_int(_uso_geral_temp))
-                mt4.metric(
-                    "Uso por vida",
-                    fmt_float2(_uso_geral_temp / _vidas_geral_temp) if _vidas_geral_temp else "—",
-                )
+                if MOSTRAR_METRICAS_TEMP:
+                    mt1, mt2, mt3, mt4 = st.columns(4)
+                    mt1.metric("Qtde de procedimentos", fmt_int(_qtd_geral_temp))
+                    mt2.metric("Qtde de vidas", fmt_int(_vidas_geral_temp))
+                    mt3.metric("Soma de uso", fmt_int(_uso_geral_temp))
+                    mt4.metric(
+                        "Uso por vida",
+                        fmt_float2(_uso_geral_temp / _vidas_geral_temp) if _vidas_geral_temp else "—",
+                    )
 
                 # ---- período considerado (data real, não só o mês) — só aparece quando algum
                 # filtro está ativo (Mês/Plano/Especialidade da página ou os 6 desta aba), pra
@@ -2544,13 +2559,6 @@ elif st.session_state.pagina == "severidade":
                     or _sufixo_aba_temp == "_ranking"
                 )
                 if _mostrar_grade_cs_temp:
-                    st.caption(
-                        "**Alerta de volume**  \n"
-                        "🚩 bandeirinha vermelha: volume ≥ 5× a média por prestador (alerta "
-                        "forte)  \n"
-                        "⚠️ triângulo amarelo: volume ≥ 2× a média por prestador (atenção "
-                        "moderada)"
-                    )
                     # Na aba "📊 Ranking" a grade somada por prestador foi substituída pela
                     # lista de expanders logo abaixo (cada prestador já mostra seu resumo no
                     # próprio título do expander) — nas outras abas a grade continua igual.
