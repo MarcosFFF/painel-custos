@@ -681,6 +681,13 @@ def _prestadores_excesso_temp(
     linhas["vidas"] = linhas["vidas"].fillna(0)
     return {"mes_atual": mes_atual, "mes_ant": mes_ant, "dia_corte": dia_corte,
             "n_prestadores": n_prestadores, "top": top, "linhas": linhas}
+def _botao_enviar_email_aba_temp(chave, nome_aba, habilitado=True):
+    """Botão "Enviar e-mail" de uma aba de prestadores. PROVISÓRIO: só mostra o botão — o fluxo de envio
+    (destinatários, conteúdo, anexo) ainda vai ser definido. As credenciais SMTP já existem nos Secrets
+    (EMAIL_REMETENTE / EMAIL_SENHA_APP), usadas por enviar_email_resumo_ranking_temp()."""
+    if st.button("📧 Enviar e-mail", key=chave, disabled=not habilitado,
+                 help="Envia por e-mail as informações e detalhes desta aba."):
+        st.info(f"Botão da aba {nome_aba} criado — o fluxo de envio de e-mail ainda será configurado.")
 def _risco_pontuar_faixas_temp(serie, cortes, notas):
     """cortes = [c1,c2,c3,c4] (4 fronteiras -> 5 faixas), notas = [n0,n1,n2,n3,n4].
     Mesma convenção em todo o Índice de Risco: valor < c1 -> n0 | < c2 -> n1 | ...
@@ -4282,6 +4289,7 @@ elif st.session_state.pagina == "severidade":
                 "Preciso de pelo menos 2 meses nos filtros atuais para comparar. Ajuste Mês/Plano/"
                 "Especialidade/Período na barra lateral."
             )
+            _botao_enviar_email_aba_temp("btn_email_prestadores_gerais_temp", "Prestadores - Gerais", habilitado=False)
         else:
             _ma_temp, _mb_temp = _res_prest_temp["mes_ant"], _res_prest_temp["mes_atual"]
             _lbl_a_temp, _lbl_b_temp = label_mes(_ma_temp), label_mes(_mb_temp)
@@ -4308,6 +4316,9 @@ elif st.session_state.pagina == "severidade":
                     f"Nenhum prestador atende aos critérios (mais de {PRIORIT_MIN_PROC_TEMP} procedimentos das "
                     "especialidades prioritárias em um dos meses e CS em alta) nesse comparativo."
                 )
+            _botao_enviar_email_aba_temp(
+                "btn_email_prestadores_gerais_temp", "Prestadores - Gerais", habilitado=not _top_temp.empty,
+            )
             for _pos_temp, _r_temp in enumerate(_top_temp.itertuples(index=False), start=1):
                 _nome_temp = (
                     str(_r_temp.nome) if pd.notna(_r_temp.nome) and str(_r_temp.nome).strip()
@@ -4461,6 +4472,7 @@ elif st.session_state.pagina == "severidade":
 
         if _res_exc_temp is None:
             st.info("Sem dados nos filtros atuais.")
+            _botao_enviar_email_aba_temp("btn_email_prestadores_excesso_temp", "Prestadores - Excesso", habilitado=False)
         else:
             _la_exc_temp = label_mes(_res_exc_temp["mes_atual"])
             _lb_exc_temp = label_mes(_res_exc_temp["mes_ant"]) if _res_exc_temp["mes_ant"] else None
@@ -4481,6 +4493,9 @@ elif st.session_state.pagina == "severidade":
                     + (f" — mostrando os {len(_top_exc_temp)} com mais procedimentos acima do normal."
                        if _res_exc_temp["n_prestadores"] > len(_top_exc_temp) else ".")
                 )
+            _botao_enviar_email_aba_temp(
+                "btn_email_prestadores_excesso_temp", "Prestadores - Excesso", habilitado=not _top_exc_temp.empty,
+            )
             for _pos_exc_temp, _r_exc_temp in enumerate(_top_exc_temp.itertuples(index=False), start=1):
                 _nome_exc_temp = (
                     str(_r_exc_temp.nome) if pd.notna(_r_exc_temp.nome) and str(_r_exc_temp.nome).strip()
