@@ -1482,11 +1482,11 @@ elif st.session_state.pagina == "severidade":
     # trazida de volta em 23/09, reconstruída a partir de um backup — ver
     # comentário em "with tab_risco_temp:" logo abaixo.)
     _labels_abas_temp = [
-        "📊 Ranking de Severidade", "🎯 Índice de Risco",
+        "📊 Ranking de Severidade", "🎯 Índice de Risco", "📖 Como ler o Ranking",
     ]
     _abas_criadas_temp = st.tabs(_labels_abas_temp)
-    (tab_ranking_temp, tab_risco_temp) = (
-        _abas_criadas_temp[0], _abas_criadas_temp[1],
+    (tab_ranking_temp, tab_risco_temp, tab_como_ler_temp) = (
+        _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2],
     )
     # (tab_obj, título exibido, lista de códigos que restringe a aba — None = todos os
     # procedimentos, sufixo pra deixar as keys dos widgets únicas por aba, nome do prestador
@@ -1719,9 +1719,9 @@ elif st.session_state.pagina == "severidade":
         _prestador_fixo_temp, _mostrar_calculo_qp_temp,
     ) in _config_abas_cs_temp:
         with _tab_obj_cs_temp:
-            # Título + textos explicativos viraram um expansor (fechado por padrão) — a aba já se
-            # chama "📊 Ranking de Severidade", então o título solto era redundante.
-            with st.expander(_titulo_aba_temp, expanded=False):
+            # Título + textos explicativos agora ficam numa aba própria ("📖 Como ler o Ranking"),
+            # em vez do expansor — a aba do Ranking começa direto nos dados.
+            with tab_como_ler_temp:
                 if _sufixo_aba_temp == "_ranking":
                     st.caption(
                         "Cada LINHA aqui é um prestador (não um procedimento) — soma todos os "
@@ -1732,7 +1732,7 @@ elif st.session_state.pagina == "severidade":
                         "um número só por prestador — não é média dos procedimentos. \"Qtde por "
                         "prestador - Cidade\"/\"CS da Cidade\" comparam cada prestador com a "
                         "PRÓPRIA cidade dele (cada linha pode ser de uma cidade diferente). Use "
-                        "\"Ranquear por\" (no expansor Filtros) pra reordenar a grade pela métrica "
+                        "\"Ranquear por\" (na barra lateral, em Filtros) pra reordenar a grade pela métrica "
                         "que interessar — sempre do maior pro menor."
                     )
 
