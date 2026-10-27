@@ -47,6 +47,12 @@ st.markdown(
     [data-testid="stSidebarCollapseButton"],
     [data-testid="stSidebarCollapsedControl"],
     [data-testid="collapsedControl"] { display: none !important; }
+    /* Layout compacto: tudo (cabeçalho, abas e gráficos do histórico) numa tela só. */
+    .block-container { padding-top: 2.75rem !important; padding-bottom: 0.5rem !important; }
+    [data-testid="stMainBlockContainer"] { padding-top: 2.75rem !important; padding-bottom: 0.5rem !important; }
+    [data-testid="stMain"] [data-testid="stVerticalBlock"] { gap: 0.45rem !important; }
+    [data-testid="stMain"] hr { margin: 0.3rem 0 !important; }
+    [data-testid="stMain"] [data-testid="stTabs"] [role="tab"] { padding-top: 0.25rem; padding-bottom: 0.25rem; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -973,17 +979,25 @@ if "lancamentos" not in st.session_state:
 # ============================================================
 # CABEÇALHO
 # ============================================================
-titulo_com_logo()
+# Cabeçalho compacto numa linha só: logo | título | usuário | Sair (antes eram 2 linhas + divisor).
 nome_exibicao = st.session_state.get("nome_usuario") or st.session_state.user_email
 badge = "🟢 Administrador" if is_admin else "🔵 Visualização"
-col_info, col_sair = st.columns([5, 1])
-with col_info:
+_h_logo, _h_titulo, _h_user, _h_sair = st.columns([1, 6, 3, 1], vertical_alignment="center")
+with _h_logo:
+    if LOGO_PATH:
+        st.image(LOGO_PATH, width=100)
+with _h_titulo:
+    st.markdown(
+        "<div style='font-size:1.6rem;font-weight:700;line-height:1.2'>"
+        "Painel de Gestão de Sinistro - Odonto</div>",
+        unsafe_allow_html=True,
+    )
+with _h_user:
     st.caption(f"**{nome_exibicao}** · {badge}")
-with col_sair:
+with _h_sair:
     if st.button("Sair", use_container_width=True):
         fazer_logout()
         st.rerun()
-st.divider()
 # ============================================================
 # NAVEGAÇÃO PRINCIPAL — Projeção × Severidade
 # ============================================================
@@ -1000,7 +1014,8 @@ with nav2:
                  type="primary" if st.session_state.pagina == "severidade" else "secondary"):
         st.session_state.pagina = "severidade"
         st.rerun()
-st.divider()
+if st.session_state.pagina != "severidade":
+    st.divider()
 # ============================================================
 # PÁGINA: PROJEÇÃO
 # ============================================================
@@ -1325,11 +1340,14 @@ elif st.session_state.pagina == "severidade":
     MOSTRAR_EMAIL_RESUMO_TEMP = False
     # Bloco "Onde estão as severidades" (gráficos de dispersão CS × volume) — oculto por padrão.
     MOSTRAR_DISPERSAO_TEMP = False
-    col_titulo_sev, col_atualizar_sev = st.columns([5, 1])
-    with col_titulo_sev:
-        st.subheader("🕵️ Severidade")
-    with col_atualizar_sev:
-        if st.button("🔄 Recarregar", use_container_width=True):
+    # Histórico por mês: altura de cada gráfico (px) e quantos por linha (3 = 2 linhas; 6 = 1 linha).
+    # Se a tela ainda for curta, diminua a altura ou use 6 por linha.
+    ALTURA_GRAFICO_HIST_TEMP = 200
+    GRAFICOS_POR_LINHA_HIST_TEMP = 3
+    # Título "Severidade" removido (o botão de navegação acima já diz isso) e o "Recarregar" foi
+    # para o topo da barra lateral — libera uma linha inteira na tela principal.
+    with st.sidebar:
+        if st.button("🔄 Recarregar dados", use_container_width=True):
             carregar_base_severidade.clear()
             st.rerun()
     agregado, base_usuarios, aviso_carga = carregar_base_severidade(".")
@@ -3858,7 +3876,6 @@ elif st.session_state.pagina == "severidade":
                 # ---- histórico por mês: 5 gráficos (procedimentos, vidas, soma de uso, uso por
                 # vida e valor). Segue os filtros ativos (df_temp/usuarios_temp). Não depende do CS,
                 # então aparece mesmo sem nenhum filtro da aba selecionado. ----
-                st.divider()
                 st.markdown("**Histórico por mês**")
                 if "MES" not in df_temp.columns:
                     st.info("Sem coluna de mês nos dados pra montar o histórico.")
@@ -3914,8 +3931,9 @@ elif st.session_state.pagina == "severidade":
                                 df_hist_temp, x="mes_rotulo", y=coluna, markers=True, title=titulo,
                             )
                             fig_mensal_temp.update_layout(
-                                height=250, margin=dict(l=10, r=10, t=40, b=10),
+                                height=ALTURA_GRAFICO_HIST_TEMP, margin=dict(l=10, r=10, t=32, b=8),
                                 xaxis_title=None, yaxis_title=None,
+                                title=dict(font=dict(size=13)),
                             )
                             if prefixo:
                                 fig_mensal_temp.update_yaxes(tickprefix=prefixo)
@@ -3926,20 +3944,22 @@ elif st.session_state.pagina == "severidade":
                                 key=f"grafico_hist_{coluna}_temp{_sufixo_aba_temp}",
                             )
 
-                        _hist_c1_temp, _hist_c2_temp, _hist_c3_temp = st.columns(3)
-                        with _hist_c1_temp:
-                            _grafico_mensal_temp("qtd_procedimentos", "Qtde de procedimentos")
-                        with _hist_c2_temp:
-                            _grafico_mensal_temp("qtd_usuarios", "Qtde de vidas")
-                        with _hist_c3_temp:
-                            _grafico_mensal_temp("soma_uso", "Soma de uso")
-                        _hist_c4_temp, _hist_c5_temp, _hist_c6_temp = st.columns(3)
-                        with _hist_c4_temp:
-                            _grafico_mensal_temp("uso_por_vida", "Uso por vida")
-                        with _hist_c5_temp:
-                            _grafico_mensal_temp("soma_valor", "Valor pago (R$)", prefixo="R$ ")
-                        with _hist_c6_temp:
-                            _grafico_mensal_temp("cs", "CS (Coeficiente de Severidade)")
+                        _graficos_hist_temp = [
+                            ("qtd_procedimentos", "Qtde de procedimentos", ""),
+                            ("qtd_usuarios", "Qtde de vidas", ""),
+                            ("soma_uso", "Soma de uso", ""),
+                            ("uso_por_vida", "Uso por vida", ""),
+                            ("soma_valor", "Valor pago (R$)", "R$ "),
+                            ("cs", "CS (Coeficiente de Severidade)", ""),
+                        ]
+                        # Quantos gráficos por linha (3 = 2 linhas de 3; 6 = tudo numa linha só).
+                        for _ini_hist_temp in range(0, len(_graficos_hist_temp), GRAFICOS_POR_LINHA_HIST_TEMP):
+                            _lote_hist_temp = _graficos_hist_temp[_ini_hist_temp:_ini_hist_temp + GRAFICOS_POR_LINHA_HIST_TEMP]
+                            for _col_hist_temp, (_c_h_temp, _t_h_temp, _p_h_temp) in zip(
+                                st.columns(GRAFICOS_POR_LINHA_HIST_TEMP), _lote_hist_temp
+                            ):
+                                with _col_hist_temp:
+                                    _grafico_mensal_temp(_c_h_temp, _t_h_temp, prefixo=_p_h_temp)
 
     with tab_risco_temp:
         st.markdown("#### 🎯 Índice de Risco do Prestador")
