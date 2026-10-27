@@ -1482,7 +1482,7 @@ elif st.session_state.pagina == "severidade":
     # trazida de volta em 23/09, reconstruída a partir de um backup — ver
     # comentário em "with tab_risco_temp:" logo abaixo.)
     _labels_abas_temp = [
-        "📊 Ranking de Severidade", "🎯 Índice de Risco", "📖 Como ler o Ranking",
+        "📊 Acompanhamento de Severidade", "🎯 Índice de Risco", "📖 Como ler o Ranking",
     ]
     _abas_criadas_temp = st.tabs(_labels_abas_temp)
     (tab_ranking_temp, tab_risco_temp, tab_como_ler_temp) = (
@@ -1495,7 +1495,7 @@ elif st.session_state.pagina == "severidade":
     # roda uma vez por item desta lista; hoje só a "📊 Ranking" usa esse corpo (a
     # "🎯 Índice de Risco" tem corpo próprio, fora desse loop — ver "with tab_risco_temp:").
     _config_abas_cs_temp = [
-        (tab_ranking_temp, "📊 Ranking de Severidade", None, "_ranking", None, False),
+        (tab_ranking_temp, "📊 Acompanhamento de Severidade", None, "_ranking", None, False),
     ]
     # ---------- RESUMO (mês vs. mês anterior, por variação % de uso) ----------
 #     with tab_resumo:
