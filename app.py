@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import html
+import re
 import os
 import io
 import glob
@@ -576,10 +577,17 @@ def _prestadores_aumento_cs_temp(
 # ---------- Aba "🚩 Prestadores - Excesso": procedimentos com volume muito acima do "normal" ----------
 EXCESSO_VOLUME_MINIMO_TEMP = 30   # piso de procedimentos no mês atual (evita sinalizar 6 contra média 1)
 EXCESSO_TOP_N_TEMP = 20           # quantos prestadores mostrar (ordenados pelo total de procedimentos acima do normal)
+# Prestadores que NUNCA aparecem na aba "Prestadores - Excesso" (nem no e-mail dela): (nome, cidade, UF), comparados
+# por texto normalizado (sem acento/maiúsculas). Cidade/UF em branco ("") = vale para qualquer cidade/UF.
+# Eles continuam entrando no cálculo do "normal" (média por prestador) — só saem da lista.
+PRESTADORES_EXCLUIDOS_EXCESSO_TEMP = (
+    ("ESTETIC ODONTOLOGIA ESPECIALIZADA", "RECIFE", "PE"),
+)
 @st.cache_data(show_spinner="Procurando procedimentos com volume muito acima do normal...")
 def _prestadores_excesso_temp(
     _df, _usuarios, nacional, chave_filtros,
     limiar=LIMIAR_VOLUME_PRIORIDADE_TEMP, volume_minimo=EXCESSO_VOLUME_MINIMO_TEMP, top_n=EXCESSO_TOP_N_TEMP,
+    excluir=PRESTADORES_EXCLUIDOS_EXCESSO_TEMP,
 ):
     """
     Procedimentos em que um prestador, no MÊS MAIS RECENTE dos filtros (até o dia de corte = maior dia
@@ -612,6 +620,21 @@ def _prestadores_excesso_temp(
     base["razao"] = np.where(base["normal"] > 0, base["qp"] / base["normal"], np.nan)
     atual = base[base["MES"] == mes_atual]
     flag = atual[(atual["razao"] >= limiar) & (atual["qp"] >= volume_minimo)].copy()
+    # --- prestadores excluídos da lista (continuam no cálculo do "normal" acima) ---
+    cods_excl = set()
+    for nome_x, cidade_x, uf_x in (excluir or ()):
+        alvo = normalizar_texto(nome_x)
+        cats = [c for c in d["NOME_PRESTADOR"].dropna().unique() if normalizar_texto(c) == alvo]
+        if not cats:
+            continue
+        sub = d[d["NOME_PRESTADOR"].isin(cats)]
+        if cidade_x:
+            sub = sub[sub["CIDADE_PRESTADOR"].astype(str).map(normalizar_texto) == normalizar_texto(cidade_x)]
+        if uf_x:
+            sub = sub[sub["UF"].astype(str).str.upper() == str(uf_x).upper()]
+        cods_excl |= set(sub["CD_PRESTADOR"].dropna().unique())
+    if cods_excl:
+        flag = flag[~flag["CD_PRESTADOR"].isin(cods_excl)]
     if flag.empty:
         return {"mes_atual": mes_atual, "mes_ant": mes_ant, "dia_corte": dia_corte, "n_prestadores": 0,
                 "top": pd.DataFrame(), "linhas": pd.DataFrame()}
@@ -681,13 +704,120 @@ def _prestadores_excesso_temp(
     linhas["vidas"] = linhas["vidas"].fillna(0)
     return {"mes_atual": mes_atual, "mes_ant": mes_ant, "dia_corte": dia_corte,
             "n_prestadores": n_prestadores, "top": top, "linhas": linhas}
-def _botao_enviar_email_aba_temp(chave, nome_aba, habilitado=True):
-    """Botão "Enviar e-mail" de uma aba de prestadores. PROVISÓRIO: só mostra o botão — o fluxo de envio
-    (destinatários, conteúdo, anexo) ainda vai ser definido. As credenciais SMTP já existem nos Secrets
-    (EMAIL_REMETENTE / EMAIL_SENHA_APP), usadas por enviar_email_resumo_ranking_temp()."""
-    if st.button("📧 Enviar e-mail", key=chave, disabled=not habilitado,
-                 help="Envia por e-mail as informações e detalhes desta aba."):
-        st.info(f"Botão da aba {nome_aba} criado — o fluxo de envio de e-mail ainda será configurado.")
+# ---------- E-mail das abas "Prestadores - Gerais" e "Prestadores - Excesso" ----------
+def enviar_email_prestadores_temp(destinatarios, assunto, corpo_html):
+    """Mesmas credenciais/servidor SMTP de enviar_email_projecao (Secrets EMAIL_REMETENTE / EMAIL_SENHA_APP /
+    EMAIL_SMTP_HOST / EMAIL_SMTP_PORT); os destinatários vêm do campo na tela."""
+    try:
+        remetente = st.secrets["EMAIL_REMETENTE"]
+        senha = st.secrets["EMAIL_SENHA_APP"]
+        smtp_host = st.secrets.get("EMAIL_SMTP_HOST", "smtp.gmail.com")
+        smtp_port = int(st.secrets.get("EMAIL_SMTP_PORT", 587))
+    except KeyError as e:
+        return False, f"Faltou configurar o segredo {e} em Settings → Secrets do Streamlit Cloud."
+    if not destinatarios:
+        return False, "Informe pelo menos um e-mail de destino válido."
+    msg = MIMEMultipart()
+    msg["From"] = remetente
+    msg["To"] = ", ".join(destinatarios)
+    msg["Subject"] = assunto
+    msg.attach(MIMEText(corpo_html, "html", "utf-8"))
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as servidor:
+            servidor.starttls()
+            servidor.login(remetente, senha)
+            servidor.sendmail(remetente, destinatarios, msg.as_string())
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+def _md_para_html_temp(texto):
+    """Escapa o texto e converte **negrito** (usado nas justificativas) em <strong>."""
+    return re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", html.escape(str(texto)))
+def _df_para_html_temp(df):
+    # Estilo vem do bloco <style> do e-mail (classe "t") — sem estilo inline por célula, pra o HTML ficar
+    # pequeno (o Gmail corta mensagens acima de ~102 KB).
+    th = "".join(f"<th>{html.escape(str(c))}</th>" for c in df.columns)
+    linhas = "".join(
+        "<tr>" + "".join(f"<td>{html.escape(str(v))}</td>" for v in row) + "</tr>"
+        for row in df.itertuples(index=False)
+    )
+    return f'<table class="t"><tr>{th}</tr>{linhas}</table>'
+def _corpo_email_prestadores_temp(titulo, cabecalho, itens, rodape=""):
+    """itens = lista de dicts {titulo, quadro (DataFrame), justificativa (lista de textos), tabelas [(título, DataFrame)]}."""
+    partes = [f'<p class="h1"><strong>{html.escape(titulo)}</strong></p>']
+    partes += [f'<p class="c">{_md_para_html_temp(c)}</p>' for c in cabecalho]
+    for it in itens:
+        partes.append(f'<p class="h2"><strong>{html.escape(it["titulo"])}</strong></p>')
+        if it.get("quadro") is not None:
+            partes.append(_df_para_html_temp(it["quadro"]))
+        if it.get("justificativa"):
+            partes.append('<p class="s"><strong>Justificativa</strong></p><ul>')
+            partes += [f"<li>{_md_para_html_temp(t)}</li>" for t in it["justificativa"]]
+            partes.append("</ul>")
+        for tit_tab, df_tab in it.get("tabelas", []):
+            partes.append(f'<p class="s"><strong>{html.escape(tit_tab)}</strong></p>')
+            partes.append(_df_para_html_temp(df_tab))
+    if rodape:
+        partes.append(f'<p class="r">{_md_para_html_temp(rodape)}</p>')
+    estilo = (
+        "<style>"
+        "body,div{font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a1a1a}"
+        "p{margin:0 0 6px 0}.h1{font-size:16px}.h2{font-size:15px;margin:16px 0 6px 0;padding-top:8px;border-top:1px solid #cfcfcf}"
+        ".c{color:#444}.s{margin:6px 0 2px 0}.r{margin-top:14px;color:#666;font-size:12px}"
+        "ul{margin:0 0 10px 18px;padding:0}"
+        "table.t{border-collapse:collapse;margin:4px 0 12px 0}"
+        "table.t th{border:1px solid #d0d0d0;padding:4px 8px;background:#f2f2f2;text-align:left;font-size:12px}"
+        "table.t td{border:1px solid #e0e0e0;padding:4px 8px;font-size:12px}"
+        "</style>"
+    )
+    return f"<html><head>{estilo}</head><body><div>" + "".join(partes) + "</div></body></html>"
+_EMAIL_VALIDO_TEMP = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+def _fluxo_email_aba_temp(chave, nome_aba, assunto, titulo_email, cabecalho, itens, rodape="", habilitado=True):
+    """Botão "📧 Enviar e-mail" da aba: abre um quadro com o campo de destinatários (já preenchido com
+    EMAIL_DESTINATARIO dos Secrets) e um botão de confirmação — o envio só acontece ao confirmar."""
+    k_aberto = f"_email_aberto_{chave}"
+    if st.button("📧 Enviar e-mail", key=f"btn_email_{chave}", disabled=not habilitado,
+                 help="Envia por e-mail os detalhes desta aba (quadro, justificativa e tabelas de cada prestador)."):
+        st.session_state[k_aberto] = True
+    if not (habilitado and st.session_state.get(k_aberto)):
+        return
+    try:
+        padrao = str(st.secrets.get("EMAIL_DESTINATARIO", "") or "")
+    except Exception:
+        padrao = ""
+    with st.container(border=True):
+        st.markdown(f"**Enviar e-mail — {nome_aba}**")
+        dest_txt = st.text_input("Destinatários (separe por vírgula)", value=padrao, key=f"email_dest_{chave}")
+        st.caption(
+            f"Vai no corpo do e-mail: os {len(itens)} prestadores desta aba, cada um com quadro comparativo, "
+            "justificativa e tabelas. Só dados agregados por prestador (sem código de usuário)."
+        )
+        c_ok, c_cancel = st.columns(2)
+        confirmar = c_ok.button("✅ Confirmar envio", key=f"email_ok_{chave}", use_container_width=True)
+        cancelar = c_cancel.button("Cancelar", key=f"email_cancel_{chave}", use_container_width=True)
+    if cancelar:
+        st.session_state[k_aberto] = False
+        st.rerun()
+    if confirmar:
+        destinatarios = [e for e in re.split(r"[,;\s]+", dest_txt.strip()) if e]
+        invalidos = [e for e in destinatarios if not _EMAIL_VALIDO_TEMP.match(e)]
+        if not destinatarios or invalidos:
+            st.error("Informe e-mails válidos" + (f" (inválido: {', '.join(invalidos)})." if invalidos else "."))
+        else:
+            corpo = _corpo_email_prestadores_temp(titulo_email, cabecalho, itens, rodape)
+            _kb_email_temp = len(corpo.encode("utf-8")) / 1024
+            if _kb_email_temp > 95:
+                st.warning(
+                    f"O e-mail ficou grande ({_kb_email_temp:.0f} KB). O Gmail corta mensagens acima de ~102 KB "
+                    "(\"Mensagem cortada\") — se isso acontecer, reduza os filtros ou me avise para limitar os detalhes."
+                )
+            with st.spinner("Enviando e-mail..."):
+                ok, erro = enviar_email_prestadores_temp(destinatarios, assunto, corpo)
+            if ok:
+                st.success(f"E-mail enviado para {', '.join(destinatarios)}.")
+                st.session_state[k_aberto] = False
+            else:
+                st.error(f"Erro ao enviar e-mail: {erro}")
 def _risco_pontuar_faixas_temp(serie, cortes, notas):
     """cortes = [c1,c2,c3,c4] (4 fronteiras -> 5 faixas), notas = [n0,n1,n2,n3,n4].
     Mesma convenção em todo o Índice de Risco: valor < c1 -> n0 | < c2 -> n1 | ...
@@ -4289,7 +4419,10 @@ elif st.session_state.pagina == "severidade":
                 "Preciso de pelo menos 2 meses nos filtros atuais para comparar. Ajuste Mês/Plano/"
                 "Especialidade/Período na barra lateral."
             )
-            _botao_enviar_email_aba_temp("btn_email_prestadores_gerais_temp", "Prestadores - Gerais", habilitado=False)
+            _fluxo_email_aba_temp(
+                "prestadores_gerais", "Prestadores - Gerais", "Prestadores - Gerais", "Prestadores - Gerais",
+                [], [], habilitado=False,
+            )
         else:
             _ma_temp, _mb_temp = _res_prest_temp["mes_ant"], _res_prest_temp["mes_atual"]
             _lbl_a_temp, _lbl_b_temp = label_mes(_ma_temp), label_mes(_mb_temp)
@@ -4316,9 +4449,8 @@ elif st.session_state.pagina == "severidade":
                     f"Nenhum prestador atende aos critérios (mais de {PRIORIT_MIN_PROC_TEMP} procedimentos das "
                     "especialidades prioritárias em um dos meses e CS em alta) nesse comparativo."
                 )
-            _botao_enviar_email_aba_temp(
-                "btn_email_prestadores_gerais_temp", "Prestadores - Gerais", habilitado=not _top_temp.empty,
-            )
+            _slot_email_g_temp = st.container()  # o botão aparece aqui, mas é montado depois do loop (precisa dos itens)
+            _itens_email_g_temp = []
             for _pos_temp, _r_temp in enumerate(_top_temp.itertuples(index=False), start=1):
                 _nome_temp = (
                     str(_r_temp.nome) if pd.notna(_r_temp.nome) and str(_r_temp.nome).strip()
@@ -4432,25 +4564,54 @@ elif st.session_state.pagina == "severidade":
                             "Acima do esperado (variação)": [f"{x:+,.0f}".replace(",", ".") for x in t["delta_exc"]],
                         })
 
+                    _t_esp_df_temp = _tabela_contrib_temp(_esp_temp, "ESPECIALIDADE", "Especialidade")
+                    _t_proc_df_temp = _tabela_contrib_temp(_lin_temp, "NOME_PROCEDIMENTO", "Procedimento")
                     _c_esp_temp, _c_proc_temp = st.columns(2)
                     with _c_esp_temp:
                         st.markdown("**Especialidades** (maior contribuição)")
-                        st.dataframe(
-                            _tabela_contrib_temp(_esp_temp, "ESPECIALIDADE", "Especialidade"),
-                            hide_index=True, use_container_width=True,
-                        )
+                        st.dataframe(_t_esp_df_temp, hide_index=True, use_container_width=True)
                     with _c_proc_temp:
                         st.markdown("**Procedimentos** (maior contribuição)")
-                        st.dataframe(
-                            _tabela_contrib_temp(_lin_temp, "NOME_PROCEDIMENTO", "Procedimento"),
-                            hide_index=True, use_container_width=True,
-                        )
+                        st.dataframe(_t_proc_df_temp, hide_index=True, use_container_width=True)
+                    _itens_email_g_temp.append({
+                        "titulo": _titulo_prest_temp, "quadro": _quadro_temp, "justificativa": _linhas_just_temp,
+                        "tabelas": [("Especialidades (maior contribuição)", _t_esp_df_temp),
+                                    ("Procedimentos (maior contribuição)", _t_proc_df_temp)],
+                    })
                     st.caption(
                         "\"Acima do esperado\" = QP − FASE do procedimento (quantos procedimentos a mais que a "
                         "taxa nacional prevê para as vidas atendidas). A soma de todos os procedimentos dá o "
                         "total do prestador. Procedimentos de cada especialidade = especialidade mais "
                         "frequente do procedimento na base."
                     )
+
+            _filtros_email_temp = "; ".join(x for x in (
+                f"Mês: {', '.join(map(str, f_mes))}" if f_mes else "",
+                f"Plano: {', '.join(map(str, f_plano))}" if f_plano else "",
+                f"Especialidade: {', '.join(map(str, f_especialidade))}" if f_especialidade else "",
+                f"Dias {dia_ini_temp} a {dia_fim_temp}" if modo_periodo_temp == "Escolher dias" else "",
+            ) if x) or "sem filtros de página"
+            with _slot_email_g_temp:
+                _fluxo_email_aba_temp(
+                    "prestadores_gerais", "Prestadores - Gerais",
+                    f"Prestadores - Gerais | {_lbl_b_temp} vs {_lbl_a_temp}",
+                    f"Prestadores - Gerais: maiores aumentos de severidade ({_lbl_b_temp} vs {_lbl_a_temp})",
+                    [
+                        f"Comparando **{_lbl_b_temp}** com **{_lbl_a_temp}**, ambos até o dia {_res_prest_temp['dia_corte']:02d}.",
+                        f"Critérios: mais de {PRIORIT_MIN_PROC_TEMP} procedimentos das especialidades prioritárias "
+                        f"({', '.join(_res_prest_temp['esp_prioritarias']) or 'nenhuma encontrada'}) em um dos meses e CS em alta. "
+                        f"⭐ = aumento concentrado nessas especialidades; 🚩 = procedimento com volume ≥ "
+                        f"{LIMIAR_VOLUME_PRIORIDADE_TEMP:.0f}× o normal. Prioritários primeiro, depois maior aumento de CS.",
+                        f"Filtros: {_filtros_email_temp}.",
+                    ],
+                    _itens_email_g_temp,
+                    rodape=(
+                        '"Acima do esperado" = QP − FASE do procedimento (procedimentos a mais que a taxa nacional '
+                        "prevê para as vidas atendidas). Dados agregados por prestador; texto gerado automaticamente "
+                        "a partir dos números, sem conclusão sobre a causa."
+                    ),
+                    habilitado=bool(_itens_email_g_temp),
+                )
 
     with tab_excesso_temp:
         # Prestadores com algum procedimento em volume muito acima do "normal" (média por prestador no
@@ -4472,7 +4633,10 @@ elif st.session_state.pagina == "severidade":
 
         if _res_exc_temp is None:
             st.info("Sem dados nos filtros atuais.")
-            _botao_enviar_email_aba_temp("btn_email_prestadores_excesso_temp", "Prestadores - Excesso", habilitado=False)
+            _fluxo_email_aba_temp(
+                "prestadores_excesso", "Prestadores - Excesso", "Prestadores - Excesso", "Prestadores - Excesso",
+                [], [], habilitado=False,
+            )
         else:
             _la_exc_temp = label_mes(_res_exc_temp["mes_atual"])
             _lb_exc_temp = label_mes(_res_exc_temp["mes_ant"]) if _res_exc_temp["mes_ant"] else None
@@ -4483,6 +4647,11 @@ elif st.session_state.pagina == "severidade":
                 "(média de procedimentos por prestador naquele mesmo procedimento, mesmo período e filtros) "
                 f"e pelo menos {EXCESSO_VOLUME_MINIMO_TEMP} procedimentos · Ordenado pelo total de "
                 "procedimentos acima do normal · Respeita os filtros da barra lateral."
+                + (
+                    " · Fora da lista (configurado): "
+                    + "; ".join(" / ".join(x for x in t if x) for t in PRESTADORES_EXCLUIDOS_EXCESSO_TEMP) + "."
+                    if PRESTADORES_EXCLUIDOS_EXCESSO_TEMP else ""
+                )
             )
             _top_exc_temp = _res_exc_temp["top"]
             if _top_exc_temp.empty:
@@ -4493,9 +4662,8 @@ elif st.session_state.pagina == "severidade":
                     + (f" — mostrando os {len(_top_exc_temp)} com mais procedimentos acima do normal."
                        if _res_exc_temp["n_prestadores"] > len(_top_exc_temp) else ".")
                 )
-            _botao_enviar_email_aba_temp(
-                "btn_email_prestadores_excesso_temp", "Prestadores - Excesso", habilitado=not _top_exc_temp.empty,
-            )
+            _slot_email_e_temp = st.container()  # o botão aparece aqui, mas é montado depois do loop
+            _itens_email_e_temp = []
             for _pos_exc_temp, _r_exc_temp in enumerate(_top_exc_temp.itertuples(index=False), start=1):
                 _nome_exc_temp = (
                     str(_r_exc_temp.nome) if pd.notna(_r_exc_temp.nome) and str(_r_exc_temp.nome).strip()
@@ -4578,6 +4746,39 @@ elif st.session_state.pagina == "severidade":
                         "nesse procedimento — compare com a do prestador para ver se o excesso vem de mais "
                         "pacientes ou de mais procedimentos por paciente. Dado observado, sem conclusão sobre a causa."
                     )
+                    _itens_email_e_temp.append({
+                        "titulo": _titulo_exc_temp, "quadro": _quadro_exc_temp, "justificativa": _j_exc_temp,
+                        "tabelas": [("Procedimentos em excesso", _tab_exc_temp)],
+                    })
+
+            _filtros_email_e_temp = "; ".join(x for x in (
+                f"Mês: {', '.join(map(str, f_mes))}" if f_mes else "",
+                f"Plano: {', '.join(map(str, f_plano))}" if f_plano else "",
+                f"Especialidade: {', '.join(map(str, f_especialidade))}" if f_especialidade else "",
+                f"Dias {dia_ini_temp} a {dia_fim_temp}" if modo_periodo_temp == "Escolher dias" else "",
+            ) if x) or "sem filtros de página"
+            with _slot_email_e_temp:
+                _fluxo_email_aba_temp(
+                    "prestadores_excesso", "Prestadores - Excesso",
+                    f"Prestadores - Excesso | {_la_exc_temp}",
+                    f"Prestadores - Excesso: procedimentos com volume muito acima do normal ({_la_exc_temp})",
+                    [
+                        f"Mês avaliado: **{_la_exc_temp}** (até o dia {_res_exc_temp['dia_corte']:02d})"
+                        + (f", comparado com {_lb_exc_temp} até o mesmo dia." if _lb_exc_temp else "."),
+                        f"Critério: procedimento com volume ≥ {LIMIAR_VOLUME_PRIORIDADE_TEMP:.0f}× o normal (média de "
+                        "procedimentos por prestador naquele procedimento, mesmo período e filtros) e pelo menos "
+                        f"{EXCESSO_VOLUME_MINIMO_TEMP} procedimentos. Ordenado pelo total de procedimentos acima do normal.",
+                        f"{_res_exc_temp['n_prestadores']} prestador(es) com algum procedimento em excesso"
+                        f" — listando {len(_itens_email_e_temp)}. Filtros: {_filtros_email_e_temp}.",
+                    ],
+                    _itens_email_e_temp,
+                    rodape=(
+                        '"Normal" = média de procedimentos por prestador que fez o procedimento no mesmo período; '
+                        '"Proc. por vida (nacional)" = procedimentos ÷ vidas do Brasil todo nesse procedimento. '
+                        "Dados agregados por prestador; dado observado, sem conclusão sobre a causa."
+                    ),
+                    habilitado=bool(_itens_email_e_temp),
+                )
 
     with tab_risco_temp:
         st.markdown("#### 🎯 Índice de Risco do Prestador")
