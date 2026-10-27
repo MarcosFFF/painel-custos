@@ -771,53 +771,30 @@ def _corpo_email_prestadores_temp(titulo, cabecalho, itens, rodape=""):
         "</style>"
     )
     return f"<html><head>{estilo}</head><body><div>" + "".join(partes) + "</div></body></html>"
-_EMAIL_VALIDO_TEMP = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 def _fluxo_email_aba_temp(chave, nome_aba, assunto, titulo_email, cabecalho, itens, rodape="", habilitado=True):
-    """Botão "📧 Enviar e-mail" da aba: abre um quadro com o campo de destinatários (já preenchido com
-    EMAIL_DESTINATARIO dos Secrets) e um botão de confirmação — o envio só acontece ao confirmar."""
-    k_aberto = f"_email_aberto_{chave}"
-    if st.button("📧 Enviar e-mail", key=f"btn_email_{chave}", disabled=not habilitado,
-                 help="Envia por e-mail os detalhes desta aba (quadro, justificativa e tabelas de cada prestador)."):
-        st.session_state[k_aberto] = True
-    if not (habilitado and st.session_state.get(k_aberto)):
+    """Botão "📧 Enviar e-mail" da aba — igual ao da Projeção: um clique envia direto, sem confirmação, para os
+    destinatários do Secret EMAIL_DESTINATARIO (de lá o Power Automate encaminha para os demais)."""
+    if not st.button("📧 Enviar e-mail", key=f"btn_email_{chave}", disabled=not habilitado,
+                     help="Envia por e-mail os detalhes desta aba (quadro, justificativa e tabelas de cada prestador)."):
         return
     try:
-        padrao = str(st.secrets.get("EMAIL_DESTINATARIO", "") or "")
-    except Exception:
-        padrao = ""
-    with st.container(border=True):
-        st.markdown(f"**Enviar e-mail — {nome_aba}**")
-        dest_txt = st.text_input("Destinatários (separe por vírgula)", value=padrao, key=f"email_dest_{chave}")
-        st.caption(
-            f"Vai no corpo do e-mail: os {len(itens)} prestadores desta aba, cada um com quadro comparativo, "
-            "justificativa e tabelas. Só dados agregados por prestador (sem código de usuário)."
+        destinatarios = [e.strip() for e in re.split(r"[,;]+", str(st.secrets["EMAIL_DESTINATARIO"])) if e.strip()]
+    except KeyError:
+        st.error("Faltou configurar o segredo EMAIL_DESTINATARIO em Settings → Secrets do Streamlit Cloud.")
+        return
+    corpo = _corpo_email_prestadores_temp(titulo_email, cabecalho, itens, rodape)
+    _kb_email_temp = len(corpo.encode("utf-8")) / 1024
+    if _kb_email_temp > 95:
+        st.warning(
+            f"O e-mail ficou grande ({_kb_email_temp:.0f} KB). O Gmail corta mensagens acima de ~102 KB "
+            "(\"Mensagem cortada\") — se isso acontecer, reduza os filtros ou me avise para limitar os detalhes."
         )
-        c_ok, c_cancel = st.columns(2)
-        confirmar = c_ok.button("✅ Confirmar envio", key=f"email_ok_{chave}", use_container_width=True)
-        cancelar = c_cancel.button("Cancelar", key=f"email_cancel_{chave}", use_container_width=True)
-    if cancelar:
-        st.session_state[k_aberto] = False
-        st.rerun()
-    if confirmar:
-        destinatarios = [e for e in re.split(r"[,;\s]+", dest_txt.strip()) if e]
-        invalidos = [e for e in destinatarios if not _EMAIL_VALIDO_TEMP.match(e)]
-        if not destinatarios or invalidos:
-            st.error("Informe e-mails válidos" + (f" (inválido: {', '.join(invalidos)})." if invalidos else "."))
-        else:
-            corpo = _corpo_email_prestadores_temp(titulo_email, cabecalho, itens, rodape)
-            _kb_email_temp = len(corpo.encode("utf-8")) / 1024
-            if _kb_email_temp > 95:
-                st.warning(
-                    f"O e-mail ficou grande ({_kb_email_temp:.0f} KB). O Gmail corta mensagens acima de ~102 KB "
-                    "(\"Mensagem cortada\") — se isso acontecer, reduza os filtros ou me avise para limitar os detalhes."
-                )
-            with st.spinner("Enviando e-mail..."):
-                ok, erro = enviar_email_prestadores_temp(destinatarios, assunto, corpo)
-            if ok:
-                st.success(f"E-mail enviado para {', '.join(destinatarios)}.")
-                st.session_state[k_aberto] = False
-            else:
-                st.error(f"Erro ao enviar e-mail: {erro}")
+    with st.spinner("Enviando e-mail..."):
+        ok, erro = enviar_email_prestadores_temp(destinatarios, assunto, corpo)
+    if ok:
+        st.success("E-mail enviado com sucesso!")
+    else:
+        st.error(f"Erro ao enviar e-mail: {erro}")
 def _risco_pontuar_faixas_temp(serie, cortes, notas):
     """cortes = [c1,c2,c3,c4] (4 fronteiras -> 5 faixas), notas = [n0,n1,n2,n3,n4].
     Mesma convenção em todo o Índice de Risco: valor < c1 -> n0 | < c2 -> n1 | ...
