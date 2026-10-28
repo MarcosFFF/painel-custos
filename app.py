@@ -1260,9 +1260,13 @@ def enviar_email_projecao(view_year, view_month, label_projetado, projecao, acum
     if nota_projecao:
         linhas.append(f"Obs.: {nota_projecao}")
     corpo_html = "<br>\n".join(linhas)
+    # Marcadores quase invisíveis: o fluxo do Power Automate ("Enviar um email") corta o corpo recebido entre
+    # eles, descartando a faixa "mensagem originada de fora da empresa" que o gateway injeta.
+    _ini = '<span style="font-size:1px;color:#ffffff">[[PAINEL-INICIO]]</span>'
+    _fim = '<span style="font-size:1px;color:#ffffff">[[PAINEL-FIM]]</span>'
     corpo_html = (
-        '<div style="font-family:Arial,Helvetica,sans-serif; font-size:14px; color:#1a1a1a;">'
-        f"{corpo_html}</div>"
+        f'<div style="font-family:Arial,Helvetica,sans-serif; font-size:14px; color:#1a1a1a;">{_ini}'
+        f"{corpo_html}{_fim}</div>"
     )
     msg = MIMEMultipart()
     msg["From"] = remetente
