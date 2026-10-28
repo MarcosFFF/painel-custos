@@ -741,7 +741,7 @@ def _df_para_html_temp(df):
         "<tr>" + "".join(f"<td>{html.escape(str(v))}</td>" for v in row) + "</tr>"
         for row in df.itertuples(index=False)
     )
-    return f'<table class="t"><tr>{th}</tr>{linhas}</table>'
+    return f'<table class="t" border="1" cellpadding="4" cellspacing="0"><tr>{th}</tr>{linhas}</table>'
 def _corpo_email_prestadores_temp(titulo, cabecalho, itens, rodape=""):
     """itens = lista de dicts {titulo, quadro (DataFrame), justificativa (lista de textos), tabelas [(título, DataFrame)]}."""
     partes = [f'<p class="h1"><strong>{html.escape(titulo)}</strong></p>']
@@ -770,7 +770,12 @@ def _corpo_email_prestadores_temp(titulo, cabecalho, itens, rodape=""):
         "table.t td{border:1px solid #e0e0e0;padding:4px 8px;font-size:12px}"
         "</style>"
     )
-    return f"<html><head>{estilo}</head><body><div>" + "".join(partes) + "</div></body></html>"
+    # Marcadores quase invisíveis: o fluxo do Power Automate corta o corpo recebido entre eles, descartando a
+    # faixa "mensagem originada de fora da empresa" que o gateway da Hapvida injeta no e-mail vindo do Gmail.
+    # O <style> fica DENTRO do trecho cortado, pra não se perder no corte.
+    ini = '<span style="font-size:1px;color:#ffffff">[[PAINEL-INICIO]]</span>'
+    fim = '<span style="font-size:1px;color:#ffffff">[[PAINEL-FIM]]</span>'
+    return f"<html><body><div>{ini}{estilo}" + "".join(partes) + f"{fim}</div></body></html>"
 def _fluxo_email_aba_temp(chave, nome_aba, assunto, titulo_email, cabecalho, itens, rodape="", habilitado=True):
     """Botão "📧 Enviar e-mail" da aba — igual ao da Projeção: um clique envia direto, sem confirmação, para os
     destinatários do Secret EMAIL_DESTINATARIO (de lá o Power Automate encaminha para os demais)."""
