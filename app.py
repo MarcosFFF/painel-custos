@@ -704,190 +704,110 @@ def _prestadores_excesso_temp(
     linhas["vidas"] = linhas["vidas"].fillna(0)
     return {"mes_atual": mes_atual, "mes_ant": mes_ant, "dia_corte": dia_corte,
             "n_prestadores": n_prestadores, "top": top, "linhas": linhas}
-# ---------- Aba "🏆 Prestadores - Top 20": prestadores citados na apresentação (Grupo A – Top 20) ----------
-# Cada linha: (nome como aparece na apresentação, (CD_PRESTADOR, ...) na BASE.csv, baseline R$ mil/ano,
-# oportunidade líquida R$ mil/ano, % de oportunidade) — os três últimos vêm do quadro da apresentação (Gradus,
-# base de contas odontológicas pagas sem glosa, ago/25–jul/26) e só são EXIBIDOS na aba, não entram em cálculo.
-# O prestador é identificado pelo CD_PRESTADOR (não pelo nome). Mais de um código = mesma clínica com mais de
-# um CNPJ/filial/cadastro na BASE (os números dos códigos são somados; o que não tem movimento fica de fora). Pra trocar/incluir um prestador, é só mexer aqui.
-PRESTADORES_TOP20_TEMP = (
-    ("Smile Dental Clínica Odontológica", (93658168,), 713, 236, 33),
-    ("Smile Odonto SEP", (474081503,), 170, 110, 65),
-    ("Núcleo Saúde Odontologia", (115996750,), 398, 72, 18),
-    ("Mam Serviços Odontológicos", (139898570,), 525, 70, 13),
-    ("VSPC Odontologia", (265040003,), 91, 63, 69),
-    ("Ebenezer Clínica de Estomatologia e Reabilitação Oral", (92375278,), 126, 55, 44),
-    ("Fabiula Paniago de Sena", (169849500,), 123, 52, 42),
-    ("Odontologia e Estética", (447092133,), 90, 52, 58),
-    ("Clínica Odontológica Oral Saúde", (117170972, 100378516), 100, 44, 43),
-    ("Francielly da Silva Camim", (169921600, 481159466), 261, 42, 16),
-    ("Plena Assistência Odontológica", (91565502,), 327, 41, 13),
-    ("Canto do Sorriso", (110506401, 505193193), 93, 40, 43),
-    ("Olenscki Odontologia", (169848040,), 224, 39, 17),
-    ("Orthoclinic Clínica Odontológica", (140047669,), 190, 38, 20),
-    ("Clinob", (93791771, 99286734), 97, 35, 36),
-    ("Campos & Campos Clínica Odontológica", (104633189,), 149, 34, 23),
-    ("Bioface Radiologia Odontologia Digital", (47155558,), 213, 30, 14),
-    ("JPT Serviços Odontol Ltda Me", (192595977, 192595993), 106, 29, 28),
-    ("Danielle Mizrahi", (192649392,), 55, 28, 50),
-    ("Clínica Cabral Odontol", (192591432,), 61, 27, 45),
-)
-@st.cache_data(show_spinner=False)
-def _status_prestadores_base_temp(pasta="."):
-    """CD_PRESTADOR -> situação do credenciamento (ATIVO, CANCELADO, EM OBSERVAÇÃO...) lida da BASE.csv.
-    Devolve {} se o arquivo não existir ou não tiver as colunas CODIGO/STATUS (a aba funciona sem isso)."""
-    try:
-        caminho = os.path.join(pasta, "BASE.csv")
-        if not os.path.exists(caminho):
-            return {}
-        df = None
-        for enc in ("utf-8", "latin1"):
-            try:
-                df = pd.read_csv(caminho, sep=";", encoding=enc, dtype=str, low_memory=False)
-                break
-            except (UnicodeDecodeError, UnicodeError):
-                continue
-        if df is None:
-            return {}
-        mapa = {normalizar_texto(str(c).strip()): c for c in df.columns}
-        c_cod, c_sts = mapa.get("CODIGO"), mapa.get("STATUS")
-        if not c_cod or not c_sts:
-            return {}
-        cod = pd.to_numeric(df[c_cod], errors="coerce")
-        ok = cod.notna()
-        return dict(zip(cod[ok].astype(int), df.loc[ok, c_sts].astype(str).str.strip()))
-    except Exception:
-        return {}
-@st.cache_data(show_spinner="Calculando os prestadores do Top 20...")
-def _prestadores_top20_temp(
-    _df, _usuarios, nacional, chave_filtros, config=PRESTADORES_TOP20_TEMP,
-    limiar=LIMIAR_VOLUME_PRIORIDADE_TEMP, volume_minimo=EXCESSO_VOLUME_MINIMO_TEMP,
+# ---------- Aba "📐 Desvios": prestador x procedimento fora do padrão ----------
+# Duas realidades, duas réguas (o procedimento cai em uma delas pela média nacional por prestador):
+#   - COMUM (média nacional por prestador >= DESVIOS_LIMITE_RARO_TEMP): frequência POR PACIENTE do prestador contra a
+#     média da CIDADE (dos outros prestadores; cai pra UF se a cidade tiver poucos prestadores de referência).
+#     Ex.: prestador faz 8 restaurações por paciente; a média da cidade é 3.
+#   - RARO (média nacional por prestador < DESVIOS_LIMITE_RARO_TEMP): VOLUME do prestador contra a média nacional de
+#     procedimentos por prestador. Ex.: prestador faz 30 frenectomias; a média nacional é 1.
+# Em todos os casos a referência é a dos OUTROS prestadores (o próprio prestador sai da média) e usa os mesmos
+# filtros da página (Mês/Plano/Especialidade).
+DESVIOS_LIMITE_RARO_TEMP = 5.0   # média nacional de procedimentos por prestador abaixo disso = procedimento raro
+DESVIOS_MIN_REFERENCIA_TEMP = 3  # nº mínimo de OUTROS prestadores na referência (cidade; senão UF)
+DESVIOS_VOLUME_PISO_TEMP = 3     # piso de procedimentos pra entrar na tabela em cache (a tela escolhe o piso dela)
+@st.cache_data(show_spinner="Calculando desvios por prestador e procedimento...")
+def _desvios_temp(
+    _df, _usuarios, chave_filtros, mes, mes_ant,
+    limite_raro=DESVIOS_LIMITE_RARO_TEMP, min_ref=DESVIOS_MIN_REFERENCIA_TEMP, piso=DESVIOS_VOLUME_PISO_TEMP,
 ):
     """
-    Números dos prestadores de `config` dentro dos filtros da página. Mesma lógica das abas Gerais/Excesso:
-    mês mais recente x mês anterior até o MESMO dia de corte (maior dia do mês mais recente).
-      - mensal : todos os meses dos filtros (mês completo), por prestador: QP, vidas, uso, valor, CS.
-      - comp   : mês anterior e atual até o dia de corte (comparação justa).
-      - procs  : procedimentos de cada prestador nesses dois meses, com o "normal" (média de procedimentos por
-                 prestador que fez o mesmo procedimento no mesmo mês/dia de corte, TODOS os prestadores dos filtros),
-                 vezes o normal, vidas e especialidade.
-      - esp    : especialidades de cada prestador nesses dois meses.
-    CS = QP ÷ FASE × 10, FASE = soma(taxa nacional do procedimento × vidas do prestador no procedimento) — igual
-    às outras abas. `_df`/`_usuarios` não entram no hash (a chave é `chave_filtros`).
-    """
-    meses = sorted(_df["MES"].astype(str).unique())
-    if not meses:
+    Uma linha por (prestador, procedimento) no `mes` com: qp, vidas, procedimentos por paciente, referência (cidade
+    ou UF) e desvio por paciente; média nacional por prestador (sem o próprio) e desvio de volume; classe do
+    procedimento (Comum/Raro) e os mesmos desvios no mês anterior (até o mesmo dia de corte), pra marcar
+    persistente/novo. Só entram linhas com qp >= `piso` e algum desvio positivo. `_df`/`_usuarios` não entram no
+    hash (a chave é `chave_filtros`)."""
+    cols_idx = ["CD_PRESTADOR", "NOME_PROCEDIMENTO"]
+    dia_max = int(_df.loc[_df["MES"].astype(str) == mes, "DIA"].max())
+    d_mes = _df[(_df["MES"].astype(str) == mes)]
+    if d_mes.empty:
         return None
-    mes_atual = meses[-1]
-    mes_ant = meses[-2] if len(meses) > 1 else None
-    sel = [m for m in (mes_ant, mes_atual) if m]
-    dia_corte = int(_df.loc[_df["MES"].astype(str) == mes_atual, "DIA"].max())
-    cod2idx = {int(c): i for i, item in enumerate(config) for c in item[1]}
-    cods = list(cod2idx)
-    taxa = nacional.copy()
-    taxa["NOME_PROCEDIMENTO"] = taxa["NOME_PROCEDIMENTO"].astype(str)
-    taxa["taxa"] = np.where(
-        taxa["qtd_vidas_nacional"] > 0, taxa["qtd_procedimentos_nacional"] / taxa["qtd_vidas_nacional"], np.nan
-    )
-    taxa = taxa[["NOME_PROCEDIMENTO", "taxa"]]
-    janela = _df[_df["MES"].isin(sel) & (_df["DIA"] <= dia_corte)]
-    if janela.empty:
-        return None
-    # --- "normal" (todos os prestadores dos filtros, mesmo mês e dia de corte) ---
-    base = janela.groupby(["CD_PRESTADOR", "NOME_PROCEDIMENTO", "MES"], observed=True).agg(
-        qp=("qtd_procedimentos", "sum"), uso=("soma_uso", "sum"), valor=("soma_valor", "sum"),
-    ).reset_index()
-    base["MES"] = base["MES"].astype(str)
-    base["NOME_PROCEDIMENTO"] = base["NOME_PROCEDIMENTO"].astype(str)
-    _g = base.groupby(["NOME_PROCEDIMENTO", "MES"])["qp"]
-    base["normal"] = _g.transform("mean")
-    base["n_prest"] = _g.transform("size")
-    # --- recortes só dos prestadores do Top 20 ---
-    dc = _df[_df["CD_PRESTADOR"].isin(cods)]
-    uc = _usuarios[_usuarios["CD_PRESTADOR"].isin(cods)]
-    uc = uc.assign(MES=uc["MES"].astype(str), NOME_PROCEDIMENTO=uc["NOME_PROCEDIMENTO"].astype(str))
+    # cidade/UF do prestador (a mais frequente) — a referência de cidade usa esse cadastro, uma cidade por prestador
+    loc = pd.DataFrame({
+        "cidade": _moda_ponderada_temp(d_mes, "CIDADE_PRESTADOR"), "uf": _moda_ponderada_temp(d_mes, "UF"),
+    })
 
-    def _agrega(dx, ux):
-        g = dx.groupby(["CD_PRESTADOR", "NOME_PROCEDIMENTO", "MES"], observed=True).agg(
-            qp=("qtd_procedimentos", "sum"), uso=("soma_uso", "sum"), valor=("soma_valor", "sum"),
-        ).reset_index()
-        g["MES"] = g["MES"].astype(str)
+    def _metricas(d, u):
+        g = d.groupby(cols_idx, observed=True).agg(qp=("qtd_procedimentos", "sum")).reset_index()
         g["NOME_PROCEDIMENTO"] = g["NOME_PROCEDIMENTO"].astype(str)
-        v = ux.groupby(["CD_PRESTADOR", "NOME_PROCEDIMENTO", "MES"], observed=True)["CD_USUARIO"].nunique() \
-            .rename("vidas").reset_index()
-        g = g.merge(v, on=["CD_PRESTADOR", "NOME_PROCEDIMENTO", "MES"], how="left") \
-            .merge(taxa, on="NOME_PROCEDIMENTO", how="left")
+        v = u.groupby(cols_idx, observed=True)["CD_USUARIO"].nunique().rename("vidas").reset_index()
+        v["NOME_PROCEDIMENTO"] = v["NOME_PROCEDIMENTO"].astype(str)
+        g = g.merge(v, on=cols_idx, how="left")
         g["vidas"] = g["vidas"].fillna(0)
-        g["fase"] = g["taxa"] * g["vidas"]
-        g["idx"] = g["CD_PRESTADOR"].map(cod2idx)
-        p = g.groupby(["idx", "MES"]).agg(
-            qp=("qp", "sum"), uso=("uso", "sum"), valor=("valor", "sum"), fase=("fase", "sum"),
-        ).reset_index()
-        vp = ux.assign(idx=ux["CD_PRESTADOR"].map(cod2idx)).groupby(["idx", "MES"])["CD_USUARIO"].nunique() \
-            .rename("vidas").reset_index()
-        p = p.merge(vp, on=["idx", "MES"], how="left")
-        p["vidas"] = p["vidas"].fillna(0)
-        p["cs"] = np.where(p["fase"] > 0, p["qp"] / p["fase"] * 10, np.nan)
-        p["proc_vida"] = np.where(p["vidas"] > 0, p["qp"] / p["vidas"], np.nan)
-        p["valor_proc"] = np.where(p["qp"] > 0, p["valor"] / p["qp"], np.nan)
-        return p
+        g = g[g["qp"] > 0]
+        g = g.join(loc, on="CD_PRESTADOR")
+        # --- média nacional por prestador (sem o próprio) e classe do procedimento ---
+        p = g.groupby("NOME_PROCEDIMENTO")["qp"].agg(soma_nac="sum", n_nac="size")
+        g = g.join(p, on="NOME_PROCEDIMENTO")
+        g["classe"] = np.where(g["soma_nac"] / g["n_nac"] < limite_raro, "Raro", "Comum")
+        g["n_outros_nac"] = g["n_nac"] - 1
+        g["media_nac"] = np.where(g["n_outros_nac"] > 0, (g["soma_nac"] - g["qp"]) / g["n_outros_nac"], np.nan)
+        # --- referência por paciente: cidade (sem o próprio); se faltar prestador, UF ---
+        for nivel, chaves in (("cidade", ["NOME_PROCEDIMENTO", "uf", "cidade"]), ("uf", ["NOME_PROCEDIMENTO", "uf"])):
+            s = g.groupby(chaves, dropna=False)[["qp", "vidas"]].sum()
+            s["n"] = g.groupby(chaves, dropna=False).size()
+            s.columns = [f"qp_{nivel}", f"vid_{nivel}", f"n_{nivel}"]
+            g = g.join(s, on=chaves)
+            g[f"n_outros_{nivel}"] = g[f"n_{nivel}"] - 1
+            den = g[f"vid_{nivel}"] - g["vidas"]
+            g[f"ref_{nivel}"] = np.where(
+                (g[f"n_outros_{nivel}"] >= min_ref) & (den > 0), (g[f"qp_{nivel}"] - g["qp"]) / den, np.nan
+            )
+        usa_cidade = g["ref_cidade"].notna()
+        g["ref_pv"] = np.where(usa_cidade, g["ref_cidade"], g["ref_uf"])
+        g["ref_nivel"] = np.where(usa_cidade, "Cidade", np.where(g["ref_uf"].notna(), "UF", ""))
+        g["n_ref_pv"] = np.where(usa_cidade, g["n_outros_cidade"], g["n_outros_uf"])
+        g["pv"] = np.where(g["vidas"] > 0, g["qp"] / g["vidas"], np.nan)
+        g["razao_pv"] = np.where(g["ref_pv"] > 0, g["pv"] / g["ref_pv"], np.nan)
+        g["razao_vol"] = np.where(g["media_nac"] > 0, g["qp"] / g["media_nac"], np.nan)
+        # métrica que vale pra classe do procedimento (Comum = por paciente x cidade; Raro = volume x nacional)
+        g["razao"] = np.where(g["classe"] == "Raro", g["razao_vol"], g["razao_pv"])
+        g["desvio_pct"] = (g["razao"] - 1) * 100
+        return g[cols_idx + [
+            "qp", "vidas", "pv", "ref_pv", "ref_nivel", "n_ref_pv", "razao_pv", "media_nac", "n_outros_nac",
+            "razao_vol", "classe", "razao", "desvio_pct",
+        ] + ["cidade", "uf"]]
 
-    mensal = _agrega(dc, uc)
-    na_janela = dc["MES"].isin(sel) & (dc["DIA"] <= dia_corte)
-    na_janela_u = uc["MES"].isin(sel) & (uc["DIA"] <= dia_corte)
-    comp = _agrega(dc[na_janela], uc[na_janela_u])
-    # --- procedimentos (mês anterior e atual até o dia de corte) ---
-    vid_proc = uc[na_janela_u].groupby(["CD_PRESTADOR", "NOME_PROCEDIMENTO", "MES"], observed=True)["CD_USUARIO"] \
-        .nunique().rename("vidas").reset_index()
-    bp = base[base["CD_PRESTADOR"].isin(cods)].merge(
-        vid_proc, on=["CD_PRESTADOR", "NOME_PROCEDIMENTO", "MES"], how="left",
-    )
-    bp["vidas"] = bp["vidas"].fillna(0)
-    bp["idx"] = bp["CD_PRESTADOR"].map(cod2idx)
-    procs = bp.groupby(["idx", "NOME_PROCEDIMENTO", "MES"]).agg(
-        qp=("qp", "sum"), valor=("valor", "sum"), vidas=("vidas", "sum"),
-        normal=("normal", "first"), n_prest=("n_prest", "first"),
-    ).reset_index()
-    procs["razao"] = np.where(procs["normal"] > 0, procs["qp"] / procs["normal"], np.nan)
-    procs = procs.merge(taxa, on="NOME_PROCEDIMENTO", how="left")
-    esp_proc = janela.groupby(["NOME_PROCEDIMENTO", "ESPECIALIDADE"], observed=True)["qtd_procedimentos"] \
-        .sum().reset_index()
-    esp_proc["NOME_PROCEDIMENTO"] = esp_proc["NOME_PROCEDIMENTO"].astype(str)
-    esp_proc = esp_proc.sort_values("qtd_procedimentos", ascending=False).drop_duplicates("NOME_PROCEDIMENTO")
-    esp_proc["ESPECIALIDADE"] = esp_proc["ESPECIALIDADE"].astype(str)
-    procs = procs.merge(esp_proc[["NOME_PROCEDIMENTO", "ESPECIALIDADE"]], on="NOME_PROCEDIMENTO", how="left")
-    # --- especialidades de cada prestador ---
-    esp = dc[na_janela].assign(idx=dc.loc[na_janela, "CD_PRESTADOR"].map(cod2idx))
-    esp = esp.groupby(["idx", "ESPECIALIDADE", "MES"], observed=True).agg(
-        qp=("qtd_procedimentos", "sum"), valor=("soma_valor", "sum"),
-    ).reset_index()
+    u_mes = _usuarios[_usuarios["MES"].astype(str) == mes]
+    atual = _metricas(d_mes, u_mes)
+    atual = atual[(atual["qp"] >= piso) & (atual["desvio_pct"] > 0)].copy()
+    # mês anterior, até o mesmo dia de corte
+    if mes_ant:
+        d_ant = _df[(_df["MES"].astype(str) == mes_ant) & (_df["DIA"] <= dia_max)]
+        u_ant = _usuarios[(_usuarios["MES"].astype(str) == mes_ant) & (_usuarios["DIA"] <= dia_max)]
+        ant = _metricas(d_ant, u_ant)[cols_idx + ["qp", "razao", "desvio_pct"]].rename(
+            columns={"qp": "qp_ant", "razao": "razao_ant", "desvio_pct": "desvio_ant"}
+        )
+        atual = atual.merge(ant, on=cols_idx, how="left")
+    else:
+        atual["qp_ant"] = np.nan; atual["razao_ant"] = np.nan; atual["desvio_ant"] = np.nan
+    # nomes, cluster e especialidade
+    nomes = _moda_ponderada_temp(d_mes, "NOME_PRESTADOR")
+    clus = _moda_ponderada_temp(d_mes, "CLUSTER")
+    atual["prestador"] = atual["CD_PRESTADOR"].map(nomes)
+    atual["cluster"] = atual["CD_PRESTADOR"].map(clus)
+    esp = d_mes.groupby(["NOME_PROCEDIMENTO", "ESPECIALIDADE"], observed=True)["qtd_procedimentos"].sum().reset_index()
+    esp["NOME_PROCEDIMENTO"] = esp["NOME_PROCEDIMENTO"].astype(str)
+    esp = esp.sort_values("qtd_procedimentos", ascending=False).drop_duplicates("NOME_PROCEDIMENTO")
     esp["ESPECIALIDADE"] = esp["ESPECIALIDADE"].astype(str)
-    esp["MES"] = esp["MES"].astype(str)
-    # --- cadastro (nome na base, cidade, UF, cluster) e códigos com movimento ---
-    info = {}
-    if not dc.empty:
-        cols = {c: _moda_ponderada_temp(dc, c) for c in ("NOME_PRESTADOR", "CIDADE_PRESTADOR", "UF", "CLUSTER")}
-        qp_cod = dc.groupby("CD_PRESTADOR", observed=True)["qtd_procedimentos"].sum()
-        for i, item in enumerate(config):
-            ativos = [int(c) for c in item[1] if c in qp_cod.index and qp_cod[c] > 0]
-            ativos.sort(key=lambda c: -qp_cod[c])
-            if not ativos:
-                continue
-
-            def _unicos(col):
-                vistos = []
-                for c in ativos:
-                    v = cols[col].get(c)
-                    if v is not None and pd.notna(v) and str(v).strip() and str(v) not in vistos:
-                        vistos.append(str(v))
-                return vistos
-            info[i] = {
-                "codigos_ativos": ativos, "nomes": _unicos("NOME_PRESTADOR"), "cidades": _unicos("CIDADE_PRESTADOR"),
-                "ufs": _unicos("UF"), "clusters": _unicos("CLUSTER"),
-            }
-    return {"mes_atual": mes_atual, "mes_ant": mes_ant, "dia_corte": dia_corte, "meses": meses,
-            "mensal": mensal, "comp": comp, "procs": procs, "esp": esp, "info": info,
-            "limiar": limiar, "volume_minimo": volume_minimo}
+    atual = atual.merge(esp[["NOME_PROCEDIMENTO", "ESPECIALIDADE"]], on="NOME_PROCEDIMENTO", how="left")
+    # procedimentos acima do esperado (esperado = referência x vidas, ou média nacional)
+    esperado = np.where(
+        atual["classe"] == "Raro", atual["media_nac"], atual["ref_pv"] * atual["vidas"]
+    )
+    atual["esperado"] = esperado
+    atual["acima"] = atual["qp"] - atual["esperado"]
+    return {"mes": mes, "mes_ant": mes_ant, "dia_max": dia_max, "tabela": atual.reset_index(drop=True)}
 # ---------- E-mail das abas "Prestadores - Gerais" e "Prestadores - Excesso" ----------
 def enviar_email_prestadores_temp(destinatarios, assunto, corpo_html):
     """Mesmas credenciais/servidor SMTP de enviar_email_projecao (Secrets EMAIL_REMETENTE / EMAIL_SENHA_APP /
@@ -2069,10 +1989,10 @@ elif st.session_state.pagina == "severidade":
     # comentário em "with tab_risco_temp:" logo abaixo.)
     _labels_abas_temp = [
         "📊 Acompanhamento de Severidade", "👥 Prestadores - Gerais", "🚩 Prestadores - Excesso",
-        "🏆 Prestadores - Top 20", "🎯 Índice de Risco", "📖 Como ler o Ranking",
+        "📐 Desvios", "🎯 Índice de Risco", "📖 Como ler o Ranking",
     ]
     _abas_criadas_temp = st.tabs(_labels_abas_temp)
-    (tab_ranking_temp, tab_prestadores_temp, tab_excesso_temp, tab_top20_temp, tab_risco_temp,
+    (tab_ranking_temp, tab_prestadores_temp, tab_excesso_temp, tab_desvios_temp, tab_risco_temp,
      tab_como_ler_temp) = (
         _abas_criadas_temp[0], _abas_criadas_temp[1], _abas_criadas_temp[2], _abas_criadas_temp[3],
         _abas_criadas_temp[4], _abas_criadas_temp[5],
@@ -4951,274 +4871,202 @@ elif st.session_state.pagina == "severidade":
                     habilitado=bool(_itens_email_e_temp),
                 )
 
-    with tab_top20_temp:
-        # Prestadores do quadro "Oportunidade por prestador — Grupo A (Top 20)" da apresentação: visão consolidada
-        # de cada um (QP, valor, CS, procedimentos fora do normal, especialidades). Respeita os filtros da página.
-        # A lista de prestadores (e os códigos de cada um) fica em PRESTADORES_TOP20_TEMP, lá em cima.
-        _chave_t20_temp = (
+    with tab_desvios_temp:
+        # Desvios por prestador x procedimento: duas réguas (ver comentário em DESVIOS_LIMITE_RARO_TEMP, no início do
+        # bloco de cálculo). Respeita os filtros da página (Mês/Plano/Especialidade); mês, Top e critérios são desta aba.
+        _chave_dsv_temp = (
             tuple(f_mes), tuple(f_plano), tuple(f_especialidade), modo_periodo_temp,
             int(dia_ini_temp), int(dia_fim_temp),
             int(len(df_filtrado)), round(float(df_filtrado["qtd_procedimentos"].sum()), 2),
         )
-        _res_t20_temp = _prestadores_top20_temp(
-            df_filtrado, usuarios_filtrado, nacional_temp_flat, _chave_t20_temp,
+        _meses_dsv_temp = sorted(df_filtrado["MES"].astype(str).unique(), reverse=True)
+        _rot_comum_dsv_temp = "👥 Por paciente — vs. média da cidade (procedimentos comuns)"
+        _rot_raro_dsv_temp = "🔎 Volume — vs. média nacional (procedimentos raros)"
+        _visao_dsv_temp = st.radio(
+            "Visão", [_rot_comum_dsv_temp, _rot_raro_dsv_temp], horizontal=True, key="dsv_visao_temp",
+            help=(
+                "Comuns: quantos procedimentos o prestador faz POR PACIENTE, contra a média por paciente dos outros "
+                "prestadores da mesma cidade (se a cidade tiver poucos, a do estado). Raros: procedimentos em que a "
+                "média nacional por prestador já é pequena (ex.: frenectomia, flúor tópico) — compara o VOLUME do "
+                "prestador com a média nacional de procedimentos por prestador."
+            ),
         )
-        _status_t20_temp = _status_prestadores_base_temp(".")
-
-        def _f1_t20_temp(v):
-            return "—" if v is None or pd.isna(v) else f"{v:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-        def _i_t20_temp(v):
-            return "—" if v is None or pd.isna(v) else fmt_int(v)
-
-        def _var_t20_temp(atual, ant):
-            if atual is None or ant is None or pd.isna(atual) or pd.isna(ant) or ant == 0:
-                return "—"
-            return f"{(atual - ant) / ant * 100:+.0f}%"
-
-        def _pegar_t20_temp(df, i, mes, col):
-            if mes is None:
-                return np.nan
-            x = df[(df["idx"] == i) & (df["MES"] == mes)]
-            return x[col].iloc[0] if len(x) else np.nan
-
-        if _res_t20_temp is None:
+        _classe_dsv_temp = "Raro" if _visao_dsv_temp == _rot_raro_dsv_temp else "Comum"
+        _raro_dsv_temp = _classe_dsv_temp == "Raro"
+        _k_dsv_temp = _classe_dsv_temp.lower()
+        _c1_dsv_temp, _c2_dsv_temp, _c3_dsv_temp, _c4_dsv_temp, _c5_dsv_temp = st.columns(5)
+        with _c1_dsv_temp:
+            _mes_dsv_temp = st.selectbox("Mês", options=_meses_dsv_temp, format_func=label_mes, key="dsv_mes_temp")
+        with _c2_dsv_temp:
+            _topn_dsv_temp = st.selectbox(
+                "Mostrar os primeiros (casos)", options=[10, 20, 30, 40, 50, 100], index=2, key="dsv_topn_temp",
+                help="Cada caso é um prestador num procedimento. A tabela completa vem no botão de download.",
+            )
+        with _c3_dsv_temp:
+            _piso_dsv_temp = st.number_input(
+                "Mínimo de procedimentos", min_value=DESVIOS_VOLUME_PISO_TEMP, value=10 if _raro_dsv_temp else 30,
+                step=5, key=f"dsv_piso_{_k_dsv_temp}_temp",
+                help="Piso de procedimentos do prestador naquele procedimento no mês (evita sinalizar 4 contra média 1).",
+            )
+        with _c4_dsv_temp:
+            _dmin_dsv_temp = st.number_input(
+                "Desvio mínimo (%)", min_value=0, value=500 if _raro_dsv_temp else 50, step=25,
+                key=f"dsv_dmin_{_k_dsv_temp}_temp",
+                help="Desvio sobre a referência: 100% = o dobro da média; 500% = 6 vezes a média.",
+            )
+        with _c5_dsv_temp:
+            _ordem_dsv_temp = st.selectbox(
+                "Ordenar por", options=["Desvio (%)", "Procedimentos acima do esperado"], key="dsv_ordem_temp",
+            )
+        with st.expander("⚙️ Critérios de classificação", expanded=False):
+            _cc1_dsv_temp, _cc2_dsv_temp = st.columns(2)
+            with _cc1_dsv_temp:
+                _limraro_dsv_temp = st.number_input(
+                    "Procedimento raro = média nacional por prestador abaixo de",
+                    min_value=1.0, max_value=50.0, value=float(DESVIOS_LIMITE_RARO_TEMP), step=0.5,
+                    key="dsv_limraro_temp",
+                    help="Média de procedimentos por prestador que fez o procedimento no mês (Brasil todo, nos filtros).",
+                )
+            with _cc2_dsv_temp:
+                _minref_dsv_temp = st.number_input(
+                    "Mínimo de outros prestadores na referência", min_value=1, max_value=50,
+                    value=int(DESVIOS_MIN_REFERENCIA_TEMP), step=1, key="dsv_minref_temp",
+                    help="Se a cidade tiver menos que isso, a referência passa a ser a do estado (UF).",
+                )
+        _idx_mes_dsv_temp = _meses_dsv_temp.index(_mes_dsv_temp)
+        _mes_ant_dsv_temp = _meses_dsv_temp[_idx_mes_dsv_temp + 1] if _idx_mes_dsv_temp + 1 < len(_meses_dsv_temp) else None
+        _res_dsv_temp = _desvios_temp(
+            df_filtrado, usuarios_filtrado, _chave_dsv_temp, _mes_dsv_temp, _mes_ant_dsv_temp,
+            limite_raro=float(_limraro_dsv_temp), min_ref=int(_minref_dsv_temp),
+        )
+        if _res_dsv_temp is None:
             st.info("Sem dados nos filtros atuais.")
         else:
-            _mes_a_t20_temp, _mes_p_t20_temp = _res_t20_temp["mes_atual"], _res_t20_temp["mes_ant"]
-            _dia_t20_temp = _res_t20_temp["dia_corte"]
-            _la_t20_temp = label_mes(_mes_a_t20_temp)
-            _lp_t20_temp = label_mes(_mes_p_t20_temp) if _mes_p_t20_temp else None
-            _lim_t20_temp = _res_t20_temp["limiar"]
-            _volmin_t20_temp = _res_t20_temp["volume_minimo"]
-            _parcial_t20_temp = _dia_t20_temp < calendar.monthrange(
-                int(_mes_a_t20_temp[:4]), int(_mes_a_t20_temp[5:7])
-            )[1]
-            _comp_t20_temp, _mens_t20_temp = _res_t20_temp["comp"], _res_t20_temp["mensal"]
-            _procs_t20_temp, _esp_t20_temp = _res_t20_temp["procs"], _res_t20_temp["esp"]
-            st.caption(
-                f"Prestadores do quadro \"Oportunidade por prestador — Grupo A (Top 20)\" da apresentação · "
-                f"Mês avaliado: **{_la_t20_temp}** (até o dia {_dia_t20_temp:02d})"
-                + (f", comparado com {_lp_t20_temp} até o mesmo dia" if _lp_t20_temp else "")
-                + f" · 🚩 = procedimento com volume ≥ {_lim_t20_temp:.0f}× o \"normal\" (média de procedimentos por "
-                f"prestador naquele procedimento, mesmo período e filtros) e pelo menos {_volmin_t20_temp} "
-                "procedimentos · Respeita os filtros da barra lateral · Baseline e oportunidade são os valores da "
-                "apresentação, não saem desta base."
+            _T_dsv_temp = _res_dsv_temp["tabela"]
+            _sel_dsv_temp = _T_dsv_temp[
+                (_T_dsv_temp["classe"] == _classe_dsv_temp)
+                & (_T_dsv_temp["qp"] >= _piso_dsv_temp)
+                & (_T_dsv_temp["desvio_pct"] >= _dmin_dsv_temp)
+            ].copy()
+            _sel_dsv_temp = _sel_dsv_temp.sort_values(
+                "desvio_pct" if _ordem_dsv_temp == "Desvio (%)" else "acima", ascending=False
             )
-            _linhas_t20_temp = []   # dados de cada prestador, usados no resumo e nos expansores
-            for _i_t20_temp_, (_nome_ref_t20_temp, _cods_t20_temp, _base_ref_t20_temp, _op_ref_t20_temp,
-                               _pct_ref_t20_temp) in enumerate(PRESTADORES_TOP20_TEMP):
-                _inf_t20_temp = _res_t20_temp["info"].get(_i_t20_temp_)
-                _cods_stat_t20_temp = _inf_t20_temp["codigos_ativos"] if _inf_t20_temp else list(_cods_t20_temp)
-                _status_txt_t20_temp = " / ".join(dict.fromkeys(
-                    _status_t20_temp[c] for c in _cods_stat_t20_temp if c in _status_t20_temp
-                )) or "—"
-                _pa_t20_temp = _procs_t20_temp[
-                    (_procs_t20_temp["idx"] == _i_t20_temp_) & (_procs_t20_temp["MES"] == _mes_a_t20_temp)
-                ]
-                _exc_t20_temp = _pa_t20_temp[
-                    (_pa_t20_temp["razao"] >= _lim_t20_temp) & (_pa_t20_temp["qp"] >= _volmin_t20_temp)
-                ].sort_values("razao", ascending=False)
-                _linhas_t20_temp.append({
-                    "i": _i_t20_temp_, "nome_ref": _nome_ref_t20_temp, "cods": _cods_t20_temp, "inf": _inf_t20_temp,
-                    "status": _status_txt_t20_temp, "base_ref": _base_ref_t20_temp, "op_ref": _op_ref_t20_temp,
-                    "pct_ref": _pct_ref_t20_temp, "exc": _exc_t20_temp, "pa": _pa_t20_temp,
-                    "qp_a": _pegar_t20_temp(_comp_t20_temp, _i_t20_temp_, _mes_a_t20_temp, "qp"),
-                    "qp_p": _pegar_t20_temp(_comp_t20_temp, _i_t20_temp_, _mes_p_t20_temp, "qp"),
-                    "cs_a": _pegar_t20_temp(_comp_t20_temp, _i_t20_temp_, _mes_a_t20_temp, "cs"),
-                    "cs_p": _pegar_t20_temp(_comp_t20_temp, _i_t20_temp_, _mes_p_t20_temp, "cs"),
-                    "val_a": _pegar_t20_temp(_comp_t20_temp, _i_t20_temp_, _mes_a_t20_temp, "valor"),
-                    "val_p": _pegar_t20_temp(_comp_t20_temp, _i_t20_temp_, _mes_p_t20_temp, "valor"),
-                    "vid_a": _pegar_t20_temp(_comp_t20_temp, _i_t20_temp_, _mes_a_t20_temp, "vidas"),
-                    "pv_a": _pegar_t20_temp(_comp_t20_temp, _i_t20_temp_, _mes_a_t20_temp, "proc_vida"),
-                })
-
-            # ---------- resumo dos 20 ----------
-            _resumo_t20_temp = pd.DataFrame([
-                {
-                    "#": _l["i"] + 1,
-                    "Prestador (apresentação)": _l["nome_ref"],
-                    "Cidade / UF": (
-                        " / ".join(_l["inf"]["cidades"]) + " / " + " / ".join(_l["inf"]["ufs"])
-                        if _l["inf"] else "sem movimento no período"
-                    ),
-                    "Situação na BASE": _l["status"],
-                    f"QP {_lp_t20_temp or 'anterior'}": _i_t20_temp(_l["qp_p"]),
-                    f"QP {_la_t20_temp}": _i_t20_temp(_l["qp_a"]),
-                    "Var. QP": _var_t20_temp(_l["qp_a"], _l["qp_p"]),
-                    f"CS {_lp_t20_temp or 'anterior'}": _f1_t20_temp(_l["cs_p"]),
-                    f"CS {_la_t20_temp}": _f1_t20_temp(_l["cs_a"]),
-                    f"Valor Autorizado {_la_t20_temp}": fmt_brl(_l["val_a"]) if pd.notna(_l["val_a"]) else "—",
-                    f"🚩 Proc. ≥ {_lim_t20_temp:.0f}× normal": str(len(_l["exc"])) if _l["inf"] else "—",
-                    "Baseline (R$ mil/ano)": _i_t20_temp(_l["base_ref"]),
-                    "Oport. líquida (R$ mil/ano)": _i_t20_temp(_l["op_ref"]),
-                    "% oport.": f"{_l['pct_ref']}%",
-                }
-                for _l in _linhas_t20_temp
-            ])
-            _n_sem_mov_t20_temp = sum(1 for _l in _linhas_t20_temp if not _l["inf"])
-            st.dataframe(_resumo_t20_temp, hide_index=True, use_container_width=True)
-            if _n_sem_mov_t20_temp:
+            _la_dsv_temp = label_mes(_mes_dsv_temp)
+            _lp_dsv_temp = label_mes(_mes_ant_dsv_temp) if _mes_ant_dsv_temp else None
+            st.caption(
+                f"Mês: **{_la_dsv_temp}** (dados até o dia {_res_dsv_temp['dia_max']:02d})"
+                + (f", comparado com {_lp_dsv_temp} até o mesmo dia" if _lp_dsv_temp else "")
+                + " · A referência é a média dos OUTROS prestadores (o próprio prestador não entra na média) · "
+                + (
+                    f"Raros = procedimentos com média nacional abaixo de {float(_limraro_dsv_temp):g} procedimentos "
+                    "por prestador; compara o volume do prestador com essa média."
+                    if _raro_dsv_temp else
+                    f"Comuns = procedimentos com média nacional de {float(_limraro_dsv_temp):g} ou mais por prestador; "
+                    "compara os procedimentos por paciente com a média da cidade (ou do estado, se a cidade tiver "
+                    f"menos de {int(_minref_dsv_temp) + 1} prestadores)."
+                )
+                + " · Respeita os filtros da barra lateral."
+            )
+            if _sel_dsv_temp.empty:
+                st.info("Nenhum caso atende aos critérios. Tente reduzir o desvio mínimo ou o mínimo de procedimentos.")
+            else:
                 st.caption(
-                    f"{_n_sem_mov_t20_temp} prestador(es) sem nenhum procedimento nos filtros atuais: "
-                    + ", ".join(_l["nome_ref"] for _l in _linhas_t20_temp if not _l["inf"])
-                    + ". Os códigos usados para cada prestador estão em PRESTADORES_TOP20_TEMP (início do app.py)."
+                    f"**{len(_sel_dsv_temp)}** caso(s) em **{_sel_dsv_temp['CD_PRESTADOR'].nunique()}** prestador(es) "
+                    f"atendem aos critérios — mostrando os {min(len(_sel_dsv_temp), int(_topn_dsv_temp))} primeiros."
                 )
 
-            # ---------- um expansor por prestador ----------
-            for _l in _linhas_t20_temp:
-                _inf_t20_temp = _l["inf"]
-                _local_t20_temp = (
-                    " / ".join(_inf_t20_temp["cidades"]) + " / " + " / ".join(_inf_t20_temp["ufs"])
-                    if _inf_t20_temp else ""
-                )
-                _titulo_t20_temp = f"#{_l['i'] + 1} · {_l['nome_ref']}" + (
-                    f" — {_local_t20_temp} · QP {_la_t20_temp}: {_i_t20_temp(_l['qp_a'])} "
-                    f"({_var_t20_temp(_l['qp_a'], _l['qp_p'])}) · CS {_f1_t20_temp(_l['cs_a'])}"
-                    + (f" · 🚩 {len(_l['exc'])}" if len(_l["exc"]) else "")
-                    if _inf_t20_temp else " — sem movimento no período/filtros"
-                )
-                with st.expander(_titulo_t20_temp, expanded=False):
-                    _cods_txt_t20_temp = ", ".join(str(c) for c in _l["cods"])
-                    if not _inf_t20_temp:
-                        st.info(
-                            f"Nenhum procedimento desse prestador (código(s) {_cods_txt_t20_temp}) nos filtros atuais. "
-                            f"Situação na BASE: {_l['status']}."
+                def _situacao_dsv_temp(d_ant):
+                    if _mes_ant_dsv_temp is None:
+                        return "—"
+                    if pd.isna(d_ant):
+                        return "Novo"
+                    return "Persistente" if d_ant >= _dmin_dsv_temp else "Em alta"
+
+                def _num_dsv_temp(v, casas=1):
+                    return "—" if v is None or pd.isna(v) else f"{v:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+                def _leitura_dsv_temp(r):
+                    if _raro_dsv_temp:
+                        return (
+                            f"Fez {int(r.qp)} procedimentos; a média nacional por prestador é "
+                            f"{_num_dsv_temp(r.media_nac)} ({_num_dsv_temp(r.razao)}× a média, desvio de "
+                            f"+{_num_dsv_temp(r.desvio_pct, 0)}%)."
                         )
-                        st.caption(
-                            f"Na apresentação: baseline R$ {_l['base_ref']} mil/ano · oportunidade líquida "
-                            f"R$ {_l['op_ref']} mil/ano ({_l['pct_ref']}%)."
-                        )
-                        continue
-                    st.caption(
-                        f"Código(s) com movimento: {', '.join(str(c) for c in _inf_t20_temp['codigos_ativos'])} · "
-                        f"Nome na base: {' / '.join(_inf_t20_temp['nomes']) or '—'} · "
-                        f"Cluster: {' / '.join(_inf_t20_temp['clusters']) or '—'} · "
-                        f"Situação na BASE: {_l['status']} · "
-                        f"Na apresentação: baseline R$ {_l['base_ref']} mil/ano, oportunidade líquida "
-                        f"R$ {_l['op_ref']} mil/ano ({_l['pct_ref']}%)."
-                        + (
-                            " · Números somados dos códigos acima, tratados como o mesmo prestador."
-                            if len(_inf_t20_temp["codigos_ativos"]) > 1 else ""
-                        )
+                    return (
+                        f"Faz {_num_dsv_temp(r.pv)} por paciente ({int(r.qp)} procedimentos em {int(r.vidas)} "
+                        f"pacientes); a média {'da cidade' if r.ref_nivel == 'Cidade' else 'do estado'} é "
+                        f"{_num_dsv_temp(r.ref_pv)} ({_num_dsv_temp(r.razao)}× a média, desvio de "
+                        f"+{_num_dsv_temp(r.desvio_pct, 0)}%)."
                     )
-                    _pa_t20_temp = _l["pa"].sort_values("qp", ascending=False)
-                    _qp_tot_t20_temp = _pa_t20_temp["qp"].sum()
-                    _ea_t20_temp = _esp_t20_temp[
-                        (_esp_t20_temp["idx"] == _l["i"]) & (_esp_t20_temp["MES"] == _mes_a_t20_temp)
-                    ].sort_values("qp", ascending=False)
-                    # ---- justificativa (só o que os números mostram) ----
-                    _just_t20_temp = [
-                        f"Em {_la_t20_temp} (até o dia {_dia_t20_temp:02d}): **{_i_t20_temp(_l['qp_a'])}** procedimentos"
-                        + (f" ({_var_t20_temp(_l['qp_a'], _l['qp_p'])} vs {_lp_t20_temp})" if _lp_t20_temp else "")
-                        + f" e valor autorizado de **{fmt_brl(_l['val_a']) if pd.notna(_l['val_a']) else '—'}**"
-                        + (f" ({_var_t20_temp(_l['val_a'], _l['val_p'])} vs {_lp_t20_temp})" if _lp_t20_temp else "")
-                        + ".",
-                        f"CS **{_f1_t20_temp(_l['cs_a'])}**"
-                        + (f" (em {_lp_t20_temp}: {_f1_t20_temp(_l['cs_p'])})" if _lp_t20_temp else "")
-                        + f" · **{_i_t20_temp(_l['vid_a'])}** vidas → **{_f1_t20_temp(_l['pv_a'])}** procedimentos por vida.",
-                    ]
-                    if len(_pa_t20_temp) >= 1 and _qp_tot_t20_temp > 0:
-                        _top3_t20_temp = _pa_t20_temp.head(3)
-                        _just_t20_temp.append(
-                            "Os 3 procedimentos de maior volume ("
-                            + "; ".join(f"{r.NOME_PROCEDIMENTO}: {_i_t20_temp(r.qp)}" for r in _top3_t20_temp.itertuples())
-                            + f") somam **{_top3_t20_temp['qp'].sum() / _qp_tot_t20_temp * 100:.0f}%** dos procedimentos do período."
-                        )
-                    if len(_ea_t20_temp) and _ea_t20_temp["qp"].sum() > 0:
-                        _e0_t20_temp = _ea_t20_temp.iloc[0]
-                        _just_t20_temp.append(
-                            f"Especialidade de maior volume: **{_e0_t20_temp['ESPECIALIDADE']}** "
-                            f"({_e0_t20_temp['qp'] / _ea_t20_temp['qp'].sum() * 100:.0f}% dos procedimentos)."
-                        )
-                    if len(_l["exc"]):
-                        _just_t20_temp.append(
-                            f"🚩 **{len(_l['exc'])}** procedimento(s) com volume ≥ {_lim_t20_temp:.0f}× o normal: "
-                            + "; ".join(
-                                f"{r.NOME_PROCEDIMENTO} ({_f1_t20_temp(r.razao)}×, {_i_t20_temp(r.qp)} proc.)"
-                                for r in _l["exc"].head(3).itertuples()
-                            )
-                            + (f" e mais {len(_l['exc']) - 3}." if len(_l["exc"]) > 3 else ".")
-                        )
+
+                def _montar_dsv_temp(S):
+                    t = pd.DataFrame({
+                        "Prestador": S["prestador"].fillna(S["CD_PRESTADOR"].astype(str)).values,
+                        "Cidade / UF": (S["cidade"].astype(str) + " / " + S["uf"].astype(str)).values,
+                        "Procedimento": S["NOME_PROCEDIMENTO"].values,
+                        "Especialidade": S["ESPECIALIDADE"].values,
+                        "QP": S["qp"].astype(int).values,
+                    })
+                    if _raro_dsv_temp:
+                        t["Média nacional por prestador"] = S["media_nac"].round(2).values
                     else:
-                        _just_t20_temp.append(
-                            f"Nenhum procedimento com volume ≥ {_lim_t20_temp:.0f}× o normal "
-                            f"(com pelo menos {_volmin_t20_temp} procedimentos) em {_la_t20_temp}."
-                        )
-                    st.markdown("**Justificativa**  \n" + "  \n".join(f"- {t}" for t in _just_t20_temp))
+                        t["Pacientes"] = S["vidas"].astype(int).values
+                        t["Proc. por paciente"] = S["pv"].round(2).values
+                        t["Referência por paciente"] = S["ref_pv"].round(2).values
+                        t["Referência"] = S["ref_nivel"].values
+                        t["Prestadores na referência"] = S["n_ref_pv"].astype(int).values
+                    t["Vezes a média"] = S["razao"].round(1).values
+                    t["Desvio (%)"] = S["desvio_pct"].round(0).values
+                    t["Procedimentos acima do esperado"] = S["acima"].round(0).values
+                    t[f"Desvio {_lp_dsv_temp or 'mês anterior'} (%)"] = S["desvio_ant"].round(0).values
+                    t["Situação"] = [_situacao_dsv_temp(x) for x in S["desvio_ant"]]
+                    t["Leitura"] = [_leitura_dsv_temp(r) for r in S.itertuples(index=False)]
+                    return t
 
-                    # ---- evolução mensal (meses completos dos filtros) ----
-                    st.markdown("**Evolução mensal**")
-                    _m_t20_temp = _mens_t20_temp[_mens_t20_temp["idx"] == _l["i"]].sort_values("MES")
-                    _tab_m_t20_temp = pd.DataFrame({
-                        "Mês": [
-                            label_mes(m) + (
-                                f" (até dia {_dia_t20_temp:02d})" if (m == _mes_a_t20_temp and _parcial_t20_temp) else ""
-                            )
-                            for m in _m_t20_temp["MES"]
-                        ],
-                        "QP": [_i_t20_temp(x) for x in _m_t20_temp["qp"]],
-                        "Vidas": [_i_t20_temp(x) for x in _m_t20_temp["vidas"]],
-                        "Soma de uso": [_i_t20_temp(x) for x in _m_t20_temp["uso"]],
-                        "Valor Autorizado": [fmt_brl(x) for x in _m_t20_temp["valor"]],
-                        "Valor por procedimento": [fmt_brl(x) if pd.notna(x) else "—" for x in _m_t20_temp["valor_proc"]],
-                        "Proc. por vida": [_f1_t20_temp(x) for x in _m_t20_temp["proc_vida"]],
-                        "CS": [_f1_t20_temp(x) for x in _m_t20_temp["cs"]],
-                    })
-                    st.dataframe(_tab_m_t20_temp, hide_index=True, use_container_width=True)
-                    if _parcial_t20_temp:
-                        st.caption(
-                            f"{label_mes(_mes_a_t20_temp)} é parcial (dados até o dia {_dia_t20_temp:02d}) — "
-                            "compare com os meses anteriores pelo resumo acima, que usa o mesmo dia de corte."
-                        )
-
-                    # ---- principais procedimentos ----
-                    st.markdown(f"**Principais procedimentos em {_la_t20_temp}** (até o dia {_dia_t20_temp:02d})")
-                    _pant_t20_temp = _procs_t20_temp[
-                        (_procs_t20_temp["idx"] == _l["i"]) & (_procs_t20_temp["MES"] == _mes_p_t20_temp)
-                    ].set_index("NOME_PROCEDIMENTO")["qp"] if _mes_p_t20_temp else pd.Series(dtype=float)
-                    _pt_t20_temp = _pa_t20_temp.head(12)
-                    _tab_p_t20_temp = pd.DataFrame({
-                        "Procedimento": _pt_t20_temp["NOME_PROCEDIMENTO"].astype(str).values,
-                        "Especialidade": _pt_t20_temp["ESPECIALIDADE"].astype(str).values,
-                        f"QP {_lp_t20_temp or 'anterior'}": [
-                            _i_t20_temp(_pant_t20_temp.get(p)) for p in _pt_t20_temp["NOME_PROCEDIMENTO"]
-                        ],
-                        f"QP {_la_t20_temp}": [_i_t20_temp(x) for x in _pt_t20_temp["qp"]],
-                        "Valor Autorizado": [fmt_brl(x) for x in _pt_t20_temp["valor"]],
-                        "Normal (média por prestador)": [_f1_t20_temp(x) for x in _pt_t20_temp["normal"]],
-                        "Vezes o normal": [_f1_t20_temp(x) for x in _pt_t20_temp["razao"]],
-                        "Vidas": [_i_t20_temp(x) for x in _pt_t20_temp["vidas"]],
-                        "Proc. por vida": [
-                            _f1_t20_temp(q / v if v else np.nan) for q, v in zip(_pt_t20_temp["qp"], _pt_t20_temp["vidas"])
-                        ],
-                        "Proc. por vida (nacional)": [_f1_t20_temp(x) for x in _pt_t20_temp["taxa"]],
-                        "🚩": [
-                            "🚩" if (r >= _lim_t20_temp and q >= _volmin_t20_temp) else ""
-                            for r, q in zip(_pt_t20_temp["razao"], _pt_t20_temp["qp"])
-                        ],
-                    })
-                    st.dataframe(_tab_p_t20_temp, hide_index=True, use_container_width=True)
-                    if len(_pa_t20_temp) > len(_pt_t20_temp):
-                        st.caption(f"Mostrando os {len(_pt_t20_temp)} de maior volume, de {len(_pa_t20_temp)} procedimentos.")
-
-                    # ---- especialidades ----
-                    if len(_ea_t20_temp):
-                        st.markdown(f"**Especialidades em {_la_t20_temp}**")
-                        _tot_e_t20_temp = _ea_t20_temp["qp"].sum()
-                        _tab_e_t20_temp = pd.DataFrame({
-                            "Especialidade": _ea_t20_temp["ESPECIALIDADE"].values,
-                            f"QP {_la_t20_temp}": [_i_t20_temp(x) for x in _ea_t20_temp["qp"]],
-                            "% dos procedimentos": [
-                                f"{x / _tot_e_t20_temp * 100:.0f}%" if _tot_e_t20_temp else "—" for x in _ea_t20_temp["qp"]
-                            ],
-                            "Valor Autorizado": [fmt_brl(x) for x in _ea_t20_temp["valor"]],
-                        })
-                        st.dataframe(_tab_e_t20_temp, hide_index=True, use_container_width=True)
-                    st.caption(
-                        "\"Normal\" = média de procedimentos por prestador que fez esse procedimento no mesmo período. "
-                        "\"Proc. por vida (nacional)\" = procedimentos ÷ vidas do Brasil todo (sem filtro) nesse "
-                        "procedimento. CS = QP ÷ FASE × 10. Dado observado, sem conclusão sobre a causa."
+                _tab_dsv_temp = _montar_dsv_temp(_sel_dsv_temp.head(int(_topn_dsv_temp)))
+                _tab_dsv_temp.insert(0, "#", range(1, len(_tab_dsv_temp) + 1))
+                st.dataframe(
+                    _tab_dsv_temp, hide_index=True, use_container_width=True,
+                    column_config={
+                        "Desvio (%)": st.column_config.NumberColumn(format="%.0f%%"),
+                        f"Desvio {_lp_dsv_temp or 'mês anterior'} (%)": st.column_config.NumberColumn(format="%.0f%%"),
+                        "Vezes a média": st.column_config.NumberColumn(format="%.1f×"),
+                    },
+                )
+                st.caption(
+                    "**Situação:** Persistente = já estava acima do desvio mínimo no mês anterior · Em alta = existia no "
+                    "mês anterior, mas abaixo do critério · Novo = sem registro comparável no mês anterior. "
+                    "\"Procedimentos acima do esperado\" = procedimentos do prestador menos o que ele faria na média "
+                    "da referência. Dado observado, sem conclusão sobre a causa."
+                )
+                st.download_button(
+                    "⬇️ Baixar todos os casos (CSV)",
+                    data=_montar_dsv_temp(_sel_dsv_temp).to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
+                    file_name=f"desvios_{_k_dsv_temp}_{_mes_dsv_temp}.csv", mime="text/csv",
+                    key=f"dsv_download_{_k_dsv_temp}_temp",
+                )
+                # ---- prestadores com mais procedimentos desviados ----
+                with st.expander("📋 Prestadores com mais procedimentos desviados", expanded=False):
+                    _pp_dsv_temp = _sel_dsv_temp.groupby("CD_PRESTADOR").agg(
+                        prestador=("prestador", "first"), cidade=("cidade", "first"), uf=("uf", "first"),
+                        casos=("NOME_PROCEDIMENTO", "nunique"), acima=("acima", "sum"),
+                    )
+                    _pior_dsv_temp = _sel_dsv_temp.sort_values("desvio_pct", ascending=False) \
+                        .drop_duplicates("CD_PRESTADOR").set_index("CD_PRESTADOR")
+                    _pp_dsv_temp["pior"] = _pior_dsv_temp["NOME_PROCEDIMENTO"]
+                    _pp_dsv_temp["pior_desvio"] = _pior_dsv_temp["desvio_pct"]
+                    _pp_dsv_temp = _pp_dsv_temp.sort_values(["casos", "acima"], ascending=False).head(int(_topn_dsv_temp))
+                    st.dataframe(
+                        pd.DataFrame({
+                            "Prestador": _pp_dsv_temp["prestador"].fillna(_pp_dsv_temp.index.to_series().astype(str)).values,
+                            "Cidade / UF": (_pp_dsv_temp["cidade"].astype(str) + " / " + _pp_dsv_temp["uf"].astype(str)).values,
+                            "Procedimentos desviados": _pp_dsv_temp["casos"].astype(int).values,
+                            "Procedimentos acima do esperado": _pp_dsv_temp["acima"].round(0).values,
+                            "Maior desvio em": _pp_dsv_temp["pior"].values,
+                            "Desvio (%)": _pp_dsv_temp["pior_desvio"].round(0).values,
+                        }),
+                        hide_index=True, use_container_width=True,
+                        column_config={"Desvio (%)": st.column_config.NumberColumn(format="%.0f%%")},
                     )
     with tab_risco_temp:
         st.markdown("#### 🎯 Índice de Risco do Prestador")
