@@ -713,20 +713,26 @@ def _prestadores_excesso_temp(
 #     procedimentos por prestador. Ex.: prestador faz 30 frenectomias; a média nacional é 1.
 # Em todos os casos a referência é a dos OUTROS prestadores (o próprio prestador sai da média) e usa os mesmos
 # filtros da página (Mês/Plano/Especialidade).
+# EXCEÇÃO — RESTAURAÇÃO EM RESINA FOTOPOLIMERIZAVEL (1, 2, 3 e 4 faces): regra fixa em vez de média da cidade. É desvio
+# quando o prestador faz DESVIOS_REST_LIMITE_TEMP ou mais procedimentos POR USUÁRIO (procedimentos ÷ usuários distintos
+# do prestador naquele procedimento e mês). Esses procedimentos ficam sempre na visão "Comuns".
 DESVIOS_LIMITE_RARO_TEMP = 5.0   # média nacional de procedimentos por prestador abaixo disso = procedimento raro
 DESVIOS_MIN_REFERENCIA_TEMP = 3  # nº mínimo de OUTROS prestadores na referência (cidade; senão UF)
 DESVIOS_VOLUME_PISO_TEMP = 3     # piso de procedimentos pra entrar na tabela em cache (a tela escolhe o piso dela)
+DESVIOS_REST_LIMITE_TEMP = 8     # restaurações em resina: desvio quando procedimentos por usuário >= este valor
+DESVIOS_REST_PREFIXO_TEMP = "RESTAURACAO EM RESINA FOTOPOLIMERIZAVEL"  # (nome normalizado, sem acento)
 @st.cache_data(show_spinner="Calculando desvios por prestador e procedimento...")
 def _desvios_temp(
     _df, _usuarios, chave_filtros, mes, mes_ant,
     limite_raro=DESVIOS_LIMITE_RARO_TEMP, min_ref=DESVIOS_MIN_REFERENCIA_TEMP, piso=DESVIOS_VOLUME_PISO_TEMP,
+    limite_rest=DESVIOS_REST_LIMITE_TEMP,
 ):
     """
     Uma linha por (prestador, procedimento) no `mes` com: qp, vidas, procedimentos por paciente, referência (cidade
     ou UF) e desvio por paciente; média nacional por prestador (sem o próprio) e desvio de volume; classe do
     procedimento (Comum/Raro) e os mesmos desvios no mês anterior (até o mesmo dia de corte), pra marcar
-    persistente/novo. Só entram linhas com qp >= `piso` e algum desvio positivo. `_df`/`_usuarios` não entram no
-    hash (a chave é `chave_filtros`)."""
+    persistente/novo. Só entram linhas com qp >= `piso` e algum desvio positivo (ou, nas restaurações em resina,
+    procedimentos por usuário >= `limite_rest`). `_df`/`_usuarios` não entram no hash (a chave é `chave_filtros`)."""
     cols_idx = ["CD_PRESTADOR", "NOME_PROCEDIMENTO"]
     dia_max = int(_df.loc[_df["MES"].astype(str) == mes, "DIA"].max())
     d_mes = _df[(_df["MES"].astype(str) == mes)]
@@ -768,6 +774,14 @@ def _desvios_temp(
         g["ref_nivel"] = np.where(usa_cidade, "Cidade", np.where(g["ref_uf"].notna(), "UF", ""))
         g["n_ref_pv"] = np.where(usa_cidade, g["n_outros_cidade"], g["n_outros_uf"])
         g["pv"] = np.where(g["vidas"] > 0, g["qp"] / g["vidas"], np.nan)
+        # restaurações em resina fotopolimerizável: regra fixa (limite por usuário) no lugar da média da cidade/UF
+        nomes_rest = {n for n in g["NOME_PROCEDIMENTO"].unique() if (normalizar_texto(n) or "").startswith(DESVIOS_REST_PREFIXO_TEMP)}
+        g["regra_fixa"] = g["NOME_PROCEDIMENTO"].isin(nomes_rest)
+        rf = g["regra_fixa"]
+        g.loc[rf, "ref_pv"] = float(limite_rest)
+        g.loc[rf, "ref_nivel"] = "Regra fixa"
+        g.loc[rf, "n_ref_pv"] = np.nan
+        g["classe"] = np.where(rf, "Comum", g["classe"])
         g["razao_pv"] = np.where(g["ref_pv"] > 0, g["pv"] / g["ref_pv"], np.nan)
         g["razao_vol"] = np.where(g["media_nac"] > 0, g["qp"] / g["media_nac"], np.nan)
         # métrica que vale pra classe do procedimento (Comum = por paciente x cidade; Raro = volume x nacional)
@@ -775,12 +789,15 @@ def _desvios_temp(
         g["desvio_pct"] = (g["razao"] - 1) * 100
         return g[cols_idx + [
             "qp", "vidas", "pv", "ref_pv", "ref_nivel", "n_ref_pv", "razao_pv", "media_nac", "n_outros_nac",
-            "razao_vol", "classe", "razao", "desvio_pct",
+            "razao_vol", "classe", "razao", "desvio_pct", "regra_fixa",
         ] + ["cidade", "uf"]]
 
     u_mes = _usuarios[_usuarios["MES"].astype(str) == mes]
     atual = _metricas(d_mes, u_mes)
-    atual = atual[(atual["qp"] >= piso) & (atual["desvio_pct"] > 0)].copy()
+    atual = atual[
+        (atual["qp"] >= piso)
+        & (((~atual["regra_fixa"]) & (atual["desvio_pct"] > 0)) | (atual["regra_fixa"] & (atual["pv"] >= limite_rest)))
+    ].copy()
     # mês anterior, até o mesmo dia de corte
     d_ant = u_ant = None
     if mes_ant:
@@ -4937,7 +4954,7 @@ elif st.session_state.pagina == "severidade":
                 key="dsv_ordem_temp",
             )
         with st.expander("⚙️ Critérios de classificação", expanded=False):
-            _cc1_dsv_temp, _cc2_dsv_temp = st.columns(2)
+            _cc1_dsv_temp, _cc2_dsv_temp, _cc3_dsv_temp = st.columns(3)
             with _cc1_dsv_temp:
                 _limraro_dsv_temp = st.number_input(
                     "Procedimento raro = média nacional por prestador abaixo de",
@@ -4951,11 +4968,21 @@ elif st.session_state.pagina == "severidade":
                     value=int(DESVIOS_MIN_REFERENCIA_TEMP), step=1, key="dsv_minref_temp",
                     help="Se a cidade tiver menos que isso, a referência passa a ser a do estado (UF).",
                 )
+            with _cc3_dsv_temp:
+                _limrest_dsv_temp = st.number_input(
+                    "Restauração em resina: desvio a partir de (procedimentos por usuário)",
+                    min_value=1, max_value=100, value=int(DESVIOS_REST_LIMITE_TEMP), step=1, key="dsv_limrest_temp",
+                    help=(
+                        "Vale para RESTAURAÇÃO EM RESINA FOTOPOLIMERIZAVEL (1, 2, 3 e 4 faces): regra fixa no lugar da "
+                        "média da cidade. É desvio quando o prestador faz esta quantidade ou mais por usuário "
+                        "(procedimentos ÷ usuários distintos). Use 9 para valer só acima de 8."
+                    ),
+                )
         _idx_mes_dsv_temp = _meses_dsv_temp.index(_mes_dsv_temp)
         _mes_ant_dsv_temp = _meses_dsv_temp[_idx_mes_dsv_temp + 1] if _idx_mes_dsv_temp + 1 < len(_meses_dsv_temp) else None
         _res_dsv_temp = _desvios_temp(
             df_filtrado, usuarios_filtrado, _chave_dsv_temp, _mes_dsv_temp, _mes_ant_dsv_temp,
-            limite_raro=float(_limraro_dsv_temp), min_ref=int(_minref_dsv_temp),
+            limite_raro=float(_limraro_dsv_temp), min_ref=int(_minref_dsv_temp), limite_rest=int(_limrest_dsv_temp),
         )
 
         def _num_dsv_temp(v, casas=1):
@@ -4976,13 +5003,13 @@ elif st.session_state.pagina == "severidade":
             _sel_dsv_temp = _T_dsv_temp[
                 (_T_dsv_temp["classe"] == _classe_dsv_temp)
                 & (_T_dsv_temp["qp"] >= _piso_dsv_temp)
-                & (_T_dsv_temp["desvio_pct"] >= _dmin_dsv_temp)
+                & (_T_dsv_temp["regra_fixa"] | (_T_dsv_temp["desvio_pct"] >= _dmin_dsv_temp))
             ].copy()
             _la_dsv_temp = label_mes(_mes_dsv_temp)
             _lp_dsv_temp = label_mes(_mes_ant_dsv_temp) if _mes_ant_dsv_temp else None
             _dia_dsv_temp = _res_dsv_temp["dia_max"]
             _ref_txt_dsv_temp = (
-                "média nacional de procedimentos por prestador" if _raro_dsv_temp else "média por paciente da cidade (ou do estado)"
+                "média nacional de procedimentos por prestador" if _raro_dsv_temp else "média por paciente da cidade ou do estado"
             )
             st.caption(
                 f"Mês: **{_la_dsv_temp}** (dados até o dia {_dia_dsv_temp:02d})"
@@ -4994,7 +5021,9 @@ elif st.session_state.pagina == "severidade":
                     if _raro_dsv_temp else
                     f"Comuns = procedimentos com média nacional de {float(_limraro_dsv_temp):g} ou mais por prestador; "
                     "compara os procedimentos por paciente com a média da cidade (ou do estado, se a cidade tiver "
-                    f"menos de {int(_minref_dsv_temp) + 1} prestadores)."
+                    f"menos de {int(_minref_dsv_temp) + 1} prestadores). Exceção: RESTAURAÇÃO EM RESINA FOTOPOLIMERIZAVEL "
+                    f"(todas as faces) é desvio a partir de {int(_limrest_dsv_temp)} procedimentos por usuário, "
+                    "independente da média da cidade."
                 )
                 + f" · Entram procedimentos com pelo menos {int(_piso_dsv_temp)} no mês e desvio ≥ "
                 f"{int(_dmin_dsv_temp)}% · Respeita os filtros da barra lateral."
@@ -5006,7 +5035,7 @@ elif st.session_state.pagina == "severidade":
                 _gp_dsv_temp = _sel_dsv_temp.groupby("CD_PRESTADOR").agg(
                     nome=("prestador", "first"), cidade=("cidade", "first"), uf=("uf", "first"),
                     casos=("NOME_PROCEDIMENTO", "nunique"), qp_desv=("qp", "sum"), acima=("acima", "sum"),
-                    desvio_max=("desvio_pct", "max"),
+                    desvio_max=("desvio_pct", "max"), rest=("regra_fixa", "max"),
                 )
                 _pior_dsv_temp = _sel_dsv_temp.sort_values("desvio_pct", ascending=False) \
                     .drop_duplicates("CD_PRESTADOR").set_index("CD_PRESTADOR")
@@ -5015,20 +5044,27 @@ elif st.session_state.pagina == "severidade":
                     "Maior desvio (%)": "desvio_max", "Procedimentos acima do esperado": "acima",
                     "Qtde de procedimentos desviados": "casos",
                 }[_ordem_dsv_temp]
-                _gp_dsv_temp = _gp_dsv_temp.sort_values([_col_ord_dsv_temp, "acima"], ascending=False)
+                # prestadores com restauração em resina acima do limite (regra fixa) aparecem primeiro, como a prioridade
+                # ⭐/🚩 da aba Gerais; dentro de cada grupo vale a ordem escolhida
+                _gp_dsv_temp = _gp_dsv_temp.sort_values(["rest", _col_ord_dsv_temp, "acima"], ascending=False)
                 _top_dsv_temp = _gp_dsv_temp.head(int(_topn_dsv_temp))
                 st.caption(
                     f"**{len(_sel_dsv_temp)}** caso(s) (prestador × procedimento) em **{len(_gp_dsv_temp)}** "
                     f"prestador(es) atendem aos critérios — mostrando os {len(_top_dsv_temp)} primeiros, "
                     f"ordenados por {_ordem_dsv_temp.lower()}."
+                    + (
+                        f" 📏 = restauração em resina com {int(_limrest_dsv_temp)} ou mais procedimentos por usuário "
+                        f"({int(_gp_dsv_temp['rest'].sum())} prestador(es)); esses aparecem primeiro."
+                        if (not _raro_dsv_temp) else ""
+                    )
                 )
 
-                def _situacao_dsv_temp(d_ant):
+                def _situacao_dsv_temp(d_ant, regra_fixa=False):
                     if _mes_ant_dsv_temp is None:
                         return "—"
                     if pd.isna(d_ant):
                         return "Novo"
-                    return "Persistente" if d_ant >= _dmin_dsv_temp else "Em alta"
+                    return "Persistente" if d_ant >= (0 if regra_fixa else _dmin_dsv_temp) else "Em alta"
 
                 def _montar_dsv_temp(S):
                     t = pd.DataFrame({
@@ -5045,13 +5081,13 @@ elif st.session_state.pagina == "severidade":
                         t["Proc. por paciente"] = S["pv"].round(2).values
                         t["Referência por paciente"] = S["ref_pv"].round(2).values
                         t["Referência"] = S["ref_nivel"].values
-                        t["Prestadores na referência"] = S["n_ref_pv"].astype(int).values
+                        t["Prestadores na referência"] = S["n_ref_pv"].astype("Int64").values
                     t["Vezes a média"] = S["razao"].round(1).values
                     t["Desvio (%)"] = S["desvio_pct"].round(0).values
                     t["Procedimentos acima do esperado"] = S["acima"].round(0).values
                     t[f"QP {_lp_dsv_temp or 'mês anterior'}"] = S["qp_ant"].values
                     t[f"Desvio {_lp_dsv_temp or 'mês anterior'} (%)"] = S["desvio_ant"].round(0).values
-                    t["Situação"] = [_situacao_dsv_temp(x) for x in S["desvio_ant"]]
+                    t["Situação"] = [_situacao_dsv_temp(x, f) for x, f in zip(S["desvio_ant"], S["regra_fixa"])]
                     return t
 
                 st.download_button(
@@ -5073,7 +5109,7 @@ elif st.session_state.pagina == "severidade":
                         str(x) for x in (_r_dsv_temp["cidade"], _r_dsv_temp["uf"]) if pd.notna(x) and str(x).strip()
                     )
                     _titulo_dsv_temp = (
-                        f"#{_pos_dsv_temp} · 📐 {_nome_dsv_temp}" + (f" — {_local_dsv_temp}" if _local_dsv_temp else "")
+                        f"#{_pos_dsv_temp} · {'📏 ' if _r_dsv_temp['rest'] else ''}📐 {_nome_dsv_temp}" + (f" — {_local_dsv_temp}" if _local_dsv_temp else "")
                         + f" · {int(_r_dsv_temp['casos'])} procedimento(s) desviado(s) · pior: "
                         f"{_r_dsv_temp['pior_proc']} (+{_num_dsv_temp(_r_dsv_temp['desvio_max'], 0)}%)"
                     )
@@ -5092,8 +5128,11 @@ elif st.session_state.pagina == "severidade":
                             if pd.notna(_qp_tot_dsv_temp) and _qp_tot_dsv_temp else np.nan
                         )
                         _just_dsv_temp = [
-                            f"Em {_la_dsv_temp}, **{int(_r_dsv_temp['casos'])}** procedimento(s) do prestador estão com "
-                            f"desvio ≥ {int(_dmin_dsv_temp)}% sobre a {_ref_txt_dsv_temp}, somando "
+                            f"Em {_la_dsv_temp}, **{int(_r_dsv_temp['casos'])}** procedimento(s) do prestador estão fora do "
+                            f"critério (desvio ≥ {int(_dmin_dsv_temp)}% sobre a {_ref_txt_dsv_temp}"
+                            + ("" if _raro_dsv_temp else
+                               f"; restaurações em resina: {int(_limrest_dsv_temp)} ou mais por usuário")
+                            + "), somando "
                             f"**{_int_dsv_temp(_r_dsv_temp['qp_desv'])}** procedimentos"
                             + (f" ({_peso_dsv_temp:.0f}% dos {_int_dsv_temp(_qp_tot_dsv_temp)} do prestador no mês)"
                                if pd.notna(_peso_dsv_temp) else "")
@@ -5104,17 +5143,20 @@ elif st.session_state.pagina == "severidade":
                                 _sit_txt_dsv_temp = ""
                             elif pd.isna(_c_dsv_temp.desvio_ant):
                                 _sit_txt_dsv_temp = " Sem registro comparável no mês anterior (novo)."
-                            elif _c_dsv_temp.desvio_ant >= _dmin_dsv_temp:
-                                _sit_txt_dsv_temp = (
-                                    f" Já estava acima do critério no mês anterior (persistente: "
-                                    f"{_int_dsv_temp(_c_dsv_temp.qp_ant)} procedimentos, "
-                                    f"+{_num_dsv_temp(_c_dsv_temp.desvio_ant, 0)}%)."
-                                )
                             else:
-                                _sit_txt_dsv_temp = (
-                                    f" No mês anterior estava abaixo do critério (em alta: "
+                                _acima_ant_dsv_temp = _c_dsv_temp.desvio_ant >= (0 if _c_dsv_temp.regra_fixa else _dmin_dsv_temp)
+                                _medida_ant_dsv_temp = (
                                     f"{_int_dsv_temp(_c_dsv_temp.qp_ant)} procedimentos, "
-                                    f"{_num_dsv_temp(_c_dsv_temp.desvio_ant, 0)}%)."
+                                    + (
+                                        f"{_num_dsv_temp(int(_limrest_dsv_temp) * (1 + _c_dsv_temp.desvio_ant / 100))} por usuário"
+                                        if _c_dsv_temp.regra_fixa else
+                                        f"{'+' if _c_dsv_temp.desvio_ant >= 0 else ''}{_num_dsv_temp(_c_dsv_temp.desvio_ant, 0)}%"
+                                    )
+                                )
+                                _sit_txt_dsv_temp = (
+                                    f" Já estava acima do critério no mês anterior (persistente: {_medida_ant_dsv_temp})."
+                                    if _acima_ant_dsv_temp else
+                                    f" No mês anterior estava abaixo do critério (em alta: {_medida_ant_dsv_temp})."
                                 )
                             if _raro_dsv_temp:
                                 _just_dsv_temp.append(
@@ -5124,6 +5166,15 @@ elif st.session_state.pagina == "severidade":
                                     f"outros prestadores fazem) — **{_num_dsv_temp(_c_dsv_temp.razao)}×** a média, desvio de "
                                     f"**+{_num_dsv_temp(_c_dsv_temp.desvio_pct, 0)}%**, cerca de "
                                     f"{_int_dsv_temp(_c_dsv_temp.acima)} procedimentos acima do esperado." + _sit_txt_dsv_temp
+                                )
+                            elif _c_dsv_temp.regra_fixa:
+                                _just_dsv_temp.append(
+                                    f"**{_c_dsv_temp.NOME_PROCEDIMENTO}** ({_c_dsv_temp.ESPECIALIDADE}): "
+                                    f"{_int_dsv_temp(_c_dsv_temp.qp)} procedimentos para {_int_dsv_temp(_c_dsv_temp.vidas)} "
+                                    f"usuários → **{_num_dsv_temp(_c_dsv_temp.pv)} por usuário**, acima do limite de "
+                                    f"**{int(_limrest_dsv_temp)} por usuário** definido para restaurações em resina "
+                                    f"({_num_dsv_temp(_c_dsv_temp.razao)}× o limite), cerca de "
+                                    f"{_int_dsv_temp(_c_dsv_temp.acima)} procedimentos acima do limite." + _sit_txt_dsv_temp
                                 )
                             else:
                                 _onde_dsv_temp = (
