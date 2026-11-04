@@ -4932,7 +4932,7 @@ elif st.session_state.pagina == "severidade":
             _mes_dsv_temp = st.selectbox("Mês", options=_meses_dsv_temp, format_func=label_mes, key="dsv_mes_temp")
         with _c2_dsv_temp:
             _topn_dsv_temp = st.selectbox(
-                "Mostrar os primeiros (prestadores)", options=[10, 20, 30, 40, 50], index=1, key="dsv_topn_temp",
+                "Mostrar os primeiros (prestadores)", options=[10, 20, 30, 40, 50, 100, 200], index=1, key="dsv_topn_temp",
                 help="Quantos prestadores aparecem na lista. A tabela completa dos casos vem no botão de download.",
             )
         with _c3_dsv_temp:
@@ -5039,7 +5039,7 @@ elif st.session_state.pagina == "severidade":
                 )
                 _pior_dsv_temp = _sel_dsv_temp.sort_values("desvio_pct", ascending=False) \
                     .drop_duplicates("CD_PRESTADOR").set_index("CD_PRESTADOR")
-                _gp_dsv_temp["pior_proc"] = _pior_dsv_temp["NOME_PROCEDIMENTO"]
+                _gp_dsv_temp["pior_proc"] = _pior_dsv_temp["NOME_PROCEDIMENTO"].astype(str).str.strip()
                 _col_ord_dsv_temp = {
                     "Maior desvio (%)": "desvio_max", "Procedimentos acima do esperado": "acima",
                     "Qtde de procedimentos desviados": "casos",
@@ -5070,7 +5070,7 @@ elif st.session_state.pagina == "severidade":
                     t = pd.DataFrame({
                         "Prestador": S["prestador"].fillna(S["CD_PRESTADOR"].astype(str)).values,
                         "Cidade / UF": (S["cidade"].astype(str) + " / " + S["uf"].astype(str)).values,
-                        "Procedimento": S["NOME_PROCEDIMENTO"].values,
+                        "Procedimento": S["NOME_PROCEDIMENTO"].astype(str).str.strip().values,
                         "Especialidade": S["ESPECIALIDADE"].values,
                         "QP": S["qp"].astype(int).values,
                     })
@@ -5162,7 +5162,7 @@ elif st.session_state.pagina == "severidade":
                                 )
                             if _raro_dsv_temp:
                                 _just_dsv_temp.append(
-                                    f"**{_c_dsv_temp.NOME_PROCEDIMENTO}** ({_c_dsv_temp.ESPECIALIDADE}): "
+                                    f"**{str(_c_dsv_temp.NOME_PROCEDIMENTO).strip()}** ({_c_dsv_temp.ESPECIALIDADE}): "
                                     f"**{_int_dsv_temp(_c_dsv_temp.qp)}** procedimentos em **{_int_dsv_temp(_c_dsv_temp.vidas)}** "
                                     f"usuários (média de **{_num_dsv_temp(_c_dsv_temp.pv)}** por usuário); "
                                     f"a média nacional por prestador é "
@@ -5173,7 +5173,7 @@ elif st.session_state.pagina == "severidade":
                                 )
                             elif _c_dsv_temp.regra_fixa:
                                 _just_dsv_temp.append(
-                                    f"**{_c_dsv_temp.NOME_PROCEDIMENTO}** ({_c_dsv_temp.ESPECIALIDADE}): "
+                                    f"**{str(_c_dsv_temp.NOME_PROCEDIMENTO).strip()}** ({_c_dsv_temp.ESPECIALIDADE}): "
                                     f"{_int_dsv_temp(_c_dsv_temp.qp)} procedimentos para {_int_dsv_temp(_c_dsv_temp.vidas)} "
                                     f"usuários → **{_num_dsv_temp(_c_dsv_temp.pv)} por usuário**, acima do limite de "
                                     f"**{int(_limrest_dsv_temp)} por usuário** definido para restaurações em resina "
@@ -5186,7 +5186,7 @@ elif st.session_state.pagina == "severidade":
                                     else f"do estado ({_c_dsv_temp.uf})"
                                 )
                                 _just_dsv_temp.append(
-                                    f"**{_c_dsv_temp.NOME_PROCEDIMENTO}** ({_c_dsv_temp.ESPECIALIDADE}): "
+                                    f"**{str(_c_dsv_temp.NOME_PROCEDIMENTO).strip()}** ({_c_dsv_temp.ESPECIALIDADE}): "
                                     f"{_int_dsv_temp(_c_dsv_temp.qp)} procedimentos em {_int_dsv_temp(_c_dsv_temp.vidas)} "
                                     f"pacientes → **{_num_dsv_temp(_c_dsv_temp.pv)} por paciente**; a média {_onde_dsv_temp} é "
                                     f"**{_num_dsv_temp(_c_dsv_temp.ref_pv)}** ({_int_dsv_temp(_c_dsv_temp.n_ref_pv)} outros "
