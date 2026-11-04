@@ -5075,6 +5075,8 @@ elif st.session_state.pagina == "severidade":
                         "QP": S["qp"].astype(int).values,
                     })
                     if _raro_dsv_temp:
+                        t["Usuários"] = S["vidas"].astype(int).values
+                        t["Proc. por usuário"] = S["pv"].round(2).values
                         t["Média nacional por prestador"] = S["media_nac"].round(2).values
                     else:
                         t["Pacientes"] = S["vidas"].astype(int).values
@@ -5161,7 +5163,9 @@ elif st.session_state.pagina == "severidade":
                             if _raro_dsv_temp:
                                 _just_dsv_temp.append(
                                     f"**{_c_dsv_temp.NOME_PROCEDIMENTO}** ({_c_dsv_temp.ESPECIALIDADE}): "
-                                    f"**{_int_dsv_temp(_c_dsv_temp.qp)}** procedimentos; a média nacional por prestador é "
+                                    f"**{_int_dsv_temp(_c_dsv_temp.qp)}** procedimentos em **{_int_dsv_temp(_c_dsv_temp.vidas)}** "
+                                    f"usuários (média de **{_num_dsv_temp(_c_dsv_temp.pv)}** por usuário); "
+                                    f"a média nacional por prestador é "
                                     f"**{_num_dsv_temp(_c_dsv_temp.media_nac)}** ({_int_dsv_temp(_c_dsv_temp.n_outros_nac)} "
                                     f"outros prestadores fazem) — **{_num_dsv_temp(_c_dsv_temp.razao)}×** a média, desvio de "
                                     f"**+{_num_dsv_temp(_c_dsv_temp.desvio_pct, 0)}%**, cerca de "
